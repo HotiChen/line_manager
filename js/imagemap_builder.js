@@ -20,7 +20,7 @@ import {
 } from "../helper/message.helper.js?v=1763312843";
 
 import { showLoader, hideLoader } from './shared/loader.js';
-import { getUserId, setUserId } from "../helper/state.js";
+import { getUserId, setUserId, apiBase } from "../helper/state.js";
 
 let processedImageFile = null; // To store the processed image file
 

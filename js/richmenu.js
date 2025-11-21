@@ -39,7 +39,7 @@ let endPoint = null;
 let selectedAreas = [];
 let imgDiamenions = [];
 let defaultRichmenuId = null;
-// let userId = null; // Module-level userId removed in favor of state.js
+
 
 let isCloningRichmenu = false;
 let cloneSourceRichmenu = null;
@@ -878,7 +878,7 @@ async function fetchRichMenuList() {
     }
 
     const data = await response.json();
-    console.log('Raw data from /richmenu/list:', data); // Debugging line
+
     allRichmenus = data.richmenus || [];
 
     if (allRichmenus.length === 0) {

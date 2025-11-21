@@ -5,9 +5,7 @@ import { setInnerHTML } from "../helper/security.js";
 
 import { setUserId, getUserId, apiBase, debug } from "../helper/state.js";
 
-// window.apiBase and window.debug are deprecated but kept for compatibility if needed
-// window.apiBase = apiBase;
-// window.debug = debug;
+
 
 // Keep track of the current page
 let currentPageName = 'richmenu'; // Default page
