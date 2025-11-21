@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>關鍵字自動回覆</title>
+  <style>
+    .stats-badge {
+      font-size: 0.8em;
+      min-width: 40px;
+      text-align: center;
+    }
+    .stats-cell {
+      text-align: center;
+      vertical-align: middle;
+    }
+    .keyword-table th {
+      background-color: #f8f9fa;
+      font-weight: 600;
+    }
+    .loading-row td {
+      padding: 2rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container mt-5">
+    <h2 class="mb-4">關鍵字自動回覆管理</h2>
+
+    <!-- 新增回覆區 -->
+    <div class="card mb-4">
+      <div class="card-header">新增關鍵字回覆</div>
+      <div class="card-body">
+        <form id="add-keyword-form">
+          <div class="mb-3">
+            <label for="keywords" class="form-label">關鍵字（用逗號分隔）</label>
+            <input type="text" id="keyword-input" class="form-control" placeholder="例如：你好,嗨,哈囉" required />
+          </div>
+          <div class="mb-3">
+            <label for="reply-type" class="form-label">回覆類型</label>
+            <!-- <select id="reply-type" class="form-select"></select> -->
+          </div>
+
+          <!-- 根據回覆類型動態顯示輸入欄位 -->
+          <div class="mb-3" id="reply-dynamic-fields">
+            <!-- JS 動態插入：textarea、dropdown 或 file upload -->
+          </div>
+
+          <div id="reply-input-area" class="mb-3"></div>
+          <div id="selected-reply-display" class="mt-2 text-success"></div>
+          <button type="button" id="add-reply-btn" class="btn btn-primary">新增回覆</button>
+          <button type="submit" id ="submit" class="btn btn-primary">儲存回覆</button>
+          <button type="reset" id="reset-form-btn" class="btn btn-secondary ms-2">重設</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- 回覆清單 -->
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>已儲存的關鍵字回覆</span>
+        <div>
+          <button id="delete-selected-btn" class="btn btn-danger btn-sm">🗑️ 刪除選取項目</button>
+          <button class="btn btn-sm btn-outline-primary" id="refresh-stats-btn">
+            🔄 刷新統計
+          </button>
+        </div>
+      </div>
+      <div class="card-body">
+        <table class="table table-bordered keyword-table">
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="select-all-checkbox" /></th>
+              <th>Keyword</th>
+              <th>Reply 類型</th>
+              <th class="stats-cell">總觸發次數</th>
+              <th class="stats-cell">本月觸發</th>
+              <th class="stats-cell">上月觸發</th>
+            </tr>
+          </thead>
+          <tbody id="reply-list">
+            <!-- 由 JS 動態插入 -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+
+<!-- 編輯 Modal
+<div class="modal fade" id="editKeywordModal" tabindex="-1" aria-labelledby="editKeywordModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="editKeywordModalLabel">編輯關鍵字或回覆</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+      </div>
+      <div class="modal-body">
+        <form id="edit-keyword-form">
+          <div class="mb-3">
+            <label for="edit-keyword" class="form-label">關鍵字</label>
+            <input type="text" id="edit-keyword" class="form-control" />
+          </div>
+          <div class="mb-3">
+            <label for="edit-reply-type" class="form-label">回覆類型</label>
+            <select id="edit-reply-type" class="form-select"></select>
+          </div>
+          <div class="mb-3" id="edit-reply-dynamic-fields">
+            <!-- 根據 reply 類型動態產生欄位 -- >
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+        <button type="button" class="btn btn-primary" id="save-edit-btn">儲存變更</button>
+      </div>
+    </div>
+  </div>
+</div> -->
+</body>
+</html>

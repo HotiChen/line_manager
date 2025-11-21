@@ -1,0 +1,103 @@
+/* css/flow_theme.css */
+
+/* --- Main Node Styling --- */
+.drawflow-node {
+  border-radius: 8px !important;
+  background: #f7f9fb !important;
+  border: 1px solid #e0e3e8 !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+  position: relative !important;
+  padding: 12px !important;
+}
+
+/* --- Make ONLY richmenu nodes transparent containers --- */
+.drawflow-node.richmenu-node {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+/* --- Node Type Indicator Bar --- */
+.drawflow-node:before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 6px;
+  height: 100%;
+  border-radius: 8px 0 0 8px;
+  background-color: #a9b1bc; /* Default color */
+}
+
+/* Specific colors for each node type */
+.drawflow-node.richmenu-node:before {
+  background-color: #4A90E2; /* Blue */
+}
+.drawflow-node.keyword-node:before {
+  background-color: #F5A623; /* Orange */
+}
+.drawflow-node.imagemap-node:before {
+  background-color: #50E3C2; /* Teal */
+}
+.drawflow-node.flex-node:before {
+  background-color: #BD10E0; /* Purple */
+}
+.drawflow-node.welcome-node:before {
+  background-color: #7ED321; /* Green */
+}
+
+
+/* --- Connection Points (Inputs/Outputs) --- */
+.drawflow .drawflow-node .inputs .input,
+.drawflow .drawflow-node .outputs .output {
+  width: 12px !important;
+  height: 12px !important;
+  background: #dbe0e6 !important;
+  border: 2px solid #f7f9fb !important;
+  transition: all 0.2s ease !important;
+  position: static !important; /* Override default positioning for flexbox */
+  margin: 0 5px !important; /* Space out points horizontally */
+}
+
+.drawflow .drawflow-node .inputs .input:hover,
+.drawflow .drawflow-node .outputs .output:hover {
+  transform: scale(1.3);
+  background: #4A90E2 !important;
+}
+
+/* Position inputs top-center */
+.drawflow .drawflow-node .inputs {
+  top: -13px !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  display: flex !important;
+  justify-content: center !important;
+}
+
+/* Position outputs bottom-center */
+.drawflow .drawflow-node .outputs {
+  bottom: -13px !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  display: flex !important;
+  justify-content: center !important;
+}
+
+/* --- Connection Lines --- */
+.drawflow .connection .main-path {
+  stroke-width: 2px !important;
+  stroke: #c7cdd4 !important;
+}
+
+/* --- Node Content --- */
+.drawflow_content_node {
+    padding: 12px !important; 
+}
+
+/* --- Selected Node --- */
+.drawflow-node.selected {
+  border: 1px solid #4A90E2 !important;
+  box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.3) !important;
+}
+

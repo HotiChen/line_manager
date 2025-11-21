@@ -1,0 +1,11 @@
+{
+  "name": "pinti-line",
+  "compatibility_date": "2025-04-13",
+  "main": "src/index.js",
+  "kv_namespaces": [
+    {
+      "id": "7cbba24c35ad464d875ef1fc5107604e",
+      "binding": "KV_LINE_STORAGE"
+    }
+  ]
+}

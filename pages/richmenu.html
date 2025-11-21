@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- 引入 Bootstrap 5 -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+  <title>Line@ Rich Menu Creator</title>
+  <!-- 引入初始化腳本與動畫 -->
+  <script src="js/init.js"></script>
+  <script src="js/animation.js"></script>
+</head>
+<body>
+  <!-- Navbar 區（可自行加入 LOGO 與導覽）
+  <nav class="navbar navbar-expand-lg navbar-light bg-light mb-4">
+    <div class="container">
+      <a class="navbar-brand" href="#">Rich Menu Creator</a>
+      <div id="navbar-placeholder"></div>
+    </div>
+  </nav> -->
+
+  <!-- 主要內容 -->
+  <div class="container">
+    <!-- 標題與說明 -->
+    <div class="container mt-5 mb-4">
+      <h2 class="mb-4">Richmenu 管理</h2>
+      <p class="lead">新增、管理與設定您的 Line@ Richmenu</p>
+    </div>
+
+        
+    <!-- 內容區：左側縮圖列表 / 右側預覽與編輯 -->
+    <div class="row">
+      <!-- 左側：Richmenu 縮圖列表 -->
+      <div class="col-md-4">
+        <div class="card mb-4">
+          <div class="card-header">
+            <h6 class="card-title mb-0">已儲存的 Richmenu</h6>
+          </div>
+          <div class="card-body overflow-auto" id="richmenu-thumbnails" style="height:300px;">
+            <!-- 縮圖由 JS 載入，lazy-loading 並顯示新建標記 -->
+          </div>
+          <div class="card-footer">
+            <!-- 新增 Richmenu 按鈕：點擊時清空預覽區 -->
+            <button id="create-new-richmenu" class="btn btn-primary w-100" data-bs-toggle="modal" data-bs-target="#new-richmenu-modal">新增 Richmenu</button>
+            <button id="clone-richmenu-btn" class="btn btn-outline-primary w-100 mt-2">複製 Richmenu</button>
+            <button id="show-default-richmenu" class="btn btn-outline-primary w-100 mt-2">顯示 Default Richmenu</button>
+            <button id="update-all-richmenus" class="btn btn-success w-100 mt-2">同步所有變更至 Line@</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右側：預覽與編輯區 -->
+      <div class="col-md-8">
+        <div class="card mb-4">
+          <div class="card-header d-flex flex-wrap align-items-center gap-2">
+            <div class="d-flex align-items-center flex-grow-1">
+              <input type="text" class="form-control" id="menu-name" placeholder="選單名稱" required>
+              <span id="clone-indicator" class="badge bg-secondary ms-2 d-none">複製</span>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+              <button id="set-default-richmenu" class="btn btn-warning">設定為預設</button>
+              <button id="save-edited-richmenu" class="btn btn-success">儲存此選單變更</button>
+              <button id="delete-selected-richmenu" class="btn btn-danger">刪除選單</button>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="uploaded-image-container mb-3">
+              <div id="mouse-coords" style="
+              position: absolute;
+              pointer-events: none;
+              background: rgba(0,0,0,0.5);
+              color: #fff;
+              padding: 2px 4px;
+              border-radius: 3px;
+              font-size: 12px;
+              display: none;
+              z-index: 10;"></div>
+              <canvas id="uploaded-image-canvas"></canvas>
+            </div>
+            
+            <h5>選擇的區域</h5>
+            <table class="table table-bordered" id="areas-table">
+              <thead>
+                <tr>
+                  <th style="width:20px;">#</th>
+                  <th style="width:30px;">X</th>
+                  <th style="width:30px;">Y</th>
+                  <th style="width:30px;">寬度</th>
+                  <th style="width:30px;">高度</th>
+                  <th style="width:80px;">格式</th>
+                  <th style="width:300px;">內容</th>
+                  <th style="width:50px;">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <!-- 區域資料將由 JS 動態填入 -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新增 Richmenu Modal -->
+  <div id="new-richmenu-modal" class="modal fade" tabindex="-1" aria-labelledby="newRichmenuLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="newRichmenuLabel">新增 Richmenu</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+        </div>
+        <div class="modal-body">
+          <form id="new-richmenu-form">
+            <div class="mb-3">
+              <label for="new-menu-name" class="form-label">選單名稱 *</label>
+              <input type="text" class="form-control" id="new-menu-name" placeholder="例如：主頁面、活動頁面" required>
+            </div>
+
+            <div class="mb-3">
+              <label for="new-chat-bar-text" class="form-label">聊天列按鈕文字</label>
+              <input type="text" class="form-control" id="new-chat-bar-text" placeholder="例如：打開選單、Tap to open">
+            </div>
+            <div class="form-check mb-3">
+              <input class="form-check-input" type="checkbox" id="new-menu-selected">
+              <label class="form-check-label" for="new-menu-selected">
+                預設為開啟狀態 (使用者進入聊天室時，自動顯示此選單)
+              </label>
+            </div>
+            <div class="mb-3">
+              <label for="new-alias" class="form-label">頁面名稱（可選）</label>
+              <input type="text" class="form-control" id="new-richmenu-alias" placeholder="例如：main-menu">
+            </div>
+            <div class="mb-3">
+              <label class="form-label">選擇圖片方式</label>
+              <div class="d-flex gap-3">
+                <input class="form-control" type="file" id="new-image-upload" accept="image/png, image/jpeg">
+                <!-- <input class="form-control" type="text" id="new-image-url" placeholder="輸入圖片網址"> -->
+              </div>
+              <div class="form-text">
+                格式: JPEG/PNG, 尺寸: 2500x1686 或 2500x843, 大小: 1MB 以下
+              </div>
+            </div>
+            
+            <div class="mb-3">
+              <label class="form-label">圖片預覽</label>
+              <div class="d-flex justify-content-center">
+                <img id="image-preview" src="" alt="預覽圖片" class="img-fluid" style="max-height:200px; display:none;">
+              </div>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <!-- 當按下「預覽」時，將預覽圖片更新到右側 -->
+          <!-- 當按下「儲存」時，除了儲存 Richmenu 外，會將預覽區清空並把新 Richmenu 加入縮圖區，並標記為新建 -->
+          <button type="button" class="btn btn-success" id="save-new-richmenu">確定</button>
+          <button type="button" class="btn btn-primary" id="preview-richmenu">重設</button>
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 修改 Action Modal -->
+  <div id="edit-modal" class="modal" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">設定點擊動作</h5>
+        </div>
+        <div class="modal-body" id="richmenu-action-editor-container">
+          <!-- The dynamic UI from message.helper.js will be injected here -->
+          <p class="text-muted">載入中...</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+          <button type="button" class="btn btn-danger" id="delete-button">刪除此區域</button>
+          <button type="button" class="btn btn-primary" id="save-action-button">儲存動作</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 上傳中動畫 Modal -->
+  <div id="uploading-data-modal" class="modal" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">資料上傳中</h5>
+        </div>
+        <div class="modal-body">
+          <div class="d-flex justify-content-center">
+            <div class="spinner-border text-primary" role="status">
+              <span class="visually-hidden">載入中...</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 更新至 Line@ 確認 Modal -->
+<div class="modal fade" id="confirm-update-modal" tabindex="-1" aria-labelledby="confirmUpdateModalLabel" aria-hidden="false">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-success">
+      <div class="modal-header bg-success text-white">
+        <h5 class="modal-title" id="confirmUpdateModalLabel">確認更新至 Line@</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p>你即將上傳目前所有 Richmenu 到 Line@，請選擇預設的選單：</p>
+
+        <div class="mb-3">
+          <label for="select-default-richmenu" class="form-label">預設 Richmenu</label>
+          <select id="select-default-richmenu" class="form-select">
+            <!-- JS 會自動填入 richmenu 選項 -->
+          </select>
+        <div id="loading-spinner" style="display:none;" class="text-center mt-3">
+          <div class="spinner-border text-secondary" role="status">
+            <span class="visually-hidden">載入中...</span>
+          </div>
+        </div>
+        </div>
+
+        <p class="text-danger fw-bold mt-2">⚠️ 注意：此操作將會同步取代 Line@ 上的設定。</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+        <button type="button" class="btn btn-success" id="confirm-update-line">✅ 確定更新</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+  <!-- 傳送中進度 Modal -->
+  <div class="modal fade" id="upload-progress-modal" tabindex="-1" aria-labelledby="uploadProgressModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-info">
+        <div class="modal-header bg-info text-white">
+          <h5 class="modal-title" id="uploadProgressModalLabel">正在同步至 Line@</h5>
+        </div>
+        <div class="modal-body">
+          <ul id="upload-task-log" class="list-group small">
+            <!-- JavaScript 會動態插入每個 Richmenu 傳送狀態 -->
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 引入 JS -->
+  <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.6/dist/umd/popper.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.min.js"></script>
+  <!-- script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script -->
+  <script src="js/richmenu.js" defer></script>
+  <!-- 如有 navbar.js 可加入 -->
+  <!-- <script src="js/navbar.js"></script> -->
+</body>
+</html>
