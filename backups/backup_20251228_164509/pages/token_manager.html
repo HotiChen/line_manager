@@ -1,0 +1,90 @@
+<div class="container-fluid p-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="fw-bold text-primary">
+            <i class="bi bi-key-fill me-2"></i>邀請連結管理 (Token Manager)
+        </h2>
+        <button id="btn-refresh" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-clockwise me-2"></i>重新整理
+        </button>
+    </div>
+
+    <!-- Generate Section -->
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white py-3">
+            <h5 class="mb-0 fw-bold"><i class="bi bi-plus-circle me-2"></i>產生測試連結</h5>
+        </div>
+        <div class="card-body">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-6">
+                    <label class="form-label">選擇專案 (可多選)</label>
+                    <div id="project-selection-area" class="border rounded p-2"
+                        style="max-height: 150px; overflow-y: auto;">
+                        <div class="text-muted small p-2">載入中...</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">時效 (小時)</label>
+                    <select class="form-select" id="token-expiry">
+                        <option value="24" selected>24 小時</option>
+                        <option value="48">48 小時</option>
+                        <option value="1">1 小時 (測試用)</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <button id="btn-generate-token" class="btn btn-primary w-100">
+                        <i class="bi bi-magic me-2"></i>產生連結
+                    </button>
+                </div>
+            </div>
+
+            <!-- Result Area -->
+            <div id="generate-result" class="mt-3 d-none">
+                <div class="alert alert-success">
+                    <h6 class="alert-heading fw-bold"><i class="bi bi-check-circle-fill me-2"></i>產生成功！</h6>
+                    <div class="input-group mt-2">
+                        <input type="text" class="form-control" id="new-token-url" readonly>
+                        <button class="btn btn-outline-success" type="button"
+                            onclick="navigator.clipboard.writeText(document.getElementById('new-token-url').value)">
+                            <i class="bi bi-clipboard"></i>
+                        </button>
+                        <a href="#" target="_blank" id="open-token-link" class="btn btn-success">
+                            <i class="bi bi-box-arrow-up-right"></i> 開啟
+                        </a>
+                    </div>
+                    <div class="mt-2 small text-muted">
+                        <i class="bi bi-info-circle me-1"></i>
+                        此連結為一次性使用，使用後即失效。
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- List Section -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white py-3">
+            <h5 class="mb-0 fw-bold"><i class="bi bi-list-ul me-2"></i>現有 Token 列表</h5>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>狀態</th>
+                            <th>Token (前8碼)</th>
+                            <th>專案 (Bot IDs)</th>
+                            <th>建立時間</th>
+                            <th>過期時間</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="token-list-body">
+                        <tr>
+                            <td colspan="6" class="text-center py-4 text-muted">載入中...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>

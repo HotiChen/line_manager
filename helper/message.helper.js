@@ -2,6 +2,7 @@
 
 import { showLoader, hideLoader } from '../js/shared/loader.js';
 import { apiBase } from "../env/config.js";
+import { getUserId } from "./state.js";
 
 // 🎯 版本資訊
 export const HELPER_VERSION = "2.1.0"; // Bump version for refactoring
@@ -63,7 +64,7 @@ const messageCache = new MessageCache();
 async function apiClient(endpoint, options = {}) {
   const { method = 'GET', body = null, headers = {}, responseType = 'json' } = options;
 
-  const defaultHeaders = { 'X-User-Id': window.userId };
+  const defaultHeaders = { 'X-User-Id': getUserId() };
   if (body && typeof body === 'object' && !(body instanceof FormData)) {
     defaultHeaders['Content-Type'] = 'application/json';
   }
@@ -209,10 +210,10 @@ export async function fetchRichMenuDetails(richmenuData, userId) {
 
 // ☁️ 儲存訊息清單到 Cloudflare Worker
 export async function saveRemoteMessages(msgType, messages, userId) {
-    return apiClient('/message/save', {
-        method: 'POST',
-        body: { type: msgType, messages },
-    });
+  return apiClient('/message/save', {
+    method: 'POST',
+    body: { type: msgType, messages },
+  });
 }
 
 // ☁️ 上傳圖片到 WordPress (接收 base64)
@@ -228,10 +229,10 @@ export async function uploadImage(base64, filename) {
     });
 
     if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Server returned non-JSON error response' }));
-        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({ error: 'Server returned non-JSON error response' }));
+      throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
     }
-    
+
     const data = await response.json();
     if (!data.url) {
       throw new Error(data.error || "未知的上傳錯誤。");
@@ -309,16 +310,16 @@ export const messageTypeLabels = {
 
 // 🔗 各訊息類型對應支援的 action type
 export const messageTypeActionSupport = {
-  flex: ["postback", "message", "uri", "keyword","datetimepicker", "camera", "cameraRoll", "location", "richmenuswitch"],
-  imagemap: ["uri", "message", "keyword","postback"],
+  flex: ["postback", "message", "uri", "keyword", "datetimepicker", "camera", "cameraRoll", "location", "richmenuswitch"],
+  imagemap: ["uri", "message", "keyword", "postback"],
   richmenu: ["message", "uri", "keyword", "richmenuswitch"],
-  quickReply: ["postback", "message", "uri", "keyword","datetimepicker", "camera", "cameraRoll", "location"],
+  quickReply: ["postback", "message", "uri", "keyword", "datetimepicker", "camera", "cameraRoll", "location"],
 };
 
 // 📋 各 builder 支援的訊息類型清單
 const supportMap = {
   keywords: ["text", "imagemap", "flex", "image", "uri", "postback"],
-  imagemap: ["message", "keyword", "uri", "imagemap", "postback"],
+  imagemap: ["uri", "keyword", "imagemap", "postback"],
   richmenu: ["message", "keyword", "uri", "postback", "richmenuswitch"],
   flex: ["message", "keyword", "uri", "postback", "imagemap", "datetimepicker", "camera", "cameraRoll", "location"],
   welcome: ["message", "imagemap", "flex", "image", "uri", "postback"],
@@ -367,23 +368,23 @@ export function deleteMessageItem(msgType, id) {
 
 // 👁️ 將訊息轉成簡易預覽文字
 export function formatMessagePreview(msgType, item) {
-  const tagsHtml = (item.tags && item.tags.length > 0) 
-    ? ` <span style="color: #0d6efd; font-size: 0.8em;">${item.tags.join(' ')}</span>` 
+  const tagsHtml = (item.tags && item.tags.length > 0)
+    ? ` <span style="color: #0d6efd; font-size: 0.8em;">${item.tags.join(' ')}</span>`
     : '';
 
   switch (msgType) {
     case "text":
     case "message":
       return `💬 ${item.text?.slice(0, 20)}...${tagsHtml}`;
-    case "uri": 
+    case "uri":
       return `🔗 ${item.label || "未命名"} → ${item.uri}${tagsHtml}`;
-    case "postback": 
+    case "postback":
       return `📦 ${item.label || "Postback"}${tagsHtml}`;
-    case "flex": 
+    case "flex":
       return `📱 ${item.title || "Flex"}${tagsHtml}`;
-    case "imagemap": 
+    case "imagemap":
       return `🗺️ ${item.title || "Imagemap"}${tagsHtml}`;
-    default: 
+    default:
       return `❓ ${item.id}${tagsHtml}`;
   }
 }
@@ -471,35 +472,72 @@ export async function generateReplyInputUI({ builder, userId, onSelect, initialR
         if (typeof onSelect === "function") onSelect(selectedType, payload);
       });
       inputContainer.appendChild(input);
+
+      // 🆕 加入變數工具提示 (僅文字訊息)
+      if (selectedType === "text" || selectedType === "message") {
+        const helperDiv = document.createElement("div");
+        helperDiv.className = "mt-2";
+        helperDiv.innerHTML = `
+          <div class="d-flex align-items-center gap-2 flex-wrap">
+            <small class="text-muted">
+              <i class="bi bi-lightning-charge"></i> 插入變數：
+            </small>
+            <button type="button" class="btn btn-sm btn-outline-secondary var-btn" data-var="(@name)">(@name) 名稱</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary var-btn" data-var="(@date)">(@date) 日期</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary var-btn" data-var="(@time)">(@time) 時間</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary var-btn" data-var="(@day)">(@day) 星期</button>
+          </div>
+        `;
+
+        // 點擊變數按鈕時插入到輸入框
+        helperDiv.querySelectorAll('.var-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const varText = btn.dataset.var;
+            const cursorPos = input.selectionStart;
+            const textBefore = input.value.substring(0, cursorPos);
+            const textAfter = input.value.substring(cursorPos);
+            input.value = textBefore + varText + textAfter;
+            input.focus();
+            input.setSelectionRange(cursorPos + varText.length, cursorPos + varText.length);
+
+            // 觸發 input 事件更新狀態
+            const event = new Event('input', { bubbles: true });
+            input.dispatchEvent(event);
+          });
+        });
+
+        inputContainer.appendChild(helperDiv);
+      }
+
       return;
     } else if (selectedType === 'richmenuswitch') {
-        const pageSelector = document.createElement("select");
-        pageSelector.className = "form-select main-reply-input"; // Add main class
-        pageSelector.id = "page-selector";
-        const validMenus = (customData.richmenus || []).filter(m => m.alias && m.name !== customData.currentMenuName);
-        
-        if (validMenus.length === 0) {
-            const option = document.createElement("option");
-            option.textContent = "沒有其他可切換的選單";
-            option.disabled = true;
-            pageSelector.appendChild(option);
-        } else {
-            validMenus.forEach((richmenu) => {
-                const option = document.createElement("option");
-                option.value = richmenu.alias;
-                option.textContent = richmenu.name;
-                pageSelector.appendChild(option);
-            });
-        }
-        if (initialValue && initialValue.richMenuAliasId) {
-            pageSelector.value = initialValue.richMenuAliasId;
-        }
-        inputContainer.appendChild(pageSelector);
-        return;
+      const pageSelector = document.createElement("select");
+      pageSelector.className = "form-select main-reply-input"; // Add main class
+      pageSelector.id = "page-selector";
+      const validMenus = (customData.richmenus || []).filter(m => m.alias && m.name !== customData.currentMenuName);
+
+      if (validMenus.length === 0) {
+        const option = document.createElement("option");
+        option.textContent = "沒有其他可切換的選單";
+        option.disabled = true;
+        pageSelector.appendChild(option);
+      } else {
+        validMenus.forEach((richmenu) => {
+          const option = document.createElement("option");
+          option.value = richmenu.alias;
+          option.textContent = richmenu.name;
+          pageSelector.appendChild(option);
+        });
+      }
+      if (initialValue && initialValue.richMenuAliasId) {
+        pageSelector.value = initialValue.richMenuAliasId;
+      }
+      inputContainer.appendChild(pageSelector);
+      return;
     }
 
     const messageList = await fetchMessageListByType(selectedType, userId);
-    
+
     if (["imagemap", "flex", "postback", "keyword"].includes(selectedType)) {
       if (!messageList.length) {
         inputContainer.innerHTML = `<div class="alert alert-warning small">尚無可用的「${messageTypeLabels[selectedType]}」訊息。</div>`;
@@ -518,6 +556,7 @@ export async function generateReplyInputUI({ builder, userId, onSelect, initialR
       defaultOption.selected = true;
       select.appendChild(defaultOption);
 
+
       messageList.forEach((item) => {
         const opt = document.createElement("option");
         const value = item.id || item.altText || item.title || item.label || item.keyword;
@@ -525,6 +564,7 @@ export async function generateReplyInputUI({ builder, userId, onSelect, initialR
         opt.textContent = item.altText || item.title || item.label || item.id || item.keyword || "未命名";
         select.appendChild(opt);
       });
+
       if (initialValue) {
         select.value = initialValue.id || initialValue.altText || initialValue.title || initialValue.label || initialValue.keyword;
       }
@@ -543,17 +583,17 @@ export async function generateReplyInputUI({ builder, userId, onSelect, initialR
       });
       inputContainer.appendChild(select);
     } else {
-        inputContainer.textContent = "⚠️ 尚未支援此訊息類型的輸入欄位";
+      inputContainer.textContent = "⚠️ 尚未支援此訊息類型的輸入欄位";
     }
 
     const masterTags = await fetchMasterTags(userId);
     const tagInputContainer = document.createElement("div");
     tagInputContainer.className = "mt-2";
-    
+
     const tagLabel = document.createElement("label");
     tagLabel.className = "form-label small text-muted";
     tagLabel.textContent = "標籤 (用逗號分隔)";
-    
+
     const tagInput = document.createElement("input");
     tagInput.type = "text";
     tagInput.className = "form-control form-control-sm";
@@ -568,11 +608,11 @@ export async function generateReplyInputUI({ builder, userId, onSelect, initialR
       option.value = tag;
       dataList.appendChild(option);
     });
-    
+
     if (initialValue && initialValue.tags) {
       tagInput.value = initialValue.tags.join(', ');
     }
-    
+
     tagInputContainer.appendChild(tagLabel);
     tagInputContainer.appendChild(tagInput);
     tagInputContainer.appendChild(dataList);
@@ -648,9 +688,9 @@ export function getCurrentReplyInput() {
       // NEW: Read the list directly from the select element's dataset
       const list = select.dataset.messageList ? JSON.parse(select.dataset.messageList) : [];
       const selected = list.find(i =>
-        i.id === value || 
-        i.altText === value || 
-        i.title === value || 
+        i.id === value ||
+        i.altText === value ||
+        i.title === value ||
         i.label === value ||
         i.keyword === value
       );
@@ -707,12 +747,22 @@ export function createAction(reply, builderType) {
       action.type = 'message';
       action.text = reply.text || reply.data || '';
       break;
+    case 'keyword':
+      // 關鍵字類型轉換為 message 類型，使用 keyword 作為文字內容
+      action.type = 'message';
+      action.text = reply.keyword || reply.text || reply.data || '';
+      action.label = reply.keyword || reply.label || '';
+      break;
     case 'postback':
       action.data = reply.data || '';
       break;
     case 'richmenuswitch':
       action.richMenuAliasId = reply.richMenuAliasId || '';
       action.data = reply.data || `richmenu-switch-to-${reply.richMenuAliasId}`;
+      // 保留 label 以便顯示 richmenu 名稱而非 alias ID
+      if (reply.label) {
+        action.label = reply.label;
+      }
       break;
     case 'datetimepicker':
       action.data = reply.data || '';
@@ -721,9 +771,9 @@ export function createAction(reply, builderType) {
     default:
       break;
   }
-  
+
   if (['camera', 'cameraRoll', 'location'].includes(action.type)) {
-      delete action.label;
+    delete action.label;
   }
 
   return action;
@@ -786,7 +836,7 @@ export function getMessageTypeIcon(msgType) {
 // 🔍 搜尋訊息
 export function searchMessages(messages, query) {
   if (!query || !messages) return messages;
-  
+
   const lowerQuery = query.toLowerCase();
   return messages.filter(item => {
     const searchableText = [
@@ -797,7 +847,7 @@ export function searchMessages(messages, query) {
       item.keyword,
       item.id
     ].filter(Boolean).join(' ').toLowerCase();
-    
+
     return searchableText.includes(lowerQuery);
   });
 }
@@ -827,3 +877,153 @@ export function batchDeleteMessages(msgType, ids) {
     throw error;
   }
 }
+
+// =================================================================
+// 🏭 MessageFactory - 統一訊息對象創建
+// =================================================================
+
+/**
+ * MessageFactory
+ * 用於統一創建各種訊息對象的工廠函數
+ * 
+ * 優點：
+ * 1. 統一格式，避免直接創建時出錯
+ * 2. 提供預設值，減少重複代碼
+ * 3. 易於維護，集中管理訊息格式
+ * 4. IDE 自動補全，提升開發效率
+ * 
+ * @example
+ * // 創建 URI 訊息
+ * const action = MessageFactory.uri("https://example.com");
+ * 
+ * // 創建文字訊息
+ * const action = MessageFactory.text("你好");
+ * 
+ * // 創建空的 URI（用於初始化）
+ * const action = MessageFactory.empty('uri');
+ */
+export const MessageFactory = {
+  /**
+   * 創建文字訊息
+   * @param {string} text - 訊息文字內容
+   * @returns {object} 文字訊息對象
+   */
+  text(text) {
+    return {
+      type: 'message',
+      text: text || ''
+    };
+  },
+
+  /**
+   * 創建訊息（text 的別名）
+   * @param {string} text - 訊息文字內容
+   * @returns {object} 文字訊息對象
+   */
+  message(text) {
+    return this.text(text);
+  },
+
+  /**
+   * 創建 URI 連結訊息
+   * @param {string} uri - 連結網址
+   * @param {string|null} label - 連結顯示文字（可選）
+   * @returns {object} URI 訊息對象
+   */
+  uri(uri, label = null) {
+    return {
+      type: 'uri',
+      uri: uri || '',
+      label: label || uri || '連結'
+    };
+  },
+
+  /**
+   * 創建 Flex 訊息
+   * @param {string} flexId - Flex 訊息 ID
+   * @param {string} title - Flex 訊息標題
+   * @returns {object} Flex 訊息對象
+   */
+  flex(flexId, title) {
+    return {
+      type: 'flex',
+      flexId: flexId || '',
+      title: title || 'Flex Message'
+    };
+  },
+
+  /**
+   * 創建 Imagemap 訊息
+   * @param {string} imagemapId - Imagemap 訊息 ID
+   * @param {string} altText - 替代文字
+   * @returns {object} Imagemap 訊息對象
+   */
+  imagemap(imagemapId, altText) {
+    return {
+      type: 'imagemap',
+      imagemapId: imagemapId || '',
+      altText: altText || 'Imagemap'
+    };
+  },
+
+  /**
+   * 創建 Postback 訊息
+   * @param {string} data - Postback 資料
+   * @param {string} label - 按鈕顯示文字
+   * @returns {object} Postback 訊息對象
+   */
+  postback(data, label) {
+    return {
+      type: 'postback',
+      data: data || '',
+      label: label || 'Postback'
+    };
+  },
+
+  /**
+   * 創建 Richmenu Switch 訊息
+   * @param {string} richMenuAliasId - Richmenu 別名 ID
+   * @param {string} label - 選單顯示名稱
+   * @returns {object} Richmenu Switch 訊息對象
+   */
+  richmenuswitch(richMenuAliasId, label) {
+    return {
+      type: 'richmenuswitch',
+      richMenuAliasId: richMenuAliasId || '',
+      data: `richmenu-switch-to-${richMenuAliasId || ''}`,
+      label: label || richMenuAliasId || 'Rich Menu'
+    };
+  },
+
+  /**
+   * 創建關鍵字訊息
+   * @param {string} keyword - 關鍵字
+   * @returns {object} 關鍵字訊息對象
+   */
+  keyword(keyword) {
+    return {
+      type: 'keyword',
+      keyword: keyword || '',
+      text: keyword || ''
+    };
+  },
+
+  /**
+   * 創建空的訊息對象（用於初始化）
+   * @param {string} type - 訊息類型
+   * @returns {object} 空的訊息對象
+   */
+  empty(type = 'message') {
+    const defaults = {
+      message: { type: 'message', text: '' },
+      text: { type: 'message', text: '' },
+      uri: { type: 'uri', uri: '', label: '連結' },
+      flex: { type: 'flex', flexId: '', title: '' },
+      imagemap: { type: 'imagemap', imagemapId: '', altText: '' },
+      postback: { type: 'postback', data: '', label: '' },
+      richmenuswitch: { type: 'richmenuswitch', richMenuAliasId: '', data: '', label: '' },
+      keyword: { type: 'keyword', keyword: '', text: '' }
+    };
+    return defaults[type] || defaults.message;
+  }
+};

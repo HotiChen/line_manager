@@ -16,10 +16,12 @@
   max-width: 1200px;
   padding-top: 20px;
   padding-bottom: 20px;
-  margin: 0 auto; /* ✅ 修正語法錯誤，讓整體置中 */
-  overflow: visible; /* ✅ 改為 visible 保留陰影 */
+  margin: 0 auto;
+  /* ✅ 修正語法錯誤，讓整體置中 */
+  overflow: hidden;
+  /* ✅ 隱藏超出內容 */
   box-sizing: border-box;
-  border: 1px solid red;
+  /* ✅ 移除紅色邊框 */
 }
 
 .swiper-slide {
@@ -27,17 +29,15 @@
   background-size: cover;
   background-color: #ffffff;
   color: black;
-  width: 380px;
+  /* ✅ 寬度由 JS 控制 */
   max-width: 400px;
-  margin: 0 10px; /* ✅ 左右間距平均，避免偏移 */
+  /* ✅ 移除 margin，讓 Swiper 自動處理間距 */
   flex-shrink: 0;
   overflow: visible;
   box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.75), 0 6px 20px 0 rgba(0, 0, 0, 0.19);
   border-radius: 18px;
   max-height: 600px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
+  /* ✅ 移除 justify-content 和 align-items，避免與 centeredSlides 衝突 */
 }
 
 /* ✅ 確保卡片內容自動撐開高度 */
@@ -49,7 +49,7 @@
   flex-direction: column;
 }
 
-.slider-container > .bubble-item {
+.slider-container>.bubble-item {
   flex: 0 0 auto;
   scroll-snap-align: start;
 }

@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>會員資料填寫</title>
+
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- LIFF SDK -->
+    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px 0;
+        }
+
+        .form-container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+            padding: 30px;
+            max-width: 500px;
+            margin: 0 auto;
+        }
+
+        .header-icon {
+            font-size: 3rem;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            font-weight: 600;
+            color: #4a5568;
+            margin-bottom: 8px;
+        }
+
+        .form-control,
+        .form-select {
+            border-radius: 10px;
+            border: 2px solid #e2e8f0;
+            padding: 12px 16px;
+            font-size: 16px;
+        }
+
+        .form-control:focus,
+        .form-select:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .btn-submit {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 10px;
+            padding: 14px;
+            font-size: 18px;
+            font-weight: 600;
+            width: 100%;
+            margin-top: 20px;
+            transition: transform 0.2s;
+        }
+
+        .btn-submit:hover {
+            transform: translateY(-2px);
+        }
+
+        .loading-spinner {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .success-message {
+            display: none;
+            text-align: center;
+            padding: 40px 20px;
+        }
+
+        .success-message .icon {
+            font-size: 4rem;
+            color: #48bb78;
+            margin-bottom: 20px;
+        }
+
+        .profile-preview {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 25px;
+            padding: 15px;
+            background: #f7fafc;
+            border-radius: 10px;
+        }
+
+        .profile-preview img {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            border: 3px solid white;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .profile-preview .info {
+            flex: 1;
+        }
+
+        .profile-preview .name {
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        .profile-preview .line-id {
+            font-size: 0.875rem;
+            color: #718096;
+        }
+
+        .required {
+            color: #e53e3e;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="form-container">
+            <!-- Loading -->
+            <div id="loading" class="loading-spinner">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">載入中...</span>
+                </div>
+                <p class="mt-3 text-muted">正在載入...</p>
+            </div>
+
+            <!-- Registration Form -->
+            <div id="form-content" style="display: none;">
+                <div class="header-icon">👤</div>
+                <h3 class="text-center mb-4 fw-bold">會員資料填寫</h3>
+
+                <!-- LINE Profile Preview -->
+                <div id="profile-preview" class="profile-preview" style="display: none;">
+                    <img id="user-picture" src="" alt="User">
+                    <div class="info">
+                        <div class="name" id="user-display-name"></div>
+                        <div class="line-id">LINE 會員</div>
+                    </div>
+                </div>
+
+                <form id="register-form">
+                    <!-- 姓名 -->
+                    <div class="mb-3">
+                        <label for="name" class="form-label">
+                            真實姓名 <span class="required">*</span>
+                        </label>
+                        <input type="text" class="form-control" id="name" required placeholder="請輸入您的真實姓名">
+                    </div>
+
+                    <!-- Email -->
+                    <div class="mb-3">
+                        <label for="email" class="form-label">
+                            Email <span class="required">*</span>
+                        </label>
+                        <input type="email" class="form-control" id="email" required placeholder="example@email.com">
+                    </div>
+
+                    <!-- 電話 -->
+                    <div class="mb-3">
+                        <label for="phone" class="form-label">
+                            手機號碼 <span class="required">*</span>
+                        </label>
+                        <input type="tel" class="form-control" id="phone" required placeholder="0912-345-678"
+                            pattern="[0-9\-]+">
+                    </div>
+
+                    <!-- 性別 -->
+                    <div class="mb-3">
+                        <label for="gender" class="form-label">性別</label>
+                        <select class="form-select" id="gender">
+                            <option value="">請選擇</option>
+                            <option value="male">男性</option>
+                            <option value="female">女性</option>
+                            <option value="other">其他</option>
+                        </select>
+                    </div>
+
+                    <!-- 生日 -->
+                    <div class="mb-3">
+                        <label for="birthday" class="form-label">生日</label>
+                        <input type="date" class="form-control" id="birthday">
+                    </div>
+
+                    <!-- 備註 -->
+                    <div class="mb-3">
+                        <label for="note" class="form-label">備註</label>
+                        <textarea class="form-control" id="note" rows="3" placeholder="其他想告訴我們的資訊"></textarea>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary btn-submit">
+                        ✨ 完成註冊
+                    </button>
+                </form>
+            </div>
+
+            <!-- Success Message -->
+            <div id="success-message" class="success-message">
+                <div class="icon">✅</div>
+                <h4 class="fw-bold mb-3">註冊成功！</h4>
+                <p class="text-muted">感謝您完成資料填寫<br>視窗將自動關閉...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 確認 Modal -->
+    <div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmModalLabel" aria-hidden="true"
+        data-bs-backdrop="static">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="confirmModalLabel">確認送出</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="mb-3">請確認您的資料是否正確：</p>
+                    <table class="table table-sm">
+                        <tbody>
+                            <tr>
+                                <th width="80">姓名</th>
+                                <td id="confirm-name"></td>
+                            </tr>
+                            <tr>
+                                <th>Email</th>
+                                <td id="confirm-email"></td>
+                            </tr>
+                            <tr>
+                                <th>電話</th>
+                                <td id="confirm-phone"></td>
+                            </tr>
+                            <tr>
+                                <th>性別</th>
+                                <td id="confirm-gender"></td>
+                            </tr>
+                            <tr>
+                                <th>生日</th>
+                                <td id="confirm-birthday"></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="confirm-submit-btn">確定送出</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <!-- Main Script -->
+    <script type="module">
+        import { liffIdMemberRegister, apiBase, debug } from '../env/config.js';
+
+        let liffProfile = null;
+        const isLocalTest = window.location.hostname === 'localhost';
+
+        // 初始化 LIFF
+        async function initLiff() {
+            try {
+                // 本地測試模式（繞過 LIFF 登入）
+                if (isLocalTest && debug) {
+                    console.log('🧪 本地測試模式');
+                    liffProfile = {
+                        userId: 'U1234567890test',
+                        displayName: '測試用戶',
+                        pictureUrl: 'https://via.placeholder.com/150',
+                        statusMessage: 'Test User'
+                    };
+                    displayUserPreview();
+                    document.getElementById('loading').style.display = 'none';
+                    document.getElementById('form-content').style.display = 'block';
+                    return;
+                }
+
+                // 正式環境使用 LIFF
+                await liff.init({ liffId: liffIdMemberRegister });
+
+                if (!liff.isLoggedIn()) {
+                    liff.login();
+                    return;
+                }
+
+                // 取得用戶資料
+                liffProfile = await liff.getProfile();
+                console.log('LIFF Profile:', liffProfile);
+
+                // 顯示用戶預覽
+                displayUserPreview();
+
+                // 顯示表單
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('form-content').style.display = 'block';
+
+            } catch (err) {
+                console.error('LIFF init failed', err);
+                alert('初始化失敗：' + err.message);
+            }
+        }
+
+        // 顯示用戶資料預覽
+        function displayUserPreview() {
+            if (!liffProfile) return;
+
+            const preview = document.getElementById('profile-preview');
+            const picture = document.getElementById('user-picture');
+            const displayName = document.getElementById('user-display-name');
+
+            if (liffProfile.pictureUrl) {
+                picture.src = liffProfile.pictureUrl;
+                preview.style.display = 'flex';
+            }
+
+            displayName.textContent = liffProfile.displayName || 'LINE 用戶';
+        }
+
+        // 處理表單提交 - 顯示確認 Modal
+        document.getElementById('register-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            // 取得表單資料
+            const formData = {
+                name: document.getElementById('name').value.trim(),
+                email: document.getElementById('email').value.trim(),
+                phone: document.getElementById('phone').value.trim(),
+                gender: document.getElementById('gender').value,
+                birthday: document.getElementById('birthday').value
+            };
+
+            // 性別中文轉換
+            const genderMap = {
+                'male': '男性',
+                'female': '女性',
+                'other': '其他',
+                '': '未設定'
+            };
+
+            // 填入確認 Modal
+            document.getElementById('confirm-name').textContent = formData.name;
+            document.getElementById('confirm-email').textContent = formData.email;
+            document.getElementById('confirm-phone').textContent = formData.phone;
+            document.getElementById('confirm-gender').textContent = genderMap[formData.gender];
+            document.getElementById('confirm-birthday').textContent = formData.birthday || '未設定';
+
+            // 顯示確認 Modal
+            const confirmModal = new bootstrap.Modal(document.getElementById('confirmModal'));
+            confirmModal.show();
+        });
+
+        // 確認送出按鈕
+        document.getElementById('confirm-submit-btn').addEventListener('click', async () => {
+            const confirmBtn = document.getElementById('confirm-submit-btn');
+            const originalText = confirmBtn.innerHTML;
+            confirmBtn.disabled = true;
+            confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>處理中...';
+
+            try {
+                // 準備會員資料
+                const memberData = {
+                    lineUserId: liffProfile.userId,
+                    lineName: liffProfile.displayName,
+                    pictureUrl: liffProfile.pictureUrl,
+                    name: document.getElementById('name').value.trim(),
+                    email: document.getElementById('email').value.trim(),
+                    phone: document.getElementById('phone').value.trim(),
+                    gender: document.getElementById('gender').value,
+                    birthday: document.getElementById('birthday').value,
+                    note: document.getElementById('note').value.trim(),
+                    status: 'active',
+                    source: 'liff_registration'
+                };
+
+                // 取得 userId (從 URL 參數或其他方式)
+                const urlParams = new URLSearchParams(window.location.search);
+                const userId = urlParams.get('userId');
+
+                if (!userId) {
+                    throw new Error('Missing userId parameter');
+                }
+
+                // 發送到後端 API
+                const response = await fetch(`${apiBase}/member/save`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-User-Id': userId
+                    },
+                    body: JSON.stringify(memberData)
+                });
+
+                const result = await response.json();
+
+                if (!result.success) {
+                    throw new Error(result.error || '儲存失敗');
+                }
+
+                // 關閉 Modal
+                bootstrap.Modal.getInstance(document.getElementById('confirmModal')).hide();
+
+                // 顯示成功訊息
+                document.getElementById('form-content').style.display = 'none';
+                document.getElementById('success-message').style.display = 'block';
+
+                // 3 秒後關閉 LIFF（本地測試模式不關閉）
+                if (!isLocalTest) {
+                    setTimeout(() => {
+                        liff.closeWindow();
+                    }, 3000);
+                } else {
+                    console.log('✅ 本地測試：資料已儲存，視窗保持開啟');
+                }
+            } catch (error) {
+                console.error('Submit error:', error);
+                alert('儲存失敗：' + error.message);
+                confirmBtn.disabled = false;
+                confirmBtn.innerHTML = originalText;
+            }
+        });
+
+        // 啟動
+        initLiff();
+    </script>
+</body>
+
+</html>

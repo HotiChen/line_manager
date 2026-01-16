@@ -1,5 +1,5 @@
 body {
-    font-family: 'Noto Sans TC', sans-serif;
+  font-family: 'Noto Sans TC', sans-serif;
 }
 
 .uploaded-image-container {
@@ -13,114 +13,114 @@ body {
 }
 
 #uploaded-image {
-    width: 100%;
-    height: auto;
+  width: 100%;
+  height: auto;
 }
 
 #save-richmenu {
-    position: fixed;
-    top: 20px;
-    right: 20px;
-    opacity: 0.3;
-    transition: opacity 0.3s;
-  }
-  
-  #save-richmenu:hover {
-    opacity: 1;
-  }
-  
-  #save-richmenu {
-    width: 50px;
-    overflow: hidden;
-    white-space: nowrap;
-    transition: width 0.3s;
-  }
-  
-  #save-richmenu:hover {
-    width: 150px;
-  }
-  
-  #update-richmenu {
-    position: fixed;
-    top: 20px;
-    right: 20px;
-    opacity: 0.3;
-    transition: opacity 0.3s;
-  }
-  
-  #update-richmenu:hover {
-    opacity: 1;
-  }
-  
-  #update-richmenu {
-    width: 50px;
-    overflow: hidden;
-    white-space: nowrap;
-    transition: width 0.3s;
-  }
-  
-  #update-richmenu:hover {
-    width: 150px;
-  }
-  
-  #delete-richmenu {
-    position: fixed;
-    top: 60px;
-    right: 20px;
-    opacity: 0.3;
-    transition: opacity 0.3s;
-  }
-  
-  #delete-richmenu:hover {
-    opacity: 1;
-  }
-  
-  #delete-richmenu {
-    width: 50px;
-    overflow: hidden;
-    white-space: nowrap;
-    transition: width 0.3s;
-  }
-  
-  #delete-richmenu:hover {
-    width: 150px;
-  }
-  
-  .selected-richmenu {
-    border: 2px solid rgba(0, 119, 255, 0.574);
-    border-radius: 5px;
-  }
-
-
-  #save-all-richmenus {
-    position: fixed;
-    top: 100px;
-    right: 20px;
-    opacity: 0.3;
-    transition: opacity 0.3s;
-  }
-  
-  #save-all-richmenus:hover {
-    opacity: 1;
-  }
-  
-  #save-all-richmenus {
-    width: 50px;
-    overflow: hidden;
-    white-space: nowrap;
-    transition: width 0.3s;
-  }
-  
-  #save-all-richmenus:hover {
-    width: 180px;
-  }
- 
-  .selected-thumbnail {
-    border: 3px solid red;
-    opacity: 0.7;
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  opacity: 0.3;
+  transition: opacity 0.3s;
 }
 
-#areas-table td:nth-child(7), 
+#save-richmenu:hover {
+  opacity: 1;
+}
+
+#save-richmenu {
+  width: 50px;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: width 0.3s;
+}
+
+#save-richmenu:hover {
+  width: 150px;
+}
+
+#update-richmenu {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  opacity: 0.3;
+  transition: opacity 0.3s;
+}
+
+#update-richmenu:hover {
+  opacity: 1;
+}
+
+#update-richmenu {
+  width: 50px;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: width 0.3s;
+}
+
+#update-richmenu:hover {
+  width: 150px;
+}
+
+#delete-richmenu {
+  position: fixed;
+  top: 60px;
+  right: 20px;
+  opacity: 0.3;
+  transition: opacity 0.3s;
+}
+
+#delete-richmenu:hover {
+  opacity: 1;
+}
+
+#delete-richmenu {
+  width: 50px;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: width 0.3s;
+}
+
+#delete-richmenu:hover {
+  width: 150px;
+}
+
+.selected-richmenu {
+  border: 2px solid rgba(0, 119, 255, 0.574);
+  border-radius: 5px;
+}
+
+
+#save-all-richmenus {
+  position: fixed;
+  top: 100px;
+  right: 20px;
+  opacity: 0.3;
+  transition: opacity 0.3s;
+}
+
+#save-all-richmenus:hover {
+  opacity: 1;
+}
+
+#save-all-richmenus {
+  width: 50px;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: width 0.3s;
+}
+
+#save-all-richmenus:hover {
+  width: 180px;
+}
+
+.selected-thumbnail {
+  border: 3px solid red;
+  opacity: 0.7;
+}
+
+#areas-table td:nth-child(7),
 #areas-table th:nth-child(7) {
   max-width: 300px;
   overflow: hidden;
@@ -130,21 +130,26 @@ body {
 
 #richmenu-thumbnails {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-start; /* 縮圖靠左對齊 */
-  align-items: center;
-  gap: 5px; /* 縮圖間距 */
-  max-height: 300px;
+  flex-direction: column;
+  gap: 8px;
   overflow-y: auto;
 }
 
 .richmenu-thumbnail {
-  width: 150px;
+  width: 100%;
   height: auto;
-  max-height: 100px; /* 限制最大高度，防止拉伸 */
-  object-fit: contain; /* ✅ 確保圖片不變形 */
+  max-height: 120px;
+  object-fit: contain;
   border: 2px solid transparent;
   transition: all 0.2s ease-in-out;
+  border-radius: 6px;
+}
+
+.richmenu-thumbnail img {
+  width: 100%;
+  height: auto;
+  object-fit: cover;
+  border-radius: 4px;
 }
 
 .richmenu-thumbnail:hover,

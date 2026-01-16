@@ -1,12 +1,16 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
+
 <head>
   <meta charset="UTF-8" />
   <title>Flex Message Builder</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css" />
   <style>
-    #json-input { height: 300px; }
+    #json-input {
+      height: 300px;
+    }
+
     #preview-area {
       width: 100%;
       min-height: 480px;
@@ -18,20 +22,25 @@
       transition: border-color 0.2s ease-in-out;
       opacity: 1 !important;
     }
+
     #preview-area * {
       opacity: 1 !important;
     }
+
     #preview-area .chatbox {
       background-color: #ffffff !important;
     }
+
     #preview-area.border-primary {
       border-color: #007bff !important;
     }
-    #preview-area > div {
+
+    #preview-area>div {
       width: 100%;
       max-width: 400px;
       border-radius: 16px;
     }
+
     #editor-panel {
       background: #ffffff;
       border: 2px dashed #cde4ff;
@@ -40,42 +49,50 @@
       padding: 20px;
       transition: all 0.3s ease-in-out;
     }
+
     #editor-panel label {
       font-weight: 600;
       color: #1d4ed8;
     }
+
     #editor-panel input[type="text"],
     #editor-panel select,
     #editor-panel input[type="color"] {
       border: 1px solid #cbd5e1;
       border-radius: 6px;
     }
+
     #editor-panel input[type="color"] {
       padding: 0.25rem;
       height: 40px;
     }
+
     #apply-props {
       background-color: #1d4ed8;
       border-color: #1d4ed8;
     }
+
     #apply-props:hover {
       background-color: #2563eb;
     }
+
     .swiper-container {
       max-width: 1200px;
-      border: 1px solid #dee2e6;
       border-radius: .375rem;
       background-color: #f8f9fa;
       overflow: hidden;
     }
+
     .card {
       user-select: none;
     }
+
     .flex-highlight {
       outline: 2px solid #4f46e5;
       outline-offset: -2px;
       cursor: pointer;
     }
+
     .hover-highlight {
       outline: 2px dashed #007bff !important;
       outline-offset: 2px;
@@ -83,39 +100,39 @@
       color: inherit !important;
       cursor: pointer;
     }
-    
+
     /* 確保 Flex Message 文字顯示正常 */
     #preview-area .MdTxt {
       opacity: 1 !important;
     }
-    
+
     #preview-area .MdSpn {
       opacity: 1 !important;
     }
-    
+
     #preview-area .MdBtn {
       opacity: 1 !important;
     }
-    
+
     #preview-area .MdBtn a {
       opacity: 1 !important;
     }
-    
+
     /* 修復文字顏色繼承問題 */
-    
+
     /* 修復按鈕文字顏色 */
     #preview-area .MdBtn.ExBtn1 a {
       color: #ffffff !important;
     }
-    
+
     #preview-area .MdBtn.ExBtn2 a {
       color: #111111 !important;
     }
-    
+
     #preview-area .MdBtn.ExBtnL a {
       color: #42659a !important;
     }
-    
+
     /* 修復次要文字顏色 */
     #preview-area .MdTxt.Ex2nd {
       color: #444444 !important;
@@ -125,102 +142,122 @@
     .swiper-slide-active .lyItem {
       /* Create a gap between the element and the highlight */
       outline: 3px solid #0d6efd;
-      outline-offset: 4px; /* The gap */
+      outline-offset: 4px;
+      /* The gap */
 
       /* Add a glowing effect */
       box-shadow: 0 0 12px rgba(13, 110, 253, 0.7);
     }
- 
   </style>
   <style>
- 
+
   </style>
 </head>
-<body>
-  <div class="container">
-    <!-- 標題與說明 -->
-    <div class="container mt-5 mb-4">
-      <h2 class="mb-4">Flex Message 編輯</h2>
-      <p class="lead">新增、管理與設定您的 Flex Message</p>
-    </div>
-    <div class="row">
-      <div class="col-md-3">
-        <button id="new-flex-btn" class="btn btn-primary btn-block mt-3">➕ 新增 Flex</button>
-              <!-- 新增已儲存 Flex 預覽清單 -->
-        <div class="container mt-4">
-          <h5>📂 已儲存 Flex</h5>
-          <div class="mb-2">
-            <label for="flex-select" class="form-label">選擇 Flex：</label>
-            <select id="flex-select" class="form-select">
-              <option value="">請選擇</option>
-              <!-- JS 動態插入選項 -->
-            </select>
-          </div>
-          
-          <div id="saved-flex-list" class="border rounded p-2 bg-light" style="max-height: 280px; overflow-y: auto;">
 
+<body>
+  <div class="container-fluid py-4">
+    <!-- 標題列 -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <div>
+        <h4 class="mb-1"><i class="bi bi-chat-square-text text-primary"></i> Flex Message 編輯</h4>
+        <p class="text-muted mb-0">新增、管理與設定您的 Flex Message</p>
+      </div>
+      <div class="d-flex gap-2">
+        <button id="new-flex-btn" class="btn btn-primary">
+          <i class="bi bi-plus-lg"></i> 新增 Flex
+        </button>
+        <button id="sync-flex-btn" class="btn btn-outline-success">
+          <i class="bi bi-cloud-upload"></i> 同步
+        </button>
+        <button id="clear-cache-btn" class="btn btn-outline-warning">
+          <i class="bi bi-arrow-repeat"></i> 清快取
+        </button>
+      </div>
+    </div>
+
+    <div class="row">
+      <!-- 左側：Flex 列表 -->
+      <div class="col-md-3">
+        <div class="card d-flex flex-column" style="height: 80vh;">
+          <div class="card-header d-flex justify-content-between align-items-center flex-shrink-0">
+            <h6 class="card-title mb-0"><i class="bi bi-collection"></i> 已儲存的 Flex</h6>
+            <div class="btn-group btn-group-sm">
+              <button id="clone-list-item-btn" class="btn btn-outline-primary" disabled title="複製">
+                <i class="bi bi-copy"></i>
+              </button>
+              <button id="delete-flex-btn" class="btn btn-outline-danger" disabled title="刪除">
+                <i class="bi bi-trash"></i>
+              </button>
+            </div>
           </div>
-          <div class="d-grid gap-2 mt-2">
-            <button id="clone-list-item-btn" class="btn btn-info" disabled>📄 複製現在 flex</button>
-            <button id="delete-flex-btn" class="btn btn-danger" disabled>🗑️ 從列表刪除</button>
-            <button id="sync-flex-btn" class="btn btn-success">☁️ 上傳變更到後台</button>
-            <button id="clear-cache-btn" class="btn btn-warning">🧹 清除快取</button>
+          <div class="card-body p-2" style="flex: none;">
+            <!-- 搜尋區域 -->
+            <div class="input-group input-group-sm">
+              <span class="input-group-text"><i class="bi bi-search"></i></span>
+              <input type="text" id="flex-search" class="form-control" placeholder="搜尋名稱...">
+              <button class="btn btn-outline-secondary" type="button" id="clear-flex-search">清除</button>
+            </div>
+            <small class="text-muted" id="flex-search-result-count"></small>
+          </div>
+          <div class="card-body overflow-auto flex-grow-1" id="saved-flex-list" style="padding: 0.5rem;">
+            <!-- 列表由 JS 動態插入 -->
           </div>
         </div>
       </div>
 
       <div class="col-md-9">
         <div class="d-flex justify-content-between align-items-center mb-3">
-          <div>
-            <label class="form-label fw-bold">Flex 名稱：</label>
-            <input type="text" id="flex-name" class="form-control" placeholder="請輸入 Flex 名稱">
+          <div class="d-flex align-items-center gap-2">
+            <label class="form-label fw-bold mb-0">Flex 名稱：</label>
+            <input type="text" id="flex-name" class="form-control" style="width: 300px;" placeholder="請輸入 Flex 名稱">
+            <span id="save-status" class="d-none"></span>
           </div>
           <div>
             <span>目前 Bubble 數量：<span id="bubble-count">0</span></span>
           </div>
         </div>
-      <!-- Swiper -->
-      <div class="swiper-outer-container">
-        <div class="swiper-container flex-preview-wrapper">
-          <div class="swiper-wrapper" id="nameCardContainer">
+        <!-- Swiper -->
+        <div class="swiper-outer-container">
+          <div class="swiper-container flex-preview-wrapper">
+            <div class="swiper-wrapper" id="nameCardContainer">
+            </div>
+            <div class="swiper-pagination"></div>
           </div>
-          <div class="swiper-pagination"></div>
         </div>
-      </div>
-      <div class="d-flex justify-content-center gap-2 mt-3">
-        <button id="add-bubble-btn" class="btn btn-primary">➕ 新增 Bubble</button>
-        <button id="clone-flex-btn" class="btn btn-secondary btn-block">📄 複製目前 Bubble</button>
-        <button id="delete-bubble-btn" class="btn btn-danger">➖ 刪除目前 Bubble</button>
-        <button id="update-list-btn" class="btn btn-primary">💾 更新到列表</button>
-        <button id="json-io-btn" class="btn btn-info">🔄 匯入/匯出 JSON</button>
-      </div>
-      <!-- Swiper End -->
+        <div class="d-flex justify-content-center gap-2 mt-3">
+          <button id="add-bubble-btn" class="btn btn-outline-primary">➕ 新增 Bubble</button>
+          <button id="clone-flex-btn" class="btn btn-outline-secondary">📄 複製 Bubble</button>
+          <button id="delete-bubble-btn" class="btn btn-outline-danger">➖ 刪除 Bubble</button>
+          <button id="update-list-btn" class="btn btn-success">💾 儲存修改</button>
+          <button id="json-io-btn" class="btn btn-outline-info">🔄 JSON</button>
+        </div>
+        <!-- Swiper End -->
       </div>
     </div>
   </div>
 
   <!-- Flex Template Modal -->
-<div class="modal fade" id="templateModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-xl modal-dialog-centered">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title">選擇 Flex 樣板</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <div id="template-page-number" class="text-muted small ms-3"></div>
-        <div class="template-swiper">
-          <div class="swiper-wrapper" id="template-swiper-wrapper">
-          </div>
-          <div class="swiper-pagination"></div>
+  <div class="modal fade" id="templateModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">選擇 Flex 樣板</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
-      </div>
-      <div class="modal-footer">
-        <button id="insert-template-btn" class="btn btn-primary">加入</button>
+        <div class="modal-body">
+          <div id="template-page-number" class="text-muted small ms-3"></div>
+          <div class="template-swiper">
+            <div class="swiper-wrapper" id="template-swiper-wrapper">
+            </div>
+            <div class="swiper-pagination"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="insert-template-btn" class="btn btn-primary">加入</button>
+        </div>
       </div>
     </div>
   </div>
-</div>
 
   <!-- 編輯 Modal -->
   <div class="modal fade" id="editModal" tabindex="-1" aria-labelledby="editModalLabel" aria-hidden="true">
@@ -277,25 +314,25 @@
             <div class="card-body">
               <h6 class="card-title">點擊動作</h6>
               <div id="action-panel">
+                <div class="mb-2">
+                  <label class="form-label">Action Type</label>
+                  <select id="action-type" class="form-select">
+                    <option value="none">無</option>
+                    <option value="uri">uri</option>
+                    <option value="message">message</option>
+                    <option value="postback">postback</option>
+                  </select>
+                </div>
+                <div id="action-properties-container">
                   <div class="mb-2">
-                    <label class="form-label">Action Type</label>
-                    <select id="action-type" class="form-select">
-                      <option value="none">無</option>
-                      <option value="uri">uri</option>
-                      <option value="message">message</option>
-                      <option value="postback">postback</option>
-                    </select>
+                    <label class="form-label">Label</label>
+                    <input type="text" class="form-control" id="action-label" />
                   </div>
-                  <div id="action-properties-container">
-                    <div class="mb-2">
-                      <label class="form-label">Label</label>
-                      <input type="text" class="form-control" id="action-label" />
-                    </div>
-                    <div class="mb-2">
-                      <label id="action-uri-label" class="form-label">URI</label>
-                      <input type="text" class="form-control" id="action-uri" />
-                    </div>
+                  <div class="mb-2">
+                    <label id="action-uri-label" class="form-label">URI</label>
+                    <input type="text" class="form-control" id="action-uri" />
                   </div>
+                </div>
               </div>
             </div>
           </div>
@@ -326,6 +363,8 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js"></script>
+  <!-- html2canvas for generating thumbnails -->
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <script type="module" src="js/flex2html.js"></script>
   <script type="module" src="js/flex_builder.js"></script>
   <!-- script src="../js/flex_builder.js"></script -->
@@ -371,4 +410,5 @@
     </div>
   </div>
 </body>
+
 </html>

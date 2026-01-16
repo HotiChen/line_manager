@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LINE Bot 流程設計器</title>
+
+    <!-- Bootstrap -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+
+    <!-- React Flow CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reactflow@11.10.1/dist/style.css">
+
+    <!-- Flex2HTML CSS -->
+    <link rel="stylesheet" href="../css/flex2html.css">
+    <link rel="stylesheet" href="../css/flex-reusable.css">
+    <link rel="stylesheet" href="../css/flex-preview-fix.css">
+
+    <!-- Toast & Loader CSS -->
+    <link rel="stylesheet" href="../css/loader.css">
+
+    <style>
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        #toolbar {
+            background: #2c3e50;
+            color: white;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        #flow-canvas {
+            flex: 1;
+            position: relative;
+            background: #f5f5f5;
+            background-image:
+                linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+            background-size: 20px 20px;
+            overflow: auto;
+            cursor: grab;
+        }
+
+        #flow-canvas.panning {
+            cursor: grabbing;
+        }
+
+        #canvas-content {
+            position: relative;
+            width: 5000px;
+            /* 大畫布 */
+            height: 5000px;
+            min-width: 100%;
+            min-height: 100%;
+        }
+
+        .react-flow__node {
+            background: white;
+            border: 2px solid #3498db;
+            border-radius: 8px;
+            padding: 10px;
+            min-width: 180px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .react-flow__node.selected {
+            border-color: #e74c3c;
+            box-shadow: 0 0 0 2px rgba(231, 76, 60, 0.2);
+        }
+
+        /* ✅ 多選節點樣式 */
+        .react-flow__node.multi-selected,
+        .flow-node.multi-selected {
+            border-color: #3498db;
+            box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.3);
+            background: rgba(52, 152, 219, 0.05);
+        }
+
+        .node-header {
+            font-weight: bold;
+            margin-bottom: 8px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #ecf0f1;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .node-richmenu {
+            border-color: #9b59b6;
+        }
+
+        .node-message {
+            border-color: #3498db;
+        }
+
+        .node-action {
+            border-color: #f39c12;
+        }
+
+        .node-end {
+            border-color: #e74c3c;
+        }
+
+        .context-menu {
+            position: fixed;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            padding: 8px 0;
+            z-index: 1000;
+            min-width: 200px;
+            max-height: 80vh;
+            /* 最大高度為視窗高度的 80% */
+            overflow-y: auto;
+            /* 垂直滾動 */
+            overflow-x: hidden;
+            /* 隱藏水平滾動 */
+        }
+
+        /* 右鍵選單滾動條樣式 */
+        .context-menu::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .context-menu::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+
+        .context-menu::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
+        }
+
+        .context-menu::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+
+        .context-menu-item {
+            padding: 10px 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .context-menu-item:hover {
+            background: #f8f9fa;
+        }
+
+        .context-menu-divider {
+            height: 1px;
+            background: #dee2e6;
+            margin: 4px 0;
+        }
+
+        #sidebar {
+            position: fixed;
+            right: 0;
+            top: 60px;
+            bottom: 0;
+            width: 300px;
+            background: white;
+            border-left: 1px solid #ddd;
+            padding: 20px;
+            overflow-y: auto;
+            transform: translateX(100%);
+            transition: transform 0.3s;
+            z-index: 100;
+        }
+
+        #sidebar.show {
+            transform: translateX(0);
+        }
+
+        /* 節點編輯器側邊欄 */
+        #flow-node-editor {
+            position: fixed;
+            left: 0;
+            top: 60px;
+            bottom: 0;
+            width: 350px;
+            background: white;
+            border-right: 1px solid #ddd;
+            box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+            overflow-y: auto;
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+            z-index: 150;
+        }
+
+        #flow-node-editor.active {
+            transform: translateX(0);
+        }
+
+        /* 編輯器表單樣式 */
+        .node-editor-form {
+            padding: 20px;
+        }
+
+        .node-editor-form h5 {
+            color: #2c3e50;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #3498db;
+        }
+
+        .node-editor-form .form-label {
+            font-weight: 600;
+            color: #34495e;
+            margin-bottom: 8px;
+        }
+
+        .node-editor-form .form-control,
+        .node-editor-form .form-select {
+            border-radius: 6px;
+        }
+
+        .node-editor-form .btn {
+            border-radius: 6px;
+            font-weight: 500;
+        }
+
+        .node-editor-form small.text-muted {
+            display: block;
+            margin-top: 4px;
+        }
+
+        .node-editor-form small.text-danger {
+            font-weight: 600;
+        }
+
+        .node-button {
+            display: block;
+            width: 100%;
+            padding: 8px 12px;
+            margin: 4px 0;
+            background: #ecf0f1;
+            border: 1px solid #bdc3c7;
+            border-radius: 4px;
+            text-align: left;
+            font-size: 12px;
+        }
+
+        .react-flow__handle {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .react-flow__handle-left {
+            left: -5px;
+        }
+
+        .react-flow__handle-right {
+            right: -5px;
+        }
+
+        /* Flex Message 顯示修復 */
+        .flow-node * {
+            opacity: 1 !important;
+        }
+
+        .flow-node .MdTxt,
+        .flow-node .MdSpn,
+        .flow-node .MdBtn {
+            opacity: 1 !important;
+        }
+
+        .flow-node .MdBtn a {
+            opacity: 1 !important;
+            text-decoration: none !important;
+        }
+
+        /* 確保圖片正常顯示 */
+        .flow-node .MdImg img,
+        .flow-node .MdImg span {
+            opacity: 1 !important;
+            display: block !important;
+        }
+
+        /* 修復 background-image 圖片顯示 */
+        .flow-node .MdImg span {
+            background-size: cover !important;
+            background-position: center !important;
+            background-repeat: no-repeat !important;
+            width: 100% !important;
+            height: 100% !important;
+        }
+
+        .flow-node .MdImg>div {
+            position: relative !important;
+            width: 100% !important;
+        }
+
+        .flow-node .MdImg>div>a {
+            display: block !important;
+            position: relative !important;
+            width: 100% !important;
+        }
+
+        /* Hero 圖片 */
+        .flow-node .t1Hero .MdImg {
+            display: block !important;
+        }
+
+        /* 確保圖片容器有尺寸 */
+        .flow-node .MdImg.ExCover,
+        .flow-node .MdImg.ExFit {
+            display: block !important;
+            width: 100% !important;
+        }
+
+        /* ✅ 強制圖片可見 */
+        .flow-node img {
+            opacity: 1 !important;
+            visibility: visible !important;
+            display: block !important;
+        }
+
+        /* ✅ 針對 Flex2Html 的圖片背景 */
+        .flow-node .MdImg\u003ediv[style*="background-image"] {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+        }
+
+        /* ✅ 確保所有 Flex 元素可見 */
+        .flex-preview-wrapper,
+        .flex-preview-wrapper * {
+            opacity: 1 !important;
+            visibility: visible !important;
+        }
+
+        /* Flex 容器樣式 */
+        .flow-node .lyItem {
+            background: white !important;
+            border-radius: 12px !important;
+            overflow: hidden !important;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
+            border: 1px solid #e0e0e0 !important;
+        }
+
+        /* Carousel 中的卡片間距 */
+        .flow-node .LySlider .lyItem+.lyItem {
+            margin-left: 10px !important;
+        }
+
+        /* T1 容器也添加陰影（針對單個 Bubble） */
+        .flow-node .chatbox>.T1 {
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
+            border: 1px solid #e0e0e0 !important;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="container">
+        <!-- 工具列 -->
+        <div id="toolbar">
+            <div>
+                <h5 class="mb-0">
+                    <i class="bi bi-diagram-3"></i>
+                    LINE Bot 流程設計器
+                </h5>
+            </div>
+            <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-outline-light" onclick="flowDesigner.clearFlow()">
+                    <i class="bi bi-file-earmark"></i> 新建
+                </button>
+                <button class="btn btn-sm btn-outline-light" onclick="flowDesigner.loadFlow()" style="display: none;">
+                    <i class="bi bi-folder-open"></i> 載入
+                </button>
+                <button class="btn btn-sm btn-light" onclick="flowDesigner.saveFlow()" style="display: none;">
+                    <i class="bi bi-save"></i> 儲存
+                </button>
+                <button class="btn btn-sm btn-info" onclick="flowDesigner.reloadFlow()" title="重新載入最新流程資料">
+                    <i class="bi bi-arrow-clockwise"></i> 重新載入
+                </button>
+                <button class="btn btn-sm btn-success" onclick="flowDesigner.testFlow()" style="display: none;">
+                    <i class="bi bi-play-circle"></i> 測試
+                </button>
+                <button class="btn btn-sm btn-outline-light" onclick="flowDesigner.toggleSidebar()" title="顯示/隱藏屬性面板">
+                    <i class="bi bi-layout-sidebar-reverse"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- 畫布 -->
+        <div id="flow-canvas"></div>
+
+        <!-- 側邊欄（屬性面板） -->
+        <div id="sidebar">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h6 class="mb-0">節點屬性</h6>
+                <button class="btn btn-sm btn-outline-secondary" onclick="flowDesigner.toggleSidebar()" title="關閉">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+            <div id="node-properties">
+                <p class="text-muted">請選擇一個節點</p>
+            </div>
+        </div>
+
+        <!-- 節點編輯器側邊欄 -->
+        <div id="flow-node-editor">
+            <!-- 動態生成的編輯表單會插入這裡 -->
+        </div>
+    </div>
+
+    <!-- Richmenu 編輯器 Modal -->
+    <div class="modal fade" id="richmenu-editor-modal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog modal-xl" style="max-width: 80%; height: 90vh;">
+            <div class="modal-content">
+                <div class="modal-header bg-light">
+                    <h5 class="modal-title">
+                        <i class="bi bi-grid-3x3-gap me-2"></i>Richmenu 編輯器
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+                </div>
+                <div class="modal-body p-0" id="richmenu-editor-container" style="height: calc(90vh - 60px);">
+                    <!-- 用 iframe 嵌入完整的 richmenu.html -->
+                    <iframe id="richmenu-iframe" src="" style="width: 100%; height: 100%; border: none;">
+                    </iframe>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Flex Message 預覽 Modal -->
+    <div class="modal fade" id="flexPreviewModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Flex Message 預覽</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="flexPreviewContent" style="background: #f0f0f0; padding: 20px;">
+                    <!-- Flex Message 會渲染在這裡 -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 確認對話框 Modal -->
+    <div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="confirmModalTitle">確認</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+                </div>
+                <div class="modal-body" id="confirmModalBody">
+                    <!-- 動態內容 -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-danger" id="confirmModalConfirm">確定</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="position-fixed top-0 end-0 p-3" style="z-index: 9999;"></div>
+
+    <!-- React & React Flow (CDN) -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/reactflow@11.10.1/dist/umd/index.js"></script>
+
+    <!-- Bootstrap -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <!-- Toast 通知系統 -->
+    <script src="../helper/toast.js"></script>
+
+    <!-- DOMPurify (必要的安全依賴) -->
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+
+    <!-- Flex 渲染模組 -->
+    <script type="module" src="../js/flex2html.js"></script>
+    <script type="module" src="../js/flexcards.js"></script>
+
+    <script type="module">
+        // 導入 pageInit 函數
+        import { pageInit } from '../js/flow_designer.js';
+
+        // pageInit 會自動執行（在 flow_designer.js 底部）
+        // 或者可以手動呼叫（如果從主頁面導航）
+        console.log('📄 Flow Designer 頁面已載入');
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,55 @@
+/* ✅ swiper 的 wrapper 也要允許超出避免裁切 */
+.swiper-wrapper {
+  overflow: visible !important;
+  display: flex;
+  align-items: center;
+  /* ❌ 移除 justify-content: center;，避免與 centeredSlides 衝突 */
+}
+
+.swiper-outer-container {
+  padding: 0 24px;
+}
+
+.swiper-container {
+  scroll-snap-type: x mandatory;
+  width: 100%;
+  max-width: 1200px;
+  padding-top: 20px;
+  padding-bottom: 20px;
+  margin: 0 auto;
+  /* ✅ 修正語法錯誤，讓整體置中 */
+  overflow: hidden;
+  /* ✅ 隱藏超出內容 */
+  box-sizing: border-box;
+  /* ✅ 移除紅色邊框 */
+}
+
+.swiper-slide {
+  background-position: center;
+  background-size: cover;
+  background-color: #ffffff;
+  color: black;
+  /* ✅ 寬度由 JS 控制 */
+  max-width: 400px;
+  /* ✅ 移除 margin，讓 Swiper 自動處理間距 */
+  flex-shrink: 0;
+  overflow: visible;
+  box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.75), 0 6px 20px 0 rgba(0, 0, 0, 0.19);
+  border-radius: 18px;
+  max-height: 600px;
+  /* ✅ 移除 justify-content 和 align-items，避免與 centeredSlides 衝突 */
+}
+
+/* ✅ 確保卡片內容自動撐開高度 */
+.swiper-slide .lyItem {
+  border-radius: 16px;
+  overflow: hidden;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.slider-container>.bubble-item {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+}

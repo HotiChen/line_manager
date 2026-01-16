@@ -1,24 +1,33 @@
-let projectData = {}; // To store project names and tokens
-// let userId = null; // Module-level userId removed
 import { setInnerHTML } from "../helper/security.js";
 import { apiBase, getUserId, setUserId } from "../helper/state.js";
+import { api } from "../helper/api.client.js";
+import { showConfirm } from "../helper/modal.helper.js";
+
+let projectData = {}; // 用於存儲專案名稱和 Token 的對應
 
 export async function pageInit(pageData) {
-  setUserId(pageData.userId);
-  const userId = getUserId();
-  if (window.debug) console.log(`[profile.js] ✅ pageInit 被執行，傳入的 userId: ${userId}`);
-
-  await loadUserProfile(); // 載入現有使用者資料
-
-  // ⏳ 若 DOM 尚未準備好，延後執行 loadProfile
-  if (!document.getElementById("project-select")) {
-    console.warn("[profile.js] ❌ 專案選單尚未載入，延後執行 loadProfile()");
-    requestAnimationFrame(() => {
-      loadProfile();
-    });
-    return;
+  // 如果有傳入 userId，更新 state
+  if (pageData && pageData.userId) {
+    setUserId(pageData.userId);
   }
 
+  const currentUserId = getUserId();
+
+  // 1. 載入使用者個人資料 (Profile)
+  await loadUserProfile();
+
+  // 2. 載入專案列表 (Access Tokens & Bots)
+  // 若 DOM 尚未準備好，延後執行
+  if (!document.getElementById("project-select")) {
+    console.warn("[profile.js] ⏳ DOM 未就緒，延後載入專案列表");
+    requestAnimationFrame(loadProfile);
+  } else {
+    await loadProfile();
+    bindEvents(); // 綁定按鈕事件
+  }
+}
+
+function bindEvents() {
   const addBtn = document.getElementById("add-project");
   const editBtn = document.getElementById("edit-project");
   const deleteBtn = document.getElementById("delete-project");
@@ -26,168 +35,73 @@ export async function pageInit(pageData) {
   const submitEditBtn = document.getElementById("submit-edit-project");
   const submitAddBtn = document.getElementById("submit-add-project");
 
-  if (!addBtn || !editBtn || !deleteBtn || !saveBtn || !submitEditBtn || !submitAddBtn) {
-    console.warn("[profile.js] ❗ 找不到按鈕元素，請確認 DOM 是否正確載入");
-  } else {
-    console.log("[profile.js] ✅ 成功綁定按鈕");
-
-    saveBtn.addEventListener("click", registerProfile);
-
-    addBtn.addEventListener("click", () => {
-      console.log("[profile.js] 🔘 點擊：新增按鈕");
-      const modal = new bootstrap.Modal(document.getElementById("add-modal"));
-      modal.show();
-    });
-
-    editBtn.addEventListener("click", () => {
-      console.log("[profile.js] 🔘 點擊：編輯按鈕");
-      const selectedProject = document.getElementById("project-select")?.value;
-      if (!selectedProject || selectedProject === "請選擇專案") {
-        showStatusMessage("請先從下拉選單中選擇一個專案", true);
-        return;
-      }
-
-      const projectToken = projectData[selectedProject];
-
-      document.getElementById("edit-project-name").value = selectedProject;
-      document.getElementById("edit-project-token").value = projectToken;
-
-      const modal = new bootstrap.Modal(document.getElementById("edit-modal"));
-      modal.show();
-    });
-
-    deleteBtn.addEventListener("click", async () => {
-      console.log("[profile.js] 🔘 點擊：刪除按鈕");
-      const project = document.getElementById("project-select")?.value;
-      if (!project || project === "請選擇專案" || !confirm(`確定要刪除專案 \"${project}\"?`)) return;
-
-      try {
-        const res = await fetch(`${apiBase}/token/delete`, {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-            "X-User-Id": userId
-          },
-          body: JSON.stringify({ project })
-        });
-
-        const result = await res.json();
-        if (res.ok) {
-          showStatusMessage("✅ 刪除成功！");
-          if (window.debug) console.log("[deleteProject] 刪除成功:", result);
-          await loadProfile(); // 重新載入列表
-        } else {
-          showStatusMessage("❌ 刪除失敗：" + (result.error || "未知錯誤"), true);
-        }
-      } catch (err) {
-        console.error("[deleteProject] 發生錯誤:", err);
-        showStatusMessage("❌ 刪除失敗，請檢查控制台", true);
-      }
-    });
-
-    submitEditBtn.addEventListener("click", async () => {
-      const name = document.getElementById("edit-project-name").value;
-      const token = document.getElementById("edit-project-token").value.trim();
-
-      try {
-        const res = await fetch(`${apiBase}/token/register`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-User-Id": userId
-          },
-          body: JSON.stringify({ project: name, token })
-        });
-
-        const result = await res.json();
-        if (res.ok) {
-          showStatusMessage("✅ 專案已更新！");
-          // Update the local data
-          projectData[name] = token;
-        } else {
-          showStatusMessage("❌ 更新失敗：" + (result.error || "未知錯誤"), true);
-        }
-      } catch (err) {
-        console.error("[submit-edit-project] 發生錯誤:", err);
-        showStatusMessage("❌ 發生錯誤，請檢查控制台", true);
-      }
-
-      const modal = bootstrap.Modal.getInstance(document.getElementById("edit-modal"));
-      modal.hide();
-    });
-
-    submitAddBtn.addEventListener("click", async () => {
-      const name = document.getElementById("add-project-name").value.trim();
-      const token = document.getElementById("add-project-token").value.trim();
-      const lineId = document.getElementById("add-project-id").value.trim();
-
-      console.log("[profile.js] 📝 新增專案內容：", { name, token, lineId });
-
-      try {
-        const res = await fetch(`${apiBase}/token/register`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-User-Id": userId
-          },
-          body: JSON.stringify({ project: name, token })
-        });
-
-        const result = await res.json();
-        if (res.ok) {
-          showStatusMessage(`✅ 已註冊：${name}`);
-          if (window.debug) console.log("[submit-add-project] 註冊成功", result);
-          await loadProfile(); // 重新載入專案清單
-        } else {
-          showStatusMessage("❌ 註冊失敗：" + (result.error || "未知錯誤"), true);
-        }
-      } catch (err) {
-        console.error("[submit-add-project] 發生錯誤:", err);
-        showStatusMessage("❌ 發生錯誤，請檢查控制台", true);
-      }
-
-      const modal = bootstrap.Modal.getInstance(document.getElementById("add-modal"));
-      modal.hide();
-    });
+  if (!addBtn || !editBtn || !deleteBtn || !saveBtn) {
+    console.warn("[profile.js] ⚠️ 部分按鈕未找到，跳過事件綁定");
+    return;
   }
 
-  // 📌 載入現有使用者資訊
-  await loadProfile();
+  // 儲存個人資料
+  saveBtn.addEventListener("click", registerProfile);
+
+  // 開啟新增視窗
+  addBtn.addEventListener("click", () => {
+    new bootstrap.Modal(document.getElementById("add-modal")).show();
+  });
+
+  // 開啟編輯視窗
+  editBtn.addEventListener("click", () => {
+    const selectedProject = document.getElementById("project-select")?.value;
+    if (!selectedProject || selectedProject === "請選擇專案") {
+      showStatusMessage("請先選擇一個專案", true);
+      return;
+    }
+    document.getElementById("edit-project-name").value = selectedProject;
+    document.getElementById("edit-project-token").value = projectData[selectedProject] || "";
+    new bootstrap.Modal(document.getElementById("edit-modal")).show();
+  });
+
+  // 刪除專案
+  deleteBtn.addEventListener("click", deleteProject);
+
+  // 提交編輯
+  submitEditBtn.addEventListener("click", submitEditProject);
+
+  // 提交新增
+  submitAddBtn.addEventListener("click", submitAddProject);
 }
 
+/**
+ * 載入使用者個人資料
+ */
 async function loadUserProfile() {
-  console.log("[profile] loading id:" + userId)
+  const userId = getUserId();
   try {
-    const res = await fetch(`${apiBase}/profile/check`, {
-      headers: { "X-User-Id": userId }
-    });
+    // ApiClient already returns parsed JSON, no need for .json()
+    const data = await api.post('/profile/check');
 
-    const data = await res.json();
     if (data.exists && data.profile) {
-      if (window.debug) console.log("[profile.js] ✅ 已取得使用者資料", data.profile);
-
       document.getElementById("user-name").value = data.profile.userName || "";
       document.getElementById("user-email").value = data.profile.userEmail || "";
       document.getElementById("line-id").value = data.profile.lineDisplayName || "";
     }
   } catch (err) {
-    console.error("[profile.js] ❌ 無法載入使用者資料:", err);
+    console.error("[profile.js] ❌ 載入 Profile 失敗:", err);
   }
 }
 
+/**
+ * 載入專案列表 (包含 Access Tokens 和 Team Bots)
+ */
 async function loadProfile() {
+  const userId = getUserId();
   try {
-    const res = await fetch(`${apiBase}/token/list`, {
-      headers: { "X-User-Id": userId }
-    });
-    projectData = await res.json();
-
-    if (window.debug) console.log("[loadProfile] 已載入 token list:", projectData);
+    // ApiClient already returns parsed JSON, no need for .json()
+    projectData = await api.get('/token/list');
 
     const projectSelect = document.getElementById("project-select");
-
     if (projectSelect) {
       setInnerHTML(projectSelect, "<option selected disabled>請選擇專案</option>");
+
       Object.entries(projectData).forEach(([project, token]) => {
         const option = document.createElement("option");
         option.value = project;
@@ -195,74 +109,167 @@ async function loadProfile() {
         projectSelect.appendChild(option);
       });
 
-      projectSelect.addEventListener("change", () => {
-        const selected = projectSelect.value;
-        console.log("[profile.js] 使用者選擇專案：", selected);
-
-        // Enable/disable buttons based on selection
-        const editBtn = document.getElementById("edit-project");
-        const deleteBtn = document.getElementById("delete-project");
-        if (selected && selected !== "請選擇專案") {
-          editBtn.disabled = false;
-          deleteBtn.disabled = false;
-        } else {
-          editBtn.disabled = true;
-          deleteBtn.disabled = true;
-        }
-      });
+      // 綁定選擇變更事件
+      projectSelect.onchange = () => {
+        const hasSelection = projectSelect.value && projectSelect.value !== "請選擇專案";
+        document.getElementById("edit-project").disabled = !hasSelection;
+        document.getElementById("delete-project").disabled = !hasSelection;
+      };
     }
   } catch (err) {
-    console.error("[loadProfile] 發生錯誤:", err);
+    console.error("[profile.js] ❌ 載入專案列表失敗:", err);
   }
 }
 
+/**
+ * 註冊/更新個人資料
+ */
 async function registerProfile() {
-  const userName = document.getElementById("user-name").value.trim();
-  const userEmail = document.getElementById("user-email").value.trim();
-  const lineDisplayName = document.getElementById("line-id").value.trim();
-
-  const requestBody = { userName, userEmail, lineDisplayName };
-  const requestHeaders = {
-    "Content-Type": "application/json",
-    "X-User-Id": userId
+  const userId = getUserId();
+  const body = {
+    userName: document.getElementById("user-name").value.trim(),
+    userEmail: document.getElementById("user-email").value.trim(),
+    lineDisplayName: document.getElementById("line-id").value.trim()
   };
 
-  console.log("[registerProfile] 📤 即將發送至後端的資料:", {
-    url: `${apiBase}/profile/register`,
-    method: "POST",
-    headers: requestHeaders,
-    body: requestBody
+  // 添加確認對話框
+  const confirmed = await showConfirm({
+    title: '儲存個人資料',
+    message: '確定要儲存個人資料嗎？',
+    type: 'info',
+    confirmText: '儲存',
+    cancelText: '取消'
   });
 
-  try {
-    const res = await fetch(`${apiBase}/profile/register`, {
-      method: "POST",
-      headers: requestHeaders,
-      body: JSON.stringify(requestBody)
-    });
+  if (!confirmed) return;
 
-    const result = await res.json();
-    if (res.ok) {
+  try {
+    const result = await api.post('/profile/register', body);
+
+    if (result.success || result.ok) {
       showStatusMessage("✅ 個人資料已儲存！");
-      if (window.debug) console.log("[registerProfile] 成功：", result);
     } else {
       showStatusMessage("❌ 儲存失敗：" + (result.error || "未知錯誤"), true);
     }
   } catch (err) {
-    console.error("[registerProfile] 發生錯誤：", err);
-    showStatusMessage("❌ 發生錯誤，請查看控制台", true);
+    console.error('[registerProfile] 錯誤:', err);
+    if (err instanceof Response) {
+      try {
+        const errorData = await err.json();
+        showStatusMessage("❌ 儲存失敗：" + (errorData.error || err.statusText), true);
+      } catch {
+        showStatusMessage("❌ 儲存失敗：" + err.statusText, true);
+      }
+    } else {
+      showStatusMessage("❌ 系統錯誤", true);
+    }
   }
 }
 
-function showStatusMessage(message, isError = false) {
-  const statusEl = document.getElementById("status");
-  if (!statusEl) return;
+async function deleteProject() {
+  const project = document.getElementById("project-select")?.value;
+  const confirmed = await showConfirm({
+    title: '刪除專案',
+    message: `確定要刪除專案 "${project}"？`,
+    type: 'danger',
+    confirmText: '刪除',
+    cancelText: '取消'
+  });
 
-  statusEl.textContent = message;
-  statusEl.className = isError ? "fw-bold text-danger" : "fw-bold text-success";
+  if (!confirmed) return;
 
-  setTimeout(() => {
-    statusEl.textContent = "";
-    statusEl.className = "fw-bold";
-  }, 3000);
+  try {
+    // DELETE 請求需要用 POST 方式傳送 body
+    const result = await api.post('/token/delete', { project });
+
+    if (result.success) {
+      showStatusMessage("✅ 刪除成功");
+      await loadProfile();
+    } else {
+      showStatusMessage("❌ 刪除失敗：" + (result.error || "未知錯誤"), true);
+    }
+  } catch (err) {
+    console.error('[deleteProject] 錯誤:', err);
+    if (err instanceof Response) {
+      try {
+        const errorData = await err.json();
+        showStatusMessage("❌ 刪除失敗：" + (errorData.error || err.statusText), true);
+      } catch {
+        showStatusMessage("❌ 刪除失敗：" + err.statusText, true);
+      }
+    } else {
+      showStatusMessage("❌ 系統錯誤", true);
+    }
+  }
+}
+
+async function submitEditProject() {
+  const name = document.getElementById("edit-project-name").value;
+  const token = document.getElementById("edit-project-token").value.trim();
+  await saveProject(name, token, "edit-modal");
+}
+
+async function submitAddProject() {
+  const name = document.getElementById("add-project-name").value.trim();
+  const token = document.getElementById("add-project-token").value.trim();
+  await saveProject(name, token, "add-modal");
+}
+
+async function saveProject(name, token, modalId) {
+  if (!name || !token) {
+    showStatusMessage("❌ 請填寫專案名稱和 Token", true);
+    return;
+  }
+
+  try {
+    // api.post 會直接返回解析後的 JSON，而非 Response 物件
+    const result = await api.post('/token/register', { project: name, token });
+
+    if (result.success || result.destination) {
+      showStatusMessage(`✅ 專案 ${name} 已儲存`);
+      projectData[name] = token;
+      await loadProfile();
+
+      // 關閉 Modal
+      const modalEl = document.getElementById(modalId);
+      if (modalEl) {
+        const instance = bootstrap.Modal.getInstance(modalEl);
+        if (instance) {
+          instance.hide();
+          setTimeout(() => {
+            document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+            document.body.classList.remove('modal-open');
+            document.body.style.removeProperty('overflow');
+            document.body.style.removeProperty('padding-right');
+          }, 300);
+        }
+      }
+    } else {
+      showStatusMessage("❌ 儲存失敗：" + (result.error || "未知錯誤"), true);
+    }
+  } catch (err) {
+    console.error('[saveProject] 錯誤:', err);
+    // err 可能是一個 Response 物件（從 api.client 拋出）
+    if (err instanceof Response) {
+      try {
+        const errorData = await err.json();
+        showStatusMessage("❌ 儲存失敗：" + (errorData.error || errorData.message || err.statusText), true);
+      } catch {
+        showStatusMessage("❌ 儲存失敗：" + err.statusText, true);
+      }
+    } else if (err.error) {
+      showStatusMessage("❌ 儲存失敗：" + err.error, true);
+    } else {
+      showStatusMessage("❌ 系統錯誤", true);
+    }
+  }
+}
+
+function showStatusMessage(msg, isError = false) {
+  const el = document.getElementById("status");
+  if (el) {
+    el.textContent = msg;
+    el.className = isError ? "fw-bold text-danger" : "fw-bold text-success";
+    setTimeout(() => el.textContent = "", 3000);
+  }
 }

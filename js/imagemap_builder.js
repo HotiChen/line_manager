@@ -16,11 +16,15 @@ import {
   clearMessageCache,
   refreshMessageType,
   searchMessages,
-  uploadImage
+  uploadImage,
+  MessageFactory
 } from "../helper/message.helper.js?v=1763312843";
+import { getUserId } from '../helper/state.js';
+import { api } from '../helper/api.client.js';
+import { setInnerHTML } from '../helper/security.js';
 
 import { showLoader, hideLoader } from './shared/loader.js';
-import { getUserId, setUserId, apiBase } from "../helper/state.js";
+import { setUserId, apiBase } from "../helper/state.js";
 
 let processedImageFile = null; // To store the processed image file
 
@@ -221,22 +225,124 @@ export async function pageInit(pageData) {
 
   // 更新區域資料表格
   function updateTable() {
-    areasTable.innerHTML = "";
+    setInnerHTML(areasTable, '');
+
     areas.forEach((a, idx) => {
-      const row = document.createElement("tr");
-      row.innerHTML = `
-        <td>${idx + 1}</td>
-        <td>${a.area.x}</td>
-        <td>${a.area.y}</td>
-        <td>${a.area.width}</td>
-        <td>${a.area.height}</td>
-        <td>${a.type}</td>
-        <td>${a.text}</td>
-        <td>
-          <button class="btn btn-sm btn-primary me-1" onclick="editArea(${idx})">編輯</button>
-          <button class="btn btn-sm btn-danger" onclick="removeArea(${idx})">刪除</button>
-        </td>
-      `;
+      const row = document.createElement('tr');
+      row.style.cursor = 'pointer';
+      row.style.transition = 'background-color 0.2s';
+
+      // Hover 效果
+      row.addEventListener('mouseenter', () => {
+        row.style.backgroundColor = '#f8f9fa';
+      });
+      row.addEventListener('mouseleave', () => {
+        row.style.backgroundColor = '';
+      });
+
+      // 第1欄: 序號
+      const cell1 = document.createElement('td');
+      cell1.className = 'text-center';
+      cell1.textContent = idx + 1;
+
+      // 第2欄: 座標與尺寸
+      const cell2 = document.createElement('td');
+      cell2.style.fontSize = '0.85rem';
+      const x = a.area?.x ?? 0;
+      const y = a.area?.y ?? 0;
+      const width = a.area?.width ?? 0;
+      const height = a.area?.height ?? 0;
+
+      // 第一行: X, Y
+      const line1 = document.createElement('div');
+      const xLabel = document.createElement('strong');
+      xLabel.textContent = 'X:';
+      line1.appendChild(xLabel);
+      line1.appendChild(document.createTextNode(` ${x}, `));
+      const yLabel = document.createElement('strong');
+      yLabel.textContent = 'Y:';
+      line1.appendChild(yLabel);
+      line1.appendChild(document.createTextNode(` ${y}`));
+
+      // 第二行: W, H
+      const line2 = document.createElement('div');
+      line2.className = 'text-muted';
+      const wLabel = document.createElement('strong');
+      wLabel.textContent = 'W:';
+      line2.appendChild(wLabel);
+      line2.appendChild(document.createTextNode(` ${width}, `));
+      const hLabel = document.createElement('strong');
+      hLabel.textContent = 'H:';
+      line2.appendChild(hLabel);
+      line2.appendChild(document.createTextNode(` ${height}`));
+
+      cell2.appendChild(line1);
+      cell2.appendChild(line2);
+
+      // 第3欄: 類型
+      const cell3 = document.createElement('td');
+      const typeConfig = {
+        uri: { icon: '🔗', label: '網址', color: 'primary' },
+        message: { icon: '💬', label: '文字訊息', color: 'success' },
+        postback: { icon: '📦', label: '回傳', color: 'info' }
+      };
+      const config = typeConfig[a.type] || { icon: '❓', label: a.type, color: 'secondary' };
+      const badge = document.createElement('span');
+      badge.className = `badge bg-${config.color}`;
+      badge.style.fontSize = '0.85rem';
+      badge.textContent = `${config.icon} ${config.label}`;
+      cell3.appendChild(badge);
+
+      // 第4欄: 內容
+      const cell4 = document.createElement('td');
+      cell4.style.maxWidth = '300px';
+      cell4.style.overflow = 'hidden';
+      cell4.style.textOverflow = 'ellipsis';
+      cell4.style.whiteSpace = 'nowrap';
+
+      let contentDisplay = '';
+      if (a.type === 'uri') {
+        contentDisplay = a.linkUri || a.uri || '';
+      } else if (a.type === 'message') {
+        contentDisplay = a.text || '';
+      } else {
+        contentDisplay = a.text || a.data || '';
+      }
+      cell4.title = contentDisplay;
+      cell4.textContent = contentDisplay;
+
+      // 第5欄: 操作按鈕
+      const cell5 = document.createElement('td');
+      cell5.className = 'text-center';
+
+      const editBtn = document.createElement('button');
+      editBtn.className = 'btn btn-sm btn-outline-primary me-1';
+      editBtn.title = '編輯';
+      editBtn.textContent = '✏️';
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        editArea(idx);
+      });
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'btn btn-sm btn-outline-danger';
+      deleteBtn.title = '刪除';
+      deleteBtn.textContent = '🗑️';
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeArea(idx);
+      });
+
+      cell5.appendChild(editBtn);
+      cell5.appendChild(deleteBtn);
+
+      // 組裝
+      row.appendChild(cell1);
+      row.appendChild(cell2);
+      row.appendChild(cell3);
+      row.appendChild(cell4);
+      row.appendChild(cell5);
+
       areasTable.appendChild(row);
     });
   }
@@ -264,7 +370,7 @@ export async function pageInit(pageData) {
     const area = areas[index];
     const modalEl = document.getElementById("edit-modal");
     const replyContainer = document.getElementById("reply-dynamic-fields");
-    replyContainer.innerHTML = '<p class="text-muted">載入中...</p>'; // 顯示載入狀態
+    setInnerHTML(replyContainer, '<p class="text-muted">載入中...</p>'); // 顯示載入狀態
 
     const editModal = new bootstrap.Modal(modalEl);
     editModal.show();
@@ -284,7 +390,7 @@ export async function pageInit(pageData) {
       initialReply: replyForUI
     });
 
-    replyContainer.innerHTML = '';
+    setInnerHTML(replyContainer, '');
     replyContainer.appendChild(ui);
 
     // 隱藏「儲存」按鈕，顯示「更新」按鈕
@@ -451,7 +557,16 @@ export async function pageInit(pageData) {
     document.getElementById("menu-name").value = name;
     document.getElementById("new-imagemap-form").reset();
     document.getElementById("image-preview").style.display = "none";
-    bootstrap.Modal.getInstance(document.getElementById("new-imagemap-modal"))?.hide();
+    const newImagemapModal = bootstrap.Modal.getInstance(document.getElementById("new-imagemap-modal"));
+    if (newImagemapModal) {
+      newImagemapModal.hide();
+      setTimeout(() => {
+        document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+        document.body.classList.remove('modal-open');
+        document.body.style.removeProperty('overflow');
+        document.body.style.removeProperty('padding-right');
+      }, 300);
+    }
     console.log("[Confirm Click] 表單已重設，Modal 已隱藏。");
 
     // --- Create new ImageMap object ---
@@ -541,7 +656,15 @@ export async function pageInit(pageData) {
     }
 
     const editModal = bootstrap.Modal.getInstance(document.getElementById("edit-modal"));
-    editModal?.hide();
+    if (editModal) {
+      editModal.hide();
+      setTimeout(() => {
+        document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+        document.body.classList.remove('modal-open');
+        document.body.style.removeProperty('overflow');
+        document.body.style.removeProperty('padding-right');
+      }, 300);
+    }
 
     updateTable();
 
@@ -585,7 +708,15 @@ export async function pageInit(pageData) {
     }
 
     const editModal = bootstrap.Modal.getInstance(document.getElementById("edit-modal"));
-    editModal?.hide();
+    if (editModal) {
+      editModal.hide();
+      setTimeout(() => {
+        document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+        document.body.classList.remove('modal-open');
+        document.body.style.removeProperty('overflow');
+        document.body.style.removeProperty('padding-right');
+      }, 300);
+    }
     updateTable();
 
     try {
@@ -714,17 +845,10 @@ document.getElementById("upload-imagemap")?.addEventListener("click", async () =
   }
 
   try {
-    const response = await fetch(`${apiBase}/imagemap/save`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-User-Id": userId
-      },
-      body: JSON.stringify({ imagemaps: filteredImagemaps.map(i => i.toJSON()) })
-    });
+    const formData = { imagemaps: filteredImagemaps.map(i => i.toJSON()) };
+    const result = await api.post('/imagemap/save', formData);
 
-    const result = await response.json();
-    if (response.ok) {
+    if (result.success) {
       console.log("✅ 所有 ImageMaps 已成功儲存至 Worker");
       alert("✅ 上傳成功：" + (result.message || ""));
     } else {

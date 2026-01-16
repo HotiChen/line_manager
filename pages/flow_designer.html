@@ -1,0 +1,168 @@
+<!-- Flow Designer 內容頁（會被載入到 index.html 的 main 區域） -->
+<div class="container-fluid h-100" style="height: calc(100vh - 80px);">
+    <div class="row h-100">
+        <div class="col-12 h-100">
+            <!-- Flow Designer 畫布容器 -->
+            <div id="flow-canvas-wrapper" style="height: 100%; position: relative; background: #f5f5f5;">
+                <!-- 工具列 -->
+                <div id="flow-toolbar" style="
+                    position: absolute;
+                    top: 10px;
+                    right: 10px;
+                    z-index: 100;
+                    background: white;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                    padding: 10px;
+                    display: flex;
+                    gap: 8px;
+                ">
+                    <button class="btn btn-sm btn-outline-secondary" onclick="flowDesigner.clearFlow()">
+                        <i class="bi bi-file-earmark"></i> 新建
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="flowDesigner.loadFlow()">
+                        <i class="bi bi-folder-open"></i> 載入
+                    </button>
+                    <button class="btn btn-sm btn-primary" onclick="flowDesigner.saveFlow()">
+                        <i class="bi bi-save"></i> 儲存
+                    </button>
+                    <button class="btn btn-sm btn-success" onclick="flowDesigner.testFlow()">
+                        <i class="bi bi-play-circle"></i> 測試
+                    </button>
+                </div>
+
+                <!-- 畫布 -->
+                <div id="flow-canvas" style="
+                    width: 100%;
+                    height: 100%;
+                    background-image:
+                        linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+                    background-size: 20px 20px;
+                    overflow: auto;
+                    cursor: grab;
+                "></div>
+            </div>
+
+            <!-- 節點編輯器側邊欄 -->
+            <div id="flow-node-editor" style="
+                position: fixed;
+                left: 16.66666667%;
+                top: 60px;
+                bottom: 0;
+                width: 350px;
+                background: white;
+                border-right: 1px solid #ddd;
+                box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+                overflow-y: auto;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+                z-index: 2000;
+            ">
+                <!-- 動態生成的編輯表單會插入這裡 -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Confirmation Modal (required by flow_designer.js) -->
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="confirmModalTitle">確認</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="confirmModalBody">
+                <!-- Dynamic content will be inserted here -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="confirmModalConfirm">確定</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Flex Preview Modal (for previewing Flex Messages) -->
+<div class="modal fade" id="flexPreviewModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Flex Message 預覽</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="flexPreviewContent">
+                <!-- Flex preview will be rendered here -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 載入必要的 CSS -->
+<style>
+    #flow-canvas.panning {
+        cursor: grabbing;
+    }
+
+    .react-flow__node {
+        background: white;
+        border: 2px solid #3498db;
+        border-radius: 8px;
+        padding: 10px;
+        min-width: 180px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    .react-flow__node.selected {
+        border-color: #e74c3c;
+        box-shadow: 0 0 0 2px rgba(231, 76, 60, 0.2);
+    }
+
+    .node-richmenu {
+        border-color: #9b59b6;
+    }
+
+    .node-message {
+        border-color: #3498db;
+    }
+
+    .node-action {
+        border-color: #f39c12;
+    }
+
+    .node-end {
+        border-color: #e74c3c;
+    }
+
+    /* 節點編輯器側邊欄 */
+    #flow-node-editor.active {
+        transform: translateX(0);
+    }
+
+    .node-editor-form {
+        padding: 20px;
+    }
+
+    .node-editor-form h5 {
+        color: #2c3e50;
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid #3498db;
+    }
+
+    .node-editor-form .form-label {
+        font-weight: 600;
+        color: #34495e;
+        margin-bottom: 8px;
+    }
+</style>
+
+<!-- 載入 Flow Designer JavaScript -->
+<script type="module">
+    import { pageInit } from '../js/flow_designer.js';
+
+    // 執行初始化
+    console.log('📄 [Flow Designer Page] 頁面載入');
+    pageInit();
+</script>

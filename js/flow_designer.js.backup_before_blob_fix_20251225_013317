@@ -1,0 +1,4883 @@
+// js/flow_designer.js
+// LINE Bot 視覺化流程設計器
+
+import { apiBase } from '../env/config.js';
+import { getUserId } from '../helper/state.js';
+import { toast } from '../helper/toast.js';
+import { showLoader, hideLoader } from './shared/loader.js';
+import { dataLoader } from './flow_designer_data_loader.js';
+import FlowNodeAdapter from './flow_node_adapter.js';
+import { setInnerHTML } from '../helper/security.js';
+
+/**
+ * 節點類型定義
+ */
+export const NodeTypes = {
+    // 觸發器
+    RICHMENU: 'richmenu',
+    KEYWORD: 'keyword',
+    WEBHOOK: 'webhook',
+
+    // 訊息節點
+    MESSAGE_TEXT: 'message_text',
+    MESSAGE_FLEX: 'message_flex',
+    MESSAGE_IMAGEMAP: 'message_imagemap',
+    MESSAGE_IMAGE: 'message_image',
+    MESSAGE_SEQUENCE: 'message_sequence',  // 訊息序列
+
+    // 動作節點
+    ACTION_DELAY: 'action_delay',
+    ACTION_CONDITION: 'action_condition',
+    ACTION_API: 'action_api',
+    ACTION_TAG: 'action_tag',
+    URL: 'url',
+    POSTBACK: 'postback',
+
+    // 結束節點
+    END: 'end'
+};
+
+/**
+ * 節點類型配置
+ */
+export const NodeTypeConfig = {
+    [NodeTypes.RICHMENU]: {
+        label: 'Richmenu',
+        icon: 'bi-menu-button',
+        color: '#9b59b6',
+        category: 'trigger',
+        description: 'LINE Richmenu 選單',
+        multipleOutputs: true  // 支援多輸出（每個按鈕一個）
+    },
+    [NodeTypes.KEYWORD]: {
+        label: '關鍵字觸發',
+        icon: 'bi-key',
+        color: '#3498db',
+        category: 'trigger',
+        description: '當用戶輸入特定關鍵字時觸發'
+    },
+    [NodeTypes.MESSAGE_TEXT]: {
+        label: '文字訊息',
+        icon: 'bi-chat-text',
+        color: '#3498db',
+        category: 'message',
+        description: '發送文字訊息給用戶'
+    },
+    [NodeTypes.MESSAGE_IMAGE]: {
+        label: '圖片訊息',
+        icon: 'bi-image-fill',
+        color: '#3498db',
+        category: 'message',
+        description: '發送圖片給用戶'
+    },
+    [NodeTypes.MESSAGE_SEQUENCE]: {
+        label: '訊息序列',
+        icon: 'bi-chat-left-dots',
+        color: '#16a085',
+        category: 'message',
+        description: '發送多個訊息（最多5個）'
+    },
+    [NodeTypes.MESSAGE_FLEX]: {
+        label: 'Flex Message',
+        icon: 'bi-phone',
+        color: '#3498db',
+        category: 'message',
+        description: '發送 Flex 圖文訊息',
+        multipleOutputs: true  // Flex 可能有多個按鈕
+    },
+    [NodeTypes.MESSAGE_IMAGEMAP]: {
+        label: 'Imagemap',
+        icon: 'bi-image',
+        color: '#3498db',
+        category: 'message',
+        description: '發送 Imagemap 互動圖片'
+    },
+    [NodeTypes.ACTION_DELAY]: {
+        label: '延遲',
+        icon: 'bi-clock',
+        color: '#f39c12',
+        category: 'action',
+        description: '等待指定時間後繼續'
+    },
+    [NodeTypes.ACTION_CONDITION]: {
+        label: '條件判斷',
+        icon: 'bi-code-square',
+        color: '#f39c12',
+        category: 'action',
+        description: '根據條件分支流程',
+        multipleOutputs: true  // 條件有多個分支
+    },
+    [NodeTypes.ACTION_TAG]: {
+        label: '標籤操作',
+        icon: 'bi-tag',
+        color: '#f39c12',
+        category: 'action',
+        description: '為用戶新增或移除標籤'
+    },
+    [NodeTypes.URL]: {
+        label: 'URL 連結',
+        icon: 'bi-link-45deg',
+        color: '#16a085',
+        category: 'action',
+        description: '開啟網址連結'
+    },
+    [NodeTypes.POSTBACK]: {
+        label: 'Postback',
+        icon: 'bi-arrow-return-left',
+        color: '#d35400',
+        category: 'action',
+        description: 'Postback 回傳資料'
+    },
+    [NodeTypes.END]: {
+        label: '結束',
+        icon: 'bi-x-circle',
+        color: '#e74c3c',
+        category: 'end',
+        description: '流程結束點'
+    }
+};
+
+/**
+ * 流程設計器類別
+ */
+export class FlowDesigner {
+    constructor(containerId) {
+        this.container = document.getElementById(containerId);
+        this.nodes = [];
+        this.edges = [];
+        this.selectedNode = null;
+        this.flowId = null;
+        this.flowName = '未命名流程';
+
+        // 連線狀態
+        this.connectionStart = null;
+        this.isDraggingConnection = false;
+        this.tempConnection = null;
+
+        // n8n 風格連接拖拉狀態
+        this.connectionDragState = {
+            isDragging: false,
+            sourceNodeId: null,
+            sourceType: null, // 'output'
+            tempLine: null,
+            mouseX: 0,
+            mouseY: 0
+        };
+
+        // 畫布縮放
+        this.canvasZoom = 1.0;
+
+        // 框選功能
+        this.selectedNodes = [];
+
+        // ✅ Keyword cache（自動匹配用）
+        this.keywordList = null;
+        this.keywordListLoadTime = null;
+
+        // 綁定事件處理函數
+        this.boundUpdateConnectionDrag = this.updateConnectionDrag.bind(this);
+        this.boundEndConnectionDrag = this.endConnectionDrag.bind(this);
+
+        this.init();
+    }
+
+    /**
+     * 初始化設計器
+     */
+    init() {
+        console.log('🎨 初始化流程設計器...');
+        this.createSvgLayer();
+        this.setupEventListeners();
+        this.loadFromLocalStorage();
+    }
+
+    /**
+     * 創建 SVG 圖層用於繪製連線
+     */
+    createSvgLayer() {
+        // 創建內容容器
+        const content = document.createElement('div');
+        content.id = 'canvas-content';
+        content.style.position = 'relative';  // 讓 absolute 的選擇框相對於此定位
+        this.container.appendChild(content);
+        this.canvasContent = content;
+
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.id = 'connections-layer';
+        svg.style.cssText = `
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+        `;
+        content.insertBefore(svg, content.firstChild);
+        this.svgLayer = svg;
+
+        // ✨ 添加箭頭標記定義
+        const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+        const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+        marker.setAttribute('id', 'arrowhead');
+        marker.setAttribute('markerWidth', '10');
+        marker.setAttribute('markerHeight', '10');
+        marker.setAttribute('refX', '9');
+        marker.setAttribute('refY', '3');
+        marker.setAttribute('orient', 'auto');
+        marker.setAttribute('markerUnits', 'strokeWidth');
+
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', 'M0,0 L0,6 L9,3 z');
+        path.setAttribute('fill', '#94a3b8');  // 箭頭顏色（灰藍色）
+
+        marker.appendChild(path);
+        defs.appendChild(marker);
+        svg.appendChild(defs);
+
+        // 設置畫布平移
+        this.setupCanvasPanning();
+
+        // 設置框選功能
+        this.setupBoxSelection();
+
+        // 初始化畫布位置（置中）
+        this.container.scrollLeft = (this.canvasContent.offsetWidth - this.container.offsetWidth) / 2;
+        this.container.scrollTop = (this.canvasContent.offsetHeight - this.container.offsetHeight) / 2;
+    }
+
+    /**
+     * 設置畫布平移（空白處拖曳）
+     */
+    setupCanvasPanning() {
+        let isPanning = false;
+        let startX, startY, scrollLeft, scrollTop;
+
+        // 滑鼠按下
+        this.container.addEventListener('mousedown', (e) => {
+            // 只在點擊空白處且未按 Alt 時觸發（Alt 用於框選）
+            if (!e.altKey && (e.target === this.container || e.target === this.canvasContent)) {
+                isPanning = true;
+                this.container.classList.add('panning');
+                startX = e.clientX;
+                startY = e.clientY;
+                scrollLeft = this.container.scrollLeft;
+                scrollTop = this.container.scrollTop;
+                e.preventDefault();
+            }
+        });
+
+        // 滑鼠移動
+        document.addEventListener('mousemove', (e) => {
+            if (!isPanning) return;
+
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+
+            this.container.scrollLeft = scrollLeft - dx;
+            this.container.scrollTop = scrollTop - dy;
+        });
+
+        // 滑鼠放開
+        document.addEventListener('mouseup', () => {
+            if (isPanning) {
+                isPanning = false;
+                this.container.classList.remove('panning');
+            }
+        });
+
+        // ✨ 滾輪縮放（Ctrl + 滾輪）
+        this.container.addEventListener('wheel', (e) => {
+            if (e.ctrlKey) {
+                e.preventDefault();
+
+                // 根據滾輪方向縮放
+                const delta = e.deltaY > 0 ? -0.1 : 0.1;
+
+                // 計算滑鼠位置（用於縮放中心點）
+                const rect = this.container.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+
+                this.zoomAtPoint(delta, mouseX, mouseY);
+            }
+        }, { passive: false });
+
+        // ✨ 觸控板/觸控螢幕手勢支援
+        this.setupTouchGestures();
+    }
+
+    /**
+     * 設置框選功能 (Alt + 拖拉)
+     */
+    setupBoxSelection() {
+        let isBoxSelecting = false;
+        let startX, startY;
+        let selectionBox = null;
+
+        // 創建選擇框元素
+        const createSelectionBox = () => {
+            if (!selectionBox) {
+                selectionBox = document.createElement('div');
+                selectionBox.id = 'selection-box';
+                selectionBox.style.cssText = `
+                    position: absolute;
+                    border: 3px dashed #3498db;
+                    background: rgba(52, 152, 219, 0.2);
+                    pointer-events: none;
+                    z-index: 10000;
+                    display: none;
+                    box-shadow: 0 0 10px rgba(52, 152, 219, 0.5);
+                `;
+                this.canvasContent.appendChild(selectionBox);
+            }
+            return selectionBox;
+        };
+
+        // 更新選擇框位置和大小
+        const updateSelectionBox = (currentX, currentY) => {
+            const box = createSelectionBox();
+            const left = Math.min(startX, currentX);
+            const top = Math.min(startY, currentY);
+            const width = Math.abs(currentX - startX);
+            const height = Math.abs(currentY - startY);
+
+            box.style.left = `${left}px`;
+            box.style.top = `${top}px`;
+            box.style.width = `${width}px`;
+            box.style.height = `${height}px`;
+            box.style.display = 'block';
+        };
+
+        // 檢查節點是否在選擇框內
+        const isNodeInBox = (node, boxRect) => {
+            const nodeElement = document.getElementById(node.id);
+            if (!nodeElement) return false;
+
+            const nodeRect = nodeElement.getBoundingClientRect();
+            const canvasRect = this.canvasContent.getBoundingClientRect();
+
+            // 座標轉換 - 考慮 zoom
+            const nodeLeft = (nodeRect.left - canvasRect.left) / this.canvasZoom;
+            const nodeTop = (nodeRect.top - canvasRect.top) / this.canvasZoom;
+            const nodeRight = nodeLeft + (nodeRect.width / this.canvasZoom);
+            const nodeBottom = nodeTop + (nodeRect.height / this.canvasZoom);
+
+            // 檢查是否重疊
+            return !(boxRect.right < nodeLeft ||
+                boxRect.left > nodeRight ||
+                boxRect.bottom < nodeTop ||
+                boxRect.top > nodeBottom);
+        };
+
+        // 選取框內的所有節點
+        const selectNodesInBox = (boxRect) => {
+            this.selectedNodes = this.nodes.filter(node => isNodeInBox(node, boxRect));
+
+            // 更新視覺狀態
+            this.nodes.forEach(node => {
+                const element = document.getElementById(node.id);
+                if (element) {
+                    if (this.selectedNodes.includes(node)) {
+                        element.classList.add('multi-selected');
+                    } else {
+                        element.classList.remove('multi-selected');
+                    }
+                }
+            });
+
+            if (this.selectedNodes.length > 0) {
+                console.log(`已選取 ${this.selectedNodes.length} 個節點`);
+            }
+        };
+
+        // Alt + 滑鼠按下 - 開始框選
+        this.container.addEventListener('mousedown', (e) => {
+            if (e.altKey && (e.target === this.container || e.target === this.canvasContent)) {
+                isBoxSelecting = true;
+
+                // 計算起點座標 - 考慮 zoom
+                const canvasRect = this.canvasContent.getBoundingClientRect();
+                startX = (e.clientX - canvasRect.left) / this.canvasZoom;
+                startY = (e.clientY - canvasRect.top) / this.canvasZoom;
+
+                // 清除之前的選取
+                if (!e.ctrlKey && !e.metaKey) {
+                    this.selectedNodes = [];
+                    this.nodes.forEach(node => {
+                        const element = document.getElementById(node.id);
+                        if (element) element.classList.remove('multi-selected');
+                    });
+                }
+
+                e.preventDefault();
+            }
+        });
+
+        // 滑鼠移動 - 更新框選框
+        document.addEventListener('mousemove', (e) => {
+            if (!isBoxSelecting) return;
+
+            // 計算當前座標 - 考慮 zoom
+            const canvasRect = this.canvasContent.getBoundingClientRect();
+            const currentX = (e.clientX - canvasRect.left) / this.canvasZoom;
+            const currentY = (e.clientY - canvasRect.top) / this.canvasZoom;
+
+            updateSelectionBox(currentX, currentY);
+
+            // 實時更新選取的節點
+            const left = Math.min(startX, currentX);
+            const top = Math.min(startY, currentY);
+            const right = Math.max(startX, currentX);
+            const bottom = Math.max(startY, currentY);
+
+            selectNodesInBox({ left, top, right, bottom });
+        });
+
+        // 滑鼠放開 - 結束框選
+        document.addEventListener('mouseup', () => {
+            if (isBoxSelecting) {
+                isBoxSelecting = false;
+                // 隱藏選擇框
+                if (selectionBox) {
+                    selectionBox.style.display = 'none';
+                }
+            }
+        });
+
+        // 點擊空白處或未選中節點時取消選擇
+        document.addEventListener('mousedown', (e) => {
+            if (isBoxSelecting) return;  // 正在框選時不處理
+            if (e.altKey) return;  // 準備框選時不處理
+
+            // 檢查是否點擊了已選中的節點
+            const clickedNode = e.target.closest('.flow-node');
+            if (clickedNode && this.selectedNodes.some(n => n.id === clickedNode.id)) {
+                return;  // 點擊已選中節點，不取消（準備拖動）
+            }
+
+            // 其他情況：取消所有選擇
+            if (this.selectedNodes.length > 0) {
+                this.selectedNodes = [];
+                this.nodes.forEach(node => {
+                    const element = document.getElementById(node.id);
+                    if (element) element.classList.remove('multi-selected');
+                });
+            }
+        });
+    }
+
+
+    /**
+     * 設置觸控手勢
+     */
+    setupTouchGestures() {
+        let initialDistance = 0;
+        let initialZoom = 1.0;
+        let touches = [];
+
+        // 觸控開始
+        this.container.addEventListener('touchstart', (e) => {
+            touches = Array.from(e.touches);
+
+            if (touches.length === 2) {
+                // 雙指操作，記錄初始距離
+                e.preventDefault();
+                const dx = touches[0].clientX - touches[1].clientX;
+                const dy = touches[0].clientY - touches[1].clientY;
+                initialDistance = Math.sqrt(dx * dx + dy * dy);
+                initialZoom = this.canvasZoom;
+            }
+        }, { passive: false });
+
+        // 觸控移動
+        this.container.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 2) {
+                // 雙指縮放
+                e.preventDefault();
+
+                const touches = Array.from(e.touches);
+                const dx = touches[0].clientX - touches[1].clientX;
+                const dy = touches[0].clientY - touches[1].clientY;
+                const currentDistance = Math.sqrt(dx * dx + dy * dy);
+
+                // 計算縮放比例變化
+                const scale = currentDistance / initialDistance;
+                const newZoom = initialZoom * scale;
+
+                // 應用縮放
+                this.canvasZoom = Math.max(0.25, Math.min(3.0, newZoom));
+                this.applyCanvasZoom();
+            }
+        }, { passive: false });
+
+        // 觸控結束
+        this.container.addEventListener('touchend', (e) => {
+            if (e.touches.length < 2) {
+                initialDistance = 0;
+
+                // 顯示最終縮放比例
+                if (initialZoom !== this.canvasZoom) {
+                    const percentage = Math.round(this.canvasZoom * 100);
+                    toast.success(`縮放: ${percentage}%`);
+                }
+            }
+        });
+    }
+
+    /**
+     * 設定事件監聽
+     */
+    setupEventListeners() {
+        // 右鍵選單
+        this.container.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            this.showContextMenu(e.clientX, e.clientY);
+        });
+
+        // 畫布點擊（點擊空白處隱藏側邊欄）
+        this.container.addEventListener('click', (e) => {
+            // 判斷是否點擊在節點上
+            const clickedNode = e.target.closest('.flow-node');
+            const clickedConnection = e.target.closest('.edge-path');
+
+            // Z 鍵 focus 模式：點擊節點後聚焦並放大
+            if (this.focusMode && clickedNode) {
+                const nodeId = clickedNode.id;
+                this.focusOnNode(nodeId);
+                this.focusMode = false; // 退出 focus 模式
+                document.body.style.cursor = 'default';
+                toast.success('🎯 已聚焦到節點');
+                return;
+            }
+
+            // 如果點擊的是空白處（不是節點也不是連線）
+            if (!clickedNode && !clickedConnection) {
+                this.hideSidebar();
+                // 取消選中狀態
+                this.selectedNode = null;
+                // 移除所有節點的選中樣式
+                document.querySelectorAll('.flow-node').forEach(el => {
+                    el.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
+                });
+            }
+        });
+
+        // 鍵盤快捷鍵
+        document.addEventListener('keydown', (e) => {
+            // Z 鍵：進入 focus 模式
+            if (e.key === 'z' || e.key === 'Z') {
+                if (!this.focusMode) {
+                    this.focusMode = true;
+                    document.body.style.cursor = 'crosshair';
+                    toast.info('🎯 Focus 模式：點擊節點以聚焦');
+                }
+            }
+            // Escape：退出 focus 模式
+            if (e.key === 'Escape') {
+                if (this.focusMode) {
+                    this.focusMode = false;
+                    document.body.style.cursor = 'default';
+                    toast.info('已退出 Focus 模式');
+                }
+                if (this.isDraggingConnection) {
+                    this.cancelConnection();
+                }
+            }
+            // Ctrl+S 儲存
+            if (e.ctrlKey && e.key === 's') {
+                e.preventDefault();
+                this.saveFlow();
+            }
+            // Delete 刪除選中節點
+            if (e.key === 'Delete' && this.selectedNode) {
+                this.deleteNode(this.selectedNode);
+            }
+            // Ctrl + + 放大
+            if (e.ctrlKey && (e.key === '+' || e.key === '=')) {
+                e.preventDefault();
+                this.zoomCanvas(0.1);
+            }
+            // Ctrl + - 縮小
+            if (e.ctrlKey && e.key === '-') {
+                e.preventDefault();
+                this.zoomCanvas(-0.1);
+            }
+            // Ctrl + 0 重置縮放
+            if (e.ctrlKey && e.key === '0') {
+                e.preventDefault();
+                this.resetZoom();
+            }
+            // Ctrl + F 適應螢幕
+            if (e.ctrlKey && e.key === 'f') {
+                e.preventDefault();
+                this.fitScreen();
+            }
+            // Ctrl + D 調試流程結構
+            if (e.ctrlKey && e.key === 'd') {
+                e.preventDefault();
+                this.debugFlowStructure();
+            }
+        });
+
+        // 滑鼠移動（用於連線拖曳）
+        document.addEventListener('mousemove', (e) => {
+            if (this.isDraggingConnection) {
+                this.updateTempConnection(e.clientX, e.clientY);
+            }
+        });
+
+        // 滑鼠放開（完成連線）
+        document.addEventListener('mouseup', (e) => {
+            if (this.isDraggingConnection) {
+                this.finishConnection(e);
+            }
+        });
+    }
+
+    /**
+     * 顯示右鍵選單
+     */
+    showContextMenu(x, y) {
+        // 移除舊選單
+        const oldMenu = document.querySelector('.context-menu');
+        if (oldMenu) oldMenu.remove();
+
+        // 計算畫布相對位置（考慮捲動）
+        const canvasRect = this.container.getBoundingClientRect();
+        const canvasX = x - canvasRect.left + this.container.scrollLeft;
+        const canvasY = y - canvasRect.top + this.container.scrollTop;
+
+        // 創建選單
+        const menu = document.createElement('div');
+        menu.className = 'context-menu';
+        menu.style.left = x + 'px';  // 選單位置使用螢幕座標
+        menu.style.top = y + 'px';
+
+        // 儲存畫布座標供節點創建使用
+        menu.dataset.canvasX = canvasX;
+        menu.dataset.canvasY = canvasY;
+
+        // ✨ 添加視圖控制區塊
+        const viewHeader = document.createElement('div');
+        viewHeader.className = 'context-menu-header';
+        viewHeader.style.cssText = 'padding: 8px 16px; font-weight: bold; color: #666; font-size: 11px;';
+        viewHeader.textContent = '縮放';
+        menu.appendChild(viewHeader);
+
+        // 100%
+        const zoom100Item = document.createElement('div');
+        zoom100Item.className = 'context-menu-item';
+        setInnerHTML(zoom100Item, `
+        <i class="bi bi-1-square" style="color: #27ae60"></i>
+        <span>100%</span>
+        ${this.canvasZoom === 1.0 ? '<i class="bi bi-check-lg" style="color: #27ae60; margin-left: auto;"></i>' : ''}
+    `);
+        zoom100Item.onclick = () => {
+            this.setZoom(1.0, x, y);
+            menu.remove();
+        };
+        menu.appendChild(zoom100Item);
+
+        // 75%
+        const zoom75Item = document.createElement('div');
+        zoom75Item.className = 'context-menu-item';
+        setInnerHTML(zoom75Item, `
+        <i class="bi bi-app" style="color: #16a085"></i>
+        <span>75%</span>
+        ${this.canvasZoom === 0.75 ? '<i class="bi bi-check-lg" style="color: #27ae60; margin-left: auto;"></i>' : ''}
+    `);
+        zoom75Item.onclick = () => {
+            this.setZoom(0.75, x, y);
+            menu.remove();
+        };
+        menu.appendChild(zoom75Item);
+
+        // 50%
+        const zoom50Item = document.createElement('div');
+        zoom50Item.className = 'context-menu-item';
+        setInnerHTML(zoom50Item, `
+        <i class="bi bi-zoom-out" style="color: #3498db"></i>
+        <span>50%</span>
+        ${this.canvasZoom === 0.5 ? '<i class="bi bi-check-lg" style="color: #27ae60; margin-left: auto;"></i>' : ''}
+    `);
+        zoom50Item.onclick = () => {
+            this.setZoom(0.5, x, y);
+            menu.remove();
+        };
+        menu.appendChild(zoom50Item);
+
+        // 25%
+        const zoom25Item = document.createElement('div');
+        zoom25Item.className = 'context-menu-item';
+        setInnerHTML(zoom25Item, `
+        <i class="bi bi-dash-square" style="color: #e67e22"></i>
+        <span>25%</span>
+        ${this.canvasZoom === 0.25 ? '<i class="bi bi-check-lg" style="color: #27ae60; margin-left: auto;"></i>' : ''}
+    `);
+        zoom25Item.onclick = () => {
+            this.setZoom(0.25, x, y);
+            menu.remove();
+        };
+        menu.appendChild(zoom25Item);
+
+        // Fit Screen
+        const fitScreenItem = document.createElement('div');
+        fitScreenItem.className = 'context-menu-item';
+        setInnerHTML(fitScreenItem, `
+        <i class="bi bi-arrows-fullscreen" style="color: #9b59b6"></i>
+        <span>適應畫布</span>
+    `);
+        fitScreenItem.onclick = () => {
+            this.fitScreen();
+            menu.remove();
+        };
+        menu.appendChild(fitScreenItem);
+
+        // 分隔線
+        const viewDivider = document.createElement('div');
+        viewDivider.className = 'context-menu-divider';
+        menu.appendChild(viewDivider);
+
+        // 節點類別
+        const categories = {
+            trigger: '觸發器',
+            message: '訊息',
+            action: '動作',
+            end: '其他'
+        };
+
+        // 按類別組織選單項目
+        Object.entries(categories).forEach(([category, categoryLabel]) => {
+            // 添加類別標題
+            const header = document.createElement('div');
+            header.className = 'context-menu-header';
+            header.style.cssText = 'padding: 8px 16px; font-weight: bold; color: #666; font-size: 11px;';
+            header.textContent = categoryLabel;
+            menu.appendChild(header);
+
+            // 添加該類別的節點類型
+            Object.entries(NodeTypeConfig)
+                .filter(([_, config]) => config.category === category)
+                .forEach(([type, config]) => {
+                    const item = document.createElement('div');
+                    item.className = 'context-menu-item';
+                    setInnerHTML(item, `
+                        <i class="bi ${config.icon}" style="color: ${config.color}"></i>
+                        <span>${config.label}</span>
+                    `);
+                    item.onclick = () => {
+                        // ✅ 考慮縮放：將螢幕座標轉換為畫布座標
+                        const actualCanvasX = canvasX / this.canvasZoom;
+                        const actualCanvasY = canvasY / this.canvasZoom;
+
+                        // 使用畫布座標創建節點（節點會出現在點擊位置）
+                        this.addNode(type, {
+                            x: actualCanvasX - 100,  // 減去節點寬度的一半，讓節點置中
+                            y: actualCanvasY - 50
+                        });
+                        menu.remove();
+                    };
+                    menu.appendChild(item);
+                });
+
+            // 添加分隔線
+            if (category !== 'end') {
+                const divider = document.createElement('div');
+                divider.className = 'context-menu-divider';
+                menu.appendChild(divider);
+            }
+        });
+
+        document.body.appendChild(menu);
+
+        // 點擊其他地方關閉
+        setTimeout(() => {
+            document.addEventListener('click', () => menu.remove(), { once: true });
+        }, 0);
+    }
+
+    /**
+     * 新增節點
+     */
+    addNode(type, position, silent = false) {
+        // 改進的 ID 生成：時間戳 + 隨機數，避免快速創建時的衝突
+        const nodeId = `node_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const config = NodeTypeConfig[type];
+
+        // ✅ 防護：如果找不到配置，提供默認值
+        if (!config) {
+            console.error(`[addNode] 找不到節點類型配置: ${type}`);
+            console.error(`[addNode] 可用的節點類型:`, Object.keys(NodeTypeConfig));
+            toast.error(`無效的節點類型: ${type}`);
+            return null;
+        }
+
+        const node = {
+            id: nodeId,
+            type: type,
+            position: position,
+            data: this.getDefaultNodeData(type),
+            config: config
+        };
+
+        this.nodes.push(node);
+        this.renderNode(node);
+        this.saveToLocalStorage();
+
+        if (!silent) {
+            toast.success(`已新增 ${config.label} 節點`);
+        }
+
+        console.log(`[addNode] 創建節點: ${nodeId}, type: ${type}, position:`, position);
+
+        return node;
+    }
+
+    /**
+     * 取得預設節點資料
+     */
+    getDefaultNodeData(type) {
+        const defaults = {
+            [NodeTypes.RICHMENU]: {
+                richmenuId: null,
+                name: '選擇 Richmenu',
+                buttons: []
+            },
+            [NodeTypes.KEYWORD]: {
+                keyword: '',
+                matchType: 'exact'  // exact, contains, regex
+            },
+            [NodeTypes.MESSAGE_TEXT]: {
+                text: '請輸入訊息內容'
+            },
+            [NodeTypes.MESSAGE_SEQUENCE]: {
+                name: '訊息序列',
+                messages: [],
+                delay: 0  // 訊息間延遲（毫秒）
+            },
+            [NodeTypes.MESSAGE_FLEX]: {
+                flexId: null,
+                title: '選擇 Flex Message'
+            },
+            [NodeTypes.MESSAGE_IMAGEMAP]: {
+                imagemapId: null,
+                title: '選擇 Imagemap',
+                isExpanded: false  // 防止重複展開
+            },
+            [NodeTypes.ACTION_DELAY]: {
+                seconds: 1
+            },
+            [NodeTypes.ACTION_CONDITION]: {
+                conditions: [
+                    { field: 'text', operator: 'equals', value: '' }
+                ],
+                branches: ['true', 'false']
+            },
+            [NodeTypes.ACTION_TAG]: {
+                operation: 'add',  // add, remove
+                tags: []
+            },
+            [NodeTypes.URL]: {
+                url: '',
+                label: 'URL 連結'
+            },
+            [NodeTypes.POSTBACK]: {
+                data: '',
+                label: 'Postback',
+                displayText: ''
+            },
+            [NodeTypes.END]: {
+                message: '流程結束'
+            }
+        };
+
+        return defaults[type] || { label: '未知節點' };
+    }
+
+    /**
+     * 渲染節點（簡化版，實際使用 React Flow）
+     */
+    renderNode(node) {
+        const nodeElement = document.createElement('div');
+        nodeElement.className = `flow-node node-${node.config.category}`;
+        nodeElement.id = node.id;
+
+        // 節點縮放比例（預設 1.0）
+        if (!node.scale) node.scale = 1.0;
+
+        // 根據節點類型調整寬度
+        let baseWidth = 180;
+        let maxWidth = 220;
+
+        if (node.type === NodeTypes.RICHMENU && node.data.imageUrl) {
+            baseWidth = 250;
+            maxWidth = 300;
+        } else if (node.type === NodeTypes.MESSAGE_FLEX && node.data.contents) {
+            // Flex Message 需要更大的寬度
+            if (node.data.contents.type === 'carousel') {
+                baseWidth = 300;
+                maxWidth = 800; // Carousel 可以更寬
+            } else {
+                baseWidth = 250;
+                maxWidth = 300;
+            }
+        }
+
+        const scaledWidth = baseWidth * node.scale;
+
+        nodeElement.style.cssText = `
+            position: absolute;
+            left: ${node.position.x}px;
+            top: ${node.position.y}px;
+            background: white;
+            border: 2px solid ${node.config.color};
+            border-radius: 8px;
+            padding: 12px;
+            min-width: ${scaledWidth}px;
+            max-width: ${maxWidth}px;
+            cursor: move;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transform: scale(${node.scale});
+            transform-origin: top left;
+            transition: transform 0.2s ease;
+        `;
+
+        // 基本標題 + 縮放控制
+        let innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <i class="bi ${node.config.icon}" style="color: ${node.config.color}"></i>
+                    <span style="font-weight: bold;">${node.data.label || node.data.name || node.config.label}</span>
+                </div>
+                <div class="node-zoom-controls" style="display: flex; gap: 4px;">
+                    <button class="node-zoom-in" data-node-id="${node.id}"
+                            style="width: 20px; height: 20px; border: none; background: #ecf0f1; border-radius: 3px; cursor: pointer; font-size: 12px; line-height: 1;"
+                            title="放大">+</button>
+                    <button class="node-zoom-out" data-node-id="${node.id}"
+                            style="width: 20px; height: 20px; border: none; background: #ecf0f1; border-radius: 3px; cursor: pointer; font-size: 12px; line-height: 1;"
+                            title="縮小">-</button>
+                </div>
+            </div>
+        `;
+
+        // 特殊處理：Richmenu 節點顯示圖片和按鈕區域
+        if (node.type === NodeTypes.RICHMENU && node.data.imageUrl) {
+            const imageContainerId = `richmenu-img-${node.id}`;
+            innerHTML += `
+                <div style="margin-bottom: 8px; position: relative;" id="${imageContainerId}">
+                    <img class="richmenu-image" data-node-id="${node.id}" data-container-id="${imageContainerId}"
+                         src="${node.data.imageUrl}" 
+                         style="width: 100%; height: auto; border-radius: 4px; border: 1px solid #ddd; display: block;"
+                         alt="${node.data.name}">
+                </div>
+                <div style="font-size: 11px; color: #666; margin-bottom: 4px;">
+                    <strong>${node.data.name}</strong>
+                </div>
+                <div style="font-size: 10px; color: #999;">
+                    ${node.data.buttons.length} 個按鈕
+                </div>
+            `;
+        } else if (node.type === NodeTypes.MESSAGE_FLEX && node.data.contents) {
+            // 特殊處理：Flex Message 節點直接渲染完整內容
+            const flexContainerId = `flex-container-${node.id}`;
+
+            innerHTML += `
+                <div style="margin-bottom: 8px;">
+                    <div style="font-size: 11px; font-weight: bold; color: #495057; margin-bottom: 6px;">
+                        ${node.data.title || '未命名'}
+                    </div>
+                    <div id="${flexContainerId}" class="flex-preview-wrapper" style="overflow-x: auto; max-width: 100%;"></div>
+                </div>
+            `;
+
+            // 添加輸出點
+            innerHTML += `
+                <div class="node-output-point" 
+                     data-node-id="${node.id}" 
+                     data-output="default"
+                     style="position: absolute; right: -8px; top: 50%; transform: translateY(-50%); 
+                            width: 16px; height: 16px; background: ${node.config.color}; 
+                            border: 2px solid white; border-radius: 50%; cursor: pointer;
+                            box-shadow: 0 2px 4px rgba(0,0,0,0.2);"
+                     title="拖曳以連接到下一個節點">
+                </div>
+            `;
+        } else if (node.type === NodeTypes.MESSAGE_IMAGEMAP && (node.data.imageUrl || node.data.baseUrl)) {
+            // 特殊處理：Imagemap 節點顯示圖片和可點擊區域
+            const imagemapImageUrl = node.data.imageUrl || node.data.baseUrl;
+            const imageContainerId = `imagemap-img-${node.id}`;
+
+            innerHTML += `
+                <div style="margin-bottom: 8px; position: relative;" id="${imageContainerId}">
+                    <img class="imagemap-image" data-node-id="${node.id}" data-container-id="${imageContainerId}"
+                         src="${imagemapImageUrl}" 
+                         style="width: 100%; height: auto; border-radius: 4px; border: 1px solid #ddd; display: block; max-width: 280px;"
+                         alt="${node.data.altText || node.data.title || 'Imagemap'}">
+                    <div style="display: none; padding: 20px; background: #f8f9fa; border-radius: 4px; text-align: center; color: #6c757d;">
+                        <i class="bi bi-image" style="font-size: 24px;"></i>
+                        <div style="font-size: 11px; margin-top: 8px;">圖片載入失敗</div>
+                    </div>
+                </div>
+                <div style="font-size: 11px; color: #666; margin-bottom: 4px;">
+                    <strong>${node.data.altText || node.data.title || 'Imagemap'}</strong>
+                </div>
+                ${node.data.actions && node.data.actions.length > 0 ? `
+                    <div style="font-size: 10px; color: #999;">
+                        ${node.data.actions.length} 個可點擊區域
+                    </div>
+                ` : ''}
+            `;
+
+            // 添加輸出點
+            innerHTML += `
+                <div class="node-output-point" 
+                     data-node-id="${node.id}" 
+                     data-output="default"
+                     onclick="flowDesigner.startConnection('${node.id}', 'default'); event.stopPropagation();"
+                     style="position: absolute; right: -8px; top: 50%; transform: translateY(-50%); 
+                            width: 16px; height: 16px; background: ${node.config.color}; 
+                            border: 2px solid white; border-radius: 50%; cursor: pointer;
+                            box-shadow: 0 2px 4px rgba(0,0,0,0.2);"
+                     title="拖曳以連接到下一個節點">
+                </div>
+            `;
+            // 其他節點類型的預覽
+            innerHTML += `
+                <div class="node-preview" style="font-size: 12px; color: #666;">
+                    ${this.getNodeDataPreview(node)}
+                </div>
+            `;
+
+            // 添加單一輸出點
+            innerHTML += `
+                <div class="node-output-point" 
+                     data-node-id="${node.id}" 
+                     data-output="default"
+                     onclick="flowDesigner.startConnection('${node.id}', 'default'); event.stopPropagation();"
+                     style="position: absolute; right: -8px; top: 50%; transform: translateY(-50%); 
+                            width: 16px; height: 16px; background: ${node.config.color};
+                            border: 2px solid white; border-radius: 50%; cursor: pointer;
+                            box-shadow: 0 2px 4px rgba(0,0,0,0.2);"
+                     title="拖曳以連接到下一個節點">
+                </div>
+            `;
+        }
+
+        setInnerHTML(nodeElement, innerHTML);
+
+        // ===== Event Binding (replacing inline handlers) =====
+
+        // 1. Zoom buttons
+        const zoomInBtn = nodeElement.querySelector('.node-zoom-in');
+        const zoomOutBtn = nodeElement.querySelector('.node-zoom-out');
+        if (zoomInBtn) {
+            zoomInBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.zoomNode(node.id, 0.1);
+            });
+        }
+        if (zoomOutBtn) {
+            zoomOutBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.zoomNode(node.id, -0.1);
+            });
+        }
+
+        // 2. Richmenu image onload
+        const richmenuImg = nodeElement.querySelector('.richmenu-image');
+        if (richmenuImg) {
+            const handleRichmenuLoad = () => {
+                const containerId = richmenuImg.dataset.containerId;
+                this.drawRichmenuButtons(node.id, containerId);
+            };
+
+            // If image is already loaded (cached), call handler immediately
+            if (richmenuImg.complete && richmenuImg.naturalHeight !== 0) {
+                handleRichmenuLoad();
+            } else {
+                // Otherwise, bind load event
+                richmenuImg.addEventListener('load', handleRichmenuLoad);
+            }
+        }
+
+        // 3. Imagemap image onload and onerror
+        const imagemapImg = nodeElement.querySelector('.imagemap-image');
+        if (imagemapImg) {
+            const handleImagemapLoad = () => {
+                const containerId = imagemapImg.dataset.containerId;
+                this.drawImagemapAreas(node.id, containerId);
+            };
+
+            // If image is already loaded (cached), call handler immediately
+            if (imagemapImg.complete && imagemapImg.naturalHeight !== 0) {
+                handleImagemapLoad();
+            } else {
+                // Otherwise, bind load event
+                imagemapImg.addEventListener('load', handleImagemapLoad);
+            }
+
+            imagemapImg.addEventListener('error', function () {
+                this.style.display = 'none';
+                if (this.nextElementSibling) {
+                    this.nextElementSibling.style.display = 'block';
+                }
+            });
+        }
+
+        // 4. Output connection points
+        const outputPoints = nodeElement.querySelectorAll('.node-output-point');
+        outputPoints.forEach(point => {
+            point.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const nodeId = point.dataset.nodeId;
+                const output = point.dataset.output || 'default';
+                this.startConnection(nodeId, output);
+            });
+        });
+
+        // 點擊選中
+        nodeElement.onclick = (e) => {
+            e.stopPropagation();
+            this.selectNode(node.id);
+        };
+
+        // 雙擊編輯節點
+        nodeElement.ondblclick = (e) => {
+            e.stopPropagation();
+            console.log('[FlowDesigner] 雙擊編輯節點:', node.type);
+
+            // 使用 FlowNodeAdapter 開啟編輯器
+            FlowNodeAdapter.editNode(node, (updatedNode) => {
+                // 更新節點資料
+                console.log('[FlowDesigner] 節點資料已更新:', updatedNode);
+
+                // 重新渲染節點
+                const oldElement = document.getElementById(node.id);
+                if (oldElement) {
+                    oldElement.remove();
+                }
+                this.renderNode(node);
+
+                // 更新連線
+                this.updateConnectedEdges(node.id);
+
+                // 儲存
+                this.saveToLocalStorage();
+            });
+        };
+
+        // 添加連接端點（左側輸入和右側輸出）
+        const leftConnector = document.createElement('div');
+        leftConnector.className = 'node-connector node-input';
+        leftConnector.dataset.nodeId = node.id;
+        leftConnector.dataset.type = 'input';
+        leftConnector.style.cssText = `
+            position: absolute;
+            left: -6px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 12px;
+            height: 12px;
+            background: white;
+            border: 2px solid #3498db;
+            border-radius: 50%;
+            cursor: pointer;
+            z-index: 10;
+            transition: all 0.2s;
+        `;
+
+        const rightConnector = document.createElement('div');
+        rightConnector.className = 'node-connector node-output';
+        rightConnector.dataset.nodeId = node.id;
+        rightConnector.dataset.type = 'output';
+        rightConnector.style.cssText = `
+            position: absolute;
+            right: -6px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 12px;
+            height: 12px;
+            background: white;
+            border: 2px solid #2ecc71;
+            border-radius: 50%;
+            cursor: pointer;
+            z-index: 10;
+            transition: all 0.2s;
+        `;
+
+        // 輸出點：開始拖拉創建連接
+        rightConnector.addEventListener('mousedown', (e) => {
+            e.stopPropagation();
+            this.startConnectionDrag(node.id, 'output', e);
+        });
+
+        // 輸入點：懸停提示
+        leftConnector.addEventListener('mouseenter', () => {
+            if (this.connectionDragState?.isDragging) {
+                leftConnector.style.transform = 'translateY(-50%) scale(1.5)';
+                leftConnector.style.borderColor = '#2ecc71';
+                leftConnector.style.background = '#2ecc71';
+            }
+        });
+
+        leftConnector.addEventListener('mouseleave', () => {
+            leftConnector.style.transform = 'translateY(-50%) scale(1)';
+            leftConnector.style.borderColor = '#3498db';
+            leftConnector.style.background = 'white';
+        });
+
+        nodeElement.appendChild(leftConnector);
+        nodeElement.appendChild(rightConnector);
+
+        // 拖曳功能
+        this.makeDraggable(nodeElement, node);
+
+        this.canvasContent.appendChild(nodeElement);
+
+        // 特殊處理：Flex Message 渲染
+        if (node.type === NodeTypes.MESSAGE_FLEX && node.data.contents) {
+            const flexContainerId = `flex-container-${node.id}`;
+
+            // 延遲一下確保 DOM 已經插入
+            setTimeout(async () => {
+                try {
+                    console.log('[Flex Render] 開始渲染 Flex Message:', node.id);
+
+                    // 使用全域的 createNameCardComponent
+                    if (typeof window.createNameCardComponent !== 'function') {
+                        console.error('[Flex Render] createNameCardComponent 尚未載入');
+                        const container = document.getElementById(flexContainerId);
+                        if (container) {
+                            setInnerHTML(container, '<div style="color: orange; font-size: 10px;">等待模組載入...</div>');
+                        }
+                        // 重試一次
+                        setTimeout(() => {
+                            if (typeof window.createNameCardComponent === 'function') {
+                                this.renderNode(node);
+                            }
+                        }, 1000);
+                        return;
+                    }
+
+                    const createNameCardComponent = window.createNameCardComponent;
+                    console.log('[Flex Render] createNameCardComponent 已準備好');
+
+                    const container = document.getElementById(flexContainerId);
+                    if (!container) {
+                        console.error('[Flex Render] 容器不存在:', flexContainerId);
+                        return;
+                    }
+
+                    // 清空容器
+                    setInnerHTML(container, '');
+
+                    // 如果是 carousel，使用正確的 Carousel 結構
+                    if (node.data.contents.type === 'carousel' && Array.isArray(node.data.contents.contents)) {
+                        console.log('[Flex Render] 渲染 Carousel，共', node.data.contents.contents.length, '個 bubble');
+
+                        // 創建 chatbox wrapper
+                        const chatbox = document.createElement('div');
+                        chatbox.className = 'chatbox';
+
+                        // 創建 Carousel 結構
+                        const lySlider = document.createElement('div');
+                        lySlider.className = 'LySlider';
+
+                        const lyInner = document.createElement('div');
+                        lyInner.className = 'lyInner';
+
+                        node.data.contents.contents.forEach((bubble, index) => {
+                            try {
+                                console.log(`[Flex Render] 渲染 bubble ${index}: `, bubble);
+
+                                const component = createNameCardComponent(bubble, false, false, null);
+                                if (component) {
+                                    lyInner.appendChild(component);
+                                    console.log(`[Flex Render] Bubble ${index} 渲染成功`);
+                                } else {
+                                    console.warn(`[Flex Render] Bubble ${index} 返回 null`);
+                                }
+                            } catch (err) {
+                                console.error(`[Flex Render] 渲染 carousel bubble ${index} 失敗: `, err);
+                            }
+                        });
+
+                        lySlider.appendChild(lyInner);
+                        chatbox.appendChild(lySlider);
+                        container.appendChild(chatbox);
+                        console.log('[Flex Render] Carousel 渲染完成');
+                    }
+                    // 如果是 bubble
+                    else if (node.data.contents.type === 'bubble') {
+                        console.log('[Flex Render] 渲染 Bubble:', node.data.contents);
+
+                        // 創建 chatbox wrapper
+                        const chatbox = document.createElement('div');
+                        chatbox.className = 'chatbox';
+
+                        const component = createNameCardComponent(node.data.contents, false, false, null);
+                        if (component) {
+                            chatbox.appendChild(component);
+                            container.appendChild(chatbox);
+                            console.log('[Flex Render] Bubble 渲染成功');
+                        } else {
+                            console.warn('[Flex Render] createNameCardComponent 返回 null');
+                        }
+                    }
+
+                } catch (error) {
+                    console.error('[Flex Render] Flex Message 渲染錯誤:', error);
+                    console.error('[Flex Render] Error stack:', error.stack);
+                    const container = document.getElementById(flexContainerId);
+                    if (container) {
+                        setInnerHTML(container, '<div style="color: red; font-size: 10px;">渲染失敗: ' + error.message + '</div>');
+                    }
+                }
+            }, 10);
+        }
+    }
+
+    /**
+     * 取得節點資料預覽
+     */
+    getNodeDataPreview(node) {
+        switch (node.type) {
+            case NodeTypes.MESSAGE_TEXT:
+                return node.data.text ? node.data.text.substring(0, 30) + (node.data.text.length > 30 ? '...' : '') : '未設定';
+            case NodeTypes.MESSAGE_SEQUENCE:
+                const count = node.data.messages?.length || 0;
+                return `📬 ${count}/5 個訊息`;
+            case NodeTypes.MESSAGE_FLEX:
+                return node.data.title || '未設定';
+            case NodeTypes.MESSAGE_IMAGEMAP:
+                return node.data.altText || node.data.title || '未設定';
+            case NodeTypes.RICHMENU:
+                return node.data.name || '未設定';
+            case NodeTypes.ACTION_DELAY:
+                return `等待 ${node.data.seconds} 秒`;
+            case NodeTypes.URL:
+                return node.data.url || '未設定 URL';
+            case NodeTypes.POSTBACK:
+                return node.data.data || '未設定 Data';
+            default:
+                return node.config.description;
+        }
+    }
+
+    /**
+     * 縮放節點
+     */
+    zoomNode(nodeId, delta) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (!node) return;
+
+        // 更新縮放比例（限制在 0.5 到 2.0 之間）
+        node.scale = Math.max(0.5, Math.min(2.0, (node.scale || 1.0) + delta));
+
+        // 重新渲染節點
+        const nodeElement = document.getElementById(nodeId);
+        if (nodeElement) {
+            nodeElement.remove();
+            this.renderNode(node);
+        }
+
+        this.saveToLocalStorage();
+    }
+
+    /**
+     * 開始連接
+     */
+    startConnection(sourceNodeId, outputHandle) {
+        console.log(`🔗 開始連接: 從節點 ${sourceNodeId} 的輸出點 ${outputHandle} `);
+
+        const sourceNode = this.nodes.find(n => n.id === sourceNodeId);
+        if (!sourceNode) return;
+
+        // 記錄連接起點
+        this.connectionStart = {
+            nodeId: sourceNodeId,
+            output: outputHandle,
+            node: sourceNode
+        };
+
+        this.isDraggingConnection = true;
+
+        // 創建臨時連線路徑
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('stroke', sourceNode.config.color);
+        path.setAttribute('stroke-width', '2');
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke-dasharray', '5,5');
+        path.id = 'temp-connection';
+        this.svgLayer.appendChild(path);
+        this.tempConnection = path;
+
+        // 改變游標
+        document.body.style.cursor = 'crosshair';
+    }
+
+    /**
+     * 更新臨時連線
+     */
+    updateTempConnection(mouseX, mouseY) {
+        if (!this.tempConnection || !this.connectionStart) return;
+
+        // 計算起點位置
+        const sourceNode = this.connectionStart.node;
+        const sourceElement = document.getElementById(this.connectionStart.nodeId);
+        if (!sourceElement) return;
+
+        const rect = sourceElement.getBoundingClientRect();
+        const containerRect = this.container.getBoundingClientRect();
+
+        // 起點：節點右側中央
+        const startX = rect.right - containerRect.left;
+        const startY = rect.top + rect.height / 2 - containerRect.top;
+
+        // 終點：滑鼠位置
+        const endX = mouseX - containerRect.left;
+        const endY = mouseY - containerRect.top;
+
+        // 繪製貝茲曲線
+        const pathData = this.createCurvePath(startX, startY, endX, endY);
+        this.tempConnection.setAttribute('d', pathData);
+    }
+
+    /**
+     * 完成連接
+     */
+    finishConnection(event) {
+        if (!this.connectionStart) return;
+
+        // 判斷是否點擊在節點上
+        const targetElement = event.target.closest('.flow-node');
+
+        if (targetElement && targetElement.id !== this.connectionStart.nodeId) {
+            const targetNodeId = targetElement.id;
+            const targetNode = this.nodes.find(n => n.id === targetNodeId);
+
+            if (targetNode) {
+                // 創建連線
+                this.createEdge(
+                    this.connectionStart.nodeId,
+                    this.connectionStart.output,
+                    targetNodeId,
+                    'input'
+                );
+
+                toast.success(`✅ 已連接: ${this.connectionStart.node.config.label} → ${targetNode.config.label} `);
+            }
+        } else {
+            console.log('❌ 未連接到有效節點');
+        }
+
+        this.cancelConnection();
+    }
+
+    /**
+     * 取消連接
+     */
+    cancelConnection() {
+        if (this.tempConnection) {
+            this.tempConnection.remove();
+            this.tempConnection = null;
+        }
+
+        this.connectionStart = null;
+        this.isDraggingConnection = false;
+        document.body.style.cursor = 'default';
+    }
+
+    /**
+     * 創建連線
+     */
+    createEdge(sourceId, sourceHandle, targetId, targetHandle) {
+        console.log(`[createEdge] 開始創建連接: ${sourceId} (${sourceHandle}) -> ${targetId} `);
+
+        // 檢查是否已存在相同連線
+        const exists = this.edges.some(e =>
+            e.source === sourceId &&
+            e.sourceHandle === sourceHandle &&
+            e.target === targetId
+        );
+
+        if (exists) {
+            console.warn(`[createEdge] 連線已存在`);
+            toast.warning('該連線已存在');
+            return;
+        }
+
+        // 檢查是否會形成循環（暫時禁用，稍後改進）
+        // if (this.wouldCreateCycle(sourceId, targetId)) {
+        //     console.warn(`[createEdge] 會形成循環`);
+        //     toast.error('無法創建循環連線');
+        //     return;
+        // }
+
+        const edgeId = `edge_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const edge = {
+            id: edgeId,
+            source: sourceId,
+            sourceHandle: sourceHandle,
+            target: targetId,
+            targetHandle: targetHandle
+        };
+
+        this.edges.push(edge);
+        console.log(`[createEdge] 連線已加入 edges 陣列: `, edge);
+
+        this.renderEdge(edge);
+        console.log(`[createEdge] renderEdge 完成`);
+
+        this.saveToLocalStorage();
+
+        console.log('✅ 連線已創建:', edge);
+    }
+
+    /**
+     * 渲染連線
+     */
+    renderEdge(edge) {
+        console.log(`[renderEdge v2.0 - getBoundingClientRect]開始渲染連接: `, edge);
+
+        const sourceNode = this.nodes.find(n => n.id === edge.source);
+        const targetNode = this.nodes.find(n => n.id === edge.target);
+
+        if (!sourceNode || !targetNode) {
+            console.error(`[renderEdge] 找不到節點: source = ${!!sourceNode}, target = ${!!targetNode} `);
+            return;
+        }
+
+        const sourceElement = document.getElementById(edge.source);
+        const targetElement = document.getElementById(edge.target);
+
+        if (!sourceElement || !targetElement) {
+            console.error(`[renderEdge] 找不到節點元素: source = ${!!sourceElement}, target = ${!!targetElement} `);
+            return;
+        }
+
+        // 檢查元素是否完全渲染（有尺寸）
+        if (!sourceElement.offsetWidth || !targetElement.offsetWidth) {
+            console.warn(`[renderEdge] 元素尺寸未就緒，延遲 50ms 重試`);
+            setTimeout(() => this.renderEdge(edge), 50);
+            return;
+        }
+
+        // 獲取節點尺寸
+        const sourceWidth = sourceElement.offsetWidth;
+        const sourceHeight = sourceElement.offsetHeight;
+        const targetWidth = targetElement.offsetWidth;
+        const targetHeight = targetElement.offsetHeight;
+
+        // 直接使用節點的 position 屬性（最簡單可靠的方式）
+        const startX = sourceNode.position.x + sourceWidth;  // 右側
+        const startY = sourceNode.position.y + sourceHeight / 2;  // 中央
+        const endX = targetNode.position.x;  // 左側
+        const endY = targetNode.position.y + targetHeight / 2;  // 中央
+
+        console.log(`[renderEdge] 坐標計算: `);
+        console.log(`  源節點(${edge.source}): `, {
+            position: { x: sourceNode.position.x, y: sourceNode.position.y },
+            size: { width: sourceWidth, height: sourceHeight },
+            computed: { startX, startY }
+        });
+        console.log(`  目標節點(${edge.target}): `, {
+            position: { x: targetNode.position.x, y: targetNode.position.y },
+            size: { width: targetWidth, height: targetHeight },
+            computed: { endX, endY }
+        });
+        console.log(`  路徑: (${startX.toFixed(1)}, ${startY.toFixed(1)}) -> (${endX.toFixed(1)}, ${endY.toFixed(1)})`);
+
+        // 根據目標節點類型決定連接線顏色
+        let strokeColor = sourceNode.config.color;
+        switch (targetNode.type) {
+            case NodeTypes.URL:
+                strokeColor = '#2ecc71'; // 綠色
+                break;
+            case NodeTypes.RICHMENU:
+                strokeColor = '#3498db'; // 藍色
+                break;
+            case NodeTypes.POSTBACK:
+                strokeColor = '#9b59b6'; // 紫色
+                break;
+            case NodeTypes.MESSAGE_TEXT:
+                strokeColor = '#e67e22'; // 橙色
+                break;
+            default:
+                strokeColor = '#95a5a6'; // 灰色
+        }
+
+        // 創建路徑
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.id = edge.id;
+        path.setAttribute('d', this.createCurvePath(startX, startY, endX, endY));
+        path.setAttribute('stroke', strokeColor);
+        path.setAttribute('stroke-width', '2');
+        path.setAttribute('fill', 'none');
+        path.setAttribute('class', 'edge-path');
+        path.setAttribute('marker-end', 'url(#arrowhead)');  // ✨ 添加箭頭
+        path.style.pointerEvents = 'stroke';
+        path.style.cursor = 'pointer';
+        path.style.filter = 'drop-shadow(0 1px 2px rgba(0,0,0,0.15))';
+
+        console.log(`[renderEdge] SVG 路徑創建完成，顏色: ${strokeColor} (${targetNode.type})`);
+
+        // 雙擊刪除連線（避免誤刪）
+        path.ondblclick = () => {
+            this.deleteEdge(edge.id);
+        };
+
+        // 單擊提示
+        path.onclick = () => {
+            toast.info('雙擊此連接線可刪除');
+        };
+
+        // Hover 效果
+        path.onmouseenter = () => {
+            path.setAttribute('stroke-width', '3');
+            path.setAttribute('stroke', '#e74c3c');
+        };
+        path.onmouseleave = () => {
+            path.setAttribute('stroke-width', '2');
+            path.setAttribute('stroke', sourceNode.config.color);
+        };
+
+        if (!this.svgLayer) {
+            console.error(`[renderEdge] svgLayer 不存在！`);
+            return;
+        }
+
+        // 添加可拖動的控制點（先插入，所以在底層）
+        const controlPoint = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        const midX = (startX + endX) / 2;
+        const midY = (startY + endY) / 2;
+
+        // 如果 edge 已有保存的控制點，使用它
+        if (edge.controlPoint) {
+            controlPoint.setAttribute('cx', edge.controlPoint.x);
+            controlPoint.setAttribute('cy', edge.controlPoint.y);
+        } else {
+            controlPoint.setAttribute('cx', midX);
+            controlPoint.setAttribute('cy', midY);
+            edge.controlPoint = { x: midX, y: midY };
+        }
+
+        controlPoint.setAttribute('r', '8');
+        controlPoint.setAttribute('fill', sourceNode.config.color);
+        controlPoint.setAttribute('stroke', 'white');
+        controlPoint.setAttribute('stroke-width', '2');
+        controlPoint.setAttribute('class', 'edge-control-point');
+        controlPoint.setAttribute('data-edge-id', edge.id);
+        controlPoint.style.cursor = 'move';
+        controlPoint.style.opacity = '0';  // 預設隱藏
+
+        // 控制點拖動
+        this.makeControlPointDraggable(controlPoint, edge, path, sourceNode);
+
+        // 先插入控制點（在底層）
+        this.svgLayer.insertBefore(controlPoint, this.svgLayer.firstChild);
+
+        // 再插入路徑（在上層）
+        this.svgLayer.appendChild(path);
+
+        // 滑鼠懸停時顯示控制點
+        path.onmouseenter = () => {
+            path.setAttribute('stroke-width', '3');
+            path.setAttribute('stroke', '#e74c3c');
+            controlPoint.style.opacity = '0.8';
+        };
+        path.onmouseleave = () => {
+            path.setAttribute('stroke-width', '2');
+            path.setAttribute('stroke', sourceNode.config.color);
+            if (!controlPoint.dataset.dragging) {
+                controlPoint.style.opacity = '0';
+            }
+        };
+
+        console.log(`[renderEdge] 路徑已添加到 SVG 層`);
+    }
+
+    /**
+     * 使控制點可拖動
+     */
+    makeControlPointDraggable(controlPoint, edge, path, sourceNode) {
+        let isDragging = false;
+        let startX, startY;
+
+        controlPoint.addEventListener('mousedown', (e) => {
+            e.stopPropagation();
+            isDragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            controlPoint.dataset.dragging = 'true';
+            controlPoint.style.opacity = '1';
+            document.body.style.cursor = 'move';
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+
+            const currentX = parseFloat(controlPoint.getAttribute('cx'));
+            const currentY = parseFloat(controlPoint.getAttribute('cy'));
+
+            const newX = currentX + dx;
+            const newY = currentY + dy;
+
+            controlPoint.setAttribute('cx', newX);
+            controlPoint.setAttribute('cy', newY);
+
+            // 更新連接線路徑
+            edge.controlPoint = { x: newX, y: newY };
+            const newPath = this.calculateEdgePath(edge);
+            if (newPath) {
+                path.setAttribute('d', newPath);
+            }
+
+            startX = e.clientX;
+            startY = e.clientY;
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isDragging) {
+                isDragging = false;
+                delete controlPoint.dataset.dragging;
+                document.body.style.cursor = 'default';
+                controlPoint.style.opacity = '0';
+                this.saveToLocalStorage();
+            }
+        });
+    }
+
+    /**
+     * 創建曲線路徑（支持自定義控制點）
+     */
+    createCurvePath(startX, startY, endX, endY, controlPoint = null) {
+        if (controlPoint) {
+            // 使用自定義控制點創建二次貝茲曲線
+            return `M ${startX} ${startY} Q ${controlPoint.x} ${controlPoint.y} ${endX} ${endY} `;
+        } else {
+            // 使用默認的三次貝茲曲線
+            const controlOffset = Math.abs(endX - startX) * 0.5;
+            const cp1x = startX + controlOffset;
+            const cp1y = startY;
+            const cp2x = endX - controlOffset;
+            const cp2y = endY;
+
+            return `M ${startX} ${startY} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${endX} ${endY} `;
+        }
+    }
+
+    /**
+     * 刪除連線
+     */
+    deleteEdge(edgeId) {
+        this.edges = this.edges.filter(e => e.id !== edgeId);
+
+        const pathElement = document.getElementById(edgeId);
+        if (pathElement) pathElement.remove();
+
+        // 同時刪除控制點
+        const controlPoint = this.svgLayer.querySelector(`circle[data-edge-id="${edgeId}"]`);
+        if (controlPoint) controlPoint.remove();
+
+        this.saveToLocalStorage();
+        toast.success('連線已刪除');
+    }
+
+    /**
+     * 開始連接拖拉 (n8n 風格)
+     */
+    startConnectionDrag(nodeId, type, event) {
+        console.log(`[連接拖拉] 開始:`, nodeId, type);
+
+        this.connectionDragState.isDragging = true;
+        this.connectionDragState.sourceNodeId = nodeId;
+        this.connectionDragState.sourceType = type;
+
+        // 獲取起點坐標
+        const connector = event.target;
+        const rect = connector.getBoundingClientRect();
+        const svgRect = this.svgLayer.getBoundingClientRect();
+
+        const startX = rect.left + rect.width / 2 - svgRect.left;
+        const startY = rect.top + rect.height / 2 - svgRect.top;
+
+        this.connectionDragState.mouseX = startX;
+        this.connectionDragState.mouseY = startY;
+
+        // 創建臨時連接線
+        const tempLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        tempLine.setAttribute('stroke', '#2ecc71');
+        tempLine.setAttribute('stroke-width', '2');
+        tempLine.setAttribute('stroke-dasharray', '5,5');
+        tempLine.setAttribute('fill', 'none');
+        tempLine.setAttribute('class', 'temp-connection-line');
+
+        this.svgLayer.insertBefore(tempLine, this.svgLayer.firstChild);
+        this.connectionDragState.tempLine = tempLine;
+
+        // 添加全局鼠標移動和釋放事件
+        document.addEventListener('mousemove', this.boundUpdateConnectionDrag);
+        document.addEventListener('mouseup', this.boundEndConnectionDrag);
+    }
+
+    /**
+     * 更新連接拖拉
+     */
+    updateConnectionDrag(event) {
+        if (!this.connectionDragState.isDragging) return;
+
+        const svgRect = this.svgLayer.getBoundingClientRect();
+        const endX = event.clientX - svgRect.left;
+        const endY = event.clientY - svgRect.top;
+
+        this.connectionDragState.mouseX = endX;
+        this.connectionDragState.mouseY = endY;
+
+        // 獲取起點坐標
+        const sourceNode = this.nodes.find(n => n.id === this.connectionDragState.sourceNodeId);
+        if (!sourceNode) return;
+
+        const sourceElement = document.getElementById(sourceNode.id);
+        if (!sourceElement) return;
+
+        const sourceRect = sourceElement.getBoundingClientRect();
+        const startX = sourceRect.right - svgRect.left;
+        const startY = sourceRect.top + sourceRect.height / 2 - svgRect.top;
+
+        // 更新臨時線的路徑
+        const path = this.createCurvePath(startX, startY, endX, endY);
+        this.connectionDragState.tempLine.setAttribute('d', path);
+    }
+
+    /**
+     * 結束連接拖拉
+     */
+    endConnectionDrag(event) {
+        if (!this.connectionDragState.isDragging) return;
+
+        console.log(`[連接拖拉] 結束`);
+
+        // 檢查是否釋放在輸入點上
+        const target = event.target;
+        if (target.classList.contains('node-connector') &&
+            target.dataset.type === 'input') {
+
+            const targetNodeId = target.dataset.nodeId;
+            const sourceNodeId = this.connectionDragState.sourceNodeId;
+
+            console.log(`[連接拖拉] 創建連接: ${sourceNodeId} -> ${targetNodeId}`);
+
+            // 創建連接
+            this.createEdge(sourceNodeId, null, targetNodeId, null);
+        }
+
+        // 清理臨時線
+        if (this.connectionDragState.tempLine) {
+            this.connectionDragState.tempLine.remove();
+        }
+
+        // 重置狀態
+        this.connectionDragState.isDragging = false;
+        this.connectionDragState.sourceNodeId = null;
+        this.connectionDragState.sourceType = null;
+        this.connectionDragState.tempLine = null;
+
+        // 移除全局事件監聽
+        document.removeEventListener('mousemove', this.boundUpdateConnectionDrag);
+        document.removeEventListener('mouseup', this.boundEndConnectionDrag);
+    }
+
+    /**
+     * 檢查是否會形成循環
+     */
+    wouldCreateCycle(sourceId, targetId) {
+        // 簡單的循環檢測：檢查從 target 是否能到達 source
+        const visited = new Set();
+        const queue = [targetId];
+
+        while (queue.length > 0) {
+            const current = queue.shift();
+            if (current === sourceId) return true;
+            if (visited.has(current)) continue;
+
+            visited.add(current);
+
+            // 找到所有從 current 出發的連線
+            this.edges.forEach(edge => {
+                if (edge.source === current) {
+                    queue.push(edge.target);
+                }
+            });
+        }
+
+        return false;
+    }
+
+    /**
+     * 渲染 Flex Message 預覽
+     */
+    renderFlexPreview(contents) {
+        if (!contents) return '';
+
+        let preview = '';
+
+        // Bubble 類型
+        if (contents.type === 'bubble') {
+            // Hero (圖片/影片)
+            if (contents.hero) {
+                preview += `< div style = "font-size: 9px; color: #6c757d; padding: 2px 0;" >📷 Hero 圖片</div > `;
+            }
+
+            // Body
+            if (contents.body) {
+                const bodyContents = contents.body.contents || [];
+                const previewItems = bodyContents.slice(0, 2).map(item => {
+                    if (item.type === 'text') {
+                        const text = item.text || '';
+                        return text.length > 20 ? text.substring(0, 20) + '...' : text;
+                    }
+                    return `[${item.type}]`;
+                });
+                if (previewItems.length > 0) {
+                    preview += `< div style = "font-size: 9px; color: #495057; padding: 2px 0;" >📝 ${previewItems.join(' ')}</div > `;
+                }
+            }
+
+            // Footer (按鈕)
+            if (contents.footer) {
+                const buttons = contents.footer.contents || [];
+                const buttonCount = buttons.length;
+                if (buttonCount > 0) {
+                    preview += `< div style = "font-size: 9px; color: #6c757d; padding: 2px 0;" >🔘 ${buttonCount} 個按鈕</div > `;
+                }
+            }
+        }
+
+        // Carousel 類型
+        else if (contents.type === 'carousel') {
+            const bubbles = contents.contents || [];
+            preview += `< div style = "font-size: 9px; color: #6c757d; padding: 2px 0;" >🎠 ${bubbles.length} 個卡片</div > `;
+        }
+
+        return preview || '<div style="font-size: 9px; color: #adb5bd;">無預覽</div>';
+    }
+
+    /**
+     * 繪製 Richmenu 按鈕區域
+     */
+    drawRichmenuButtons(nodeId, imageContainerId) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (!node || !node.data.buttons || node.data.buttons.length === 0) return;
+
+        const container = document.getElementById(imageContainerId);
+        if (!container) return;
+
+        const img = container.querySelector('img');
+        if (!img) return;
+
+        // 移除舊的 canvas（如果存在）
+        const oldCanvas = container.querySelector('canvas');
+        if (oldCanvas) oldCanvas.remove();
+
+        // 創建 canvas
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        canvas.style.cssText = `
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        `;
+
+        const ctx = canvas.getContext('2d');
+
+        // 取得原始 Richmenu 尺寸
+        const originalWidth = node.data.size?.width || 2500;
+        const originalHeight = node.data.size?.height || 1686;
+
+        // 計算縮放比例
+        const scaleX = img.width / originalWidth;
+        const scaleY = img.height / originalHeight;
+
+        // 繪製每個按鈕區域
+        node.data.buttons.forEach((button, index) => {
+            const bounds = button.bounds;
+            if (!bounds) return;
+
+            // 計算縮放後的坐標
+            const x = bounds.x * scaleX;
+            const y = bounds.y * scaleY;
+            const width = bounds.width * scaleX;
+            const height = bounds.height * scaleY;
+
+            // 繪製紅色框框
+            ctx.strokeStyle = '#e74c3c';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x, y, width, height);
+
+            // 繪製半透明背景
+            ctx.fillStyle = 'rgba(231, 76, 60, 0.1)';
+            ctx.fillRect(x, y, width, height);
+
+            // 繪製按鈕序號（只顯示編號，不顯示詳細內容）
+            const label = `${index + 1}`;
+
+            // 繪製白色背景圓圈（序號）
+            ctx.fillStyle = '#e74c3c';
+            ctx.beginPath();
+            ctx.arc(x + 15, y + 15, 12, 0, 2 * Math.PI);
+            ctx.fill();
+
+            // 繪製序號文字
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 14px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(label, x + 15, y + 15);
+
+            // 在按鈕右側中央繪製連接點（輸出點）
+            const outputX = x + width;
+            const outputY = y + height / 2;
+
+            // 繪製白色外圈
+            ctx.fillStyle = '#e74c3c';
+            ctx.beginPath();
+            ctx.arc(outputX, outputY, 8, 0, 2 * Math.PI);
+            ctx.fill();
+
+            // 繪製白色邊框
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // 繪製內部小點
+            ctx.fillStyle = 'white';
+            ctx.beginPath();
+            ctx.arc(outputX, outputY, 3, 0, 2 * Math.PI);
+            ctx.fill();
+        });
+
+        container.appendChild(canvas);
+
+        // 添加可點擊的連接點覆蓋層
+        node.data.buttons.forEach((button, index) => {
+            const bounds = button.bounds;
+            if (!bounds) return;
+
+            // 計算連接點位置
+            const scaleX = img.width / originalWidth;
+            const scaleY = img.height / originalHeight;
+            const x = bounds.x * scaleX;
+            const y = bounds.y * scaleY;
+            const width = bounds.width * scaleX;
+            const height = bounds.height * scaleY;
+            const outputX = x + width;
+            const outputY = y + height / 2;
+
+            // 創建可點擊的連接點
+            const connectionPoint = document.createElement('div');
+            connectionPoint.className = 'richmenu-connection-point';
+            connectionPoint.dataset.nodeId = nodeId;
+            connectionPoint.dataset.output = button.id;
+            connectionPoint.style.cssText = `
+            position: absolute;
+            left: ${outputX}px;
+            top: ${outputY}px;
+            width: 16px;
+            height: 16px;
+            transform: translate(-50%, -50%);
+            cursor: pointer;
+            z-index: 10;
+            `;
+            connectionPoint.title = `連接: ${button.label}`;
+            connectionPoint.onclick = (e) => {
+                e.stopPropagation();
+                this.startConnection(nodeId, button.id);
+            };
+
+            container.appendChild(connectionPoint);
+        });
+    }
+
+    /**
+     * 繪製 Imagemap 可點擊區域
+     */
+    drawImagemapAreas(nodeId, imageContainerId) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (!node || !node.data.actions || node.data.actions.length === 0) return;
+
+        const container = document.getElementById(imageContainerId);
+        if (!container) return;
+
+        const img = container.querySelector('img');
+        if (!img) return;
+
+        // 移除舊的 canvas（如果存在）
+        const oldCanvas = container.querySelector('canvas');
+        if (oldCanvas) oldCanvas.remove();
+
+        // 創建 canvas
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        canvas.style.cssText = `
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        `;
+
+        const ctx = canvas.getContext('2d');
+
+        // 取得原始 Imagemap 尺寸
+        const originalWidth = node.data.baseSize?.width || 1040;
+        const originalHeight = node.data.baseSize?.height || 1040;
+
+        // 計算縮放比例
+        const scaleX = img.width / originalWidth;
+        const scaleY = img.height / originalHeight;
+
+        // 繪製每個可點擊區域
+        node.data.actions.forEach((action, index) => {
+            const area = action.area;
+            if (!area) return;
+
+            let x, y, width, height;
+
+            // Imagemap area 是一個矩形區域 {x, y, width, height}
+            if (area.x !== undefined && area.y !== undefined) {
+                x = area.x * scaleX;
+                y = area.y * scaleY;
+                width = area.width * scaleX;
+                height = area.height * scaleY;
+
+                // 繪製藍色框框（區別於 Richmenu 的紅色）
+                ctx.strokeStyle = '#3498db';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x, y, width, height);
+
+                // 繪製半透明背景
+                ctx.fillStyle = 'rgba(52, 152, 219, 0.1)';
+                ctx.fillRect(x, y, width, height);
+
+                // 繪製區域序號
+                const label = `${index + 1}`;
+
+                // 繪製藍色背景圓圈（序號）
+                ctx.fillStyle = '#3498db';
+                ctx.beginPath();
+                ctx.arc(x + 15, y + 15, 12, 0, 2 * Math.PI);
+                ctx.fill();
+
+                // 繪製序號文字
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 14px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(label, x + 15, y + 15);
+
+                // 在區域右側中央繪製連接點（輸出點）
+                const outputX = x + width;
+                const outputY = y + height / 2;
+
+                // 繪製藍色外圈
+                ctx.fillStyle = '#3498db';
+                ctx.beginPath();
+                ctx.arc(outputX, outputY, 8, 0, 2 * Math.PI);
+                ctx.fill();
+
+                // 繪製白色邊框
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // 繪製內部小點
+                ctx.fillStyle = 'white';
+                ctx.beginPath();
+                ctx.arc(outputX, outputY, 3, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+        });
+
+        container.appendChild(canvas);
+
+        // 添加可點擊的連接點覆蓋層
+        node.data.actions.forEach((action, index) => {
+            const area = action.area;
+            if (!area || area.x === undefined) return;
+
+            // 計算連接點位置
+            const scaleX = img.width / originalWidth;
+            const scaleY = img.height / originalHeight;
+            const x = area.x * scaleX;
+            const y = area.y * scaleY;
+            const width = area.width * scaleX;
+            const height = area.height * scaleY;
+            const outputX = x + width;
+            const outputY = y + height / 2;
+
+            // 創建可點擊的連接點
+            const connectionPoint = document.createElement('div');
+            connectionPoint.className = 'imagemap-connection-point';
+            connectionPoint.dataset.nodeId = nodeId;
+            connectionPoint.dataset.output = `action_${index}`;
+            connectionPoint.style.cssText = `
+                position: absolute;
+                left: ${outputX}px;
+                top: ${outputY}px;
+                width: 16px;
+                height: 16px;
+                transform: translate(-50%, -50%);
+                cursor: pointer;
+                z-index: 10;
+            `;
+            connectionPoint.title = `連接: 區域 ${index + 1}`;
+            connectionPoint.onclick = (e) => {
+                e.stopPropagation();
+                this.startConnection(nodeId, `action_${index}`);
+            };
+
+            container.appendChild(connectionPoint);
+        });
+    }
+
+    /**
+     * 使節點可拖曳
+     */
+    makeDraggable(element, node) {
+        let isDragging = false;
+        let startX, startY;
+        let isMultiDragging = false;
+        let multiDragData = [];
+
+        element.addEventListener('mousedown', (e) => {
+            if (e.target.classList.contains('bi')) return; // 忽略圖示點擊
+            if (e.target.tagName === 'BUTTON') return; // 忽略按鈕點擊
+
+            // ✨ 檢查是否是批量拖動
+            const isSelected = this.selectedNodes.includes(node);
+
+            if (isSelected && this.selectedNodes.length > 1) {
+                // 批量拖動模式
+                isMultiDragging = true;
+                isDragging = true;
+
+                const mouseStartX = e.clientX / this.canvasZoom;
+                const mouseStartY = e.clientY / this.canvasZoom;
+
+                multiDragData = this.selectedNodes.map(n => ({
+                    node: n,
+                    offsetX: mouseStartX - n.position.x,
+                    offsetY: mouseStartY - n.position.y
+                }));
+
+                element.style.zIndex = 1000;
+            } else {
+                // 單節點拖動模式
+                isDragging = true;
+                startX = (e.clientX / this.canvasZoom) - node.position.x;
+                startY = (e.clientY / this.canvasZoom) - node.position.y;
+                element.style.zIndex = 1000;
+            }
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+
+            if (isMultiDragging) {
+                // ✨ 批量拖動
+                const mouseX = e.clientX / this.canvasZoom;
+                const mouseY = e.clientY / this.canvasZoom;
+
+                multiDragData.forEach(({ node, offsetX, offsetY }) => {
+                    node.position.x = mouseX - offsetX;
+                    node.position.y = mouseY - offsetY;
+
+                    const nodeElement = document.getElementById(node.id);
+                    if (nodeElement) {
+                        nodeElement.style.left = node.position.x + 'px';
+                        nodeElement.style.top = node.position.y + 'px';
+                    }
+                });
+
+                // ✅ 更新所有相關連接線（會重新計算路徑）
+                multiDragData.forEach(({ node }) => {
+                    this.updateConnectedEdges(node.id);
+                });
+            } else {
+                // 單節點拖動
+                node.position.x = (e.clientX / this.canvasZoom) - startX;
+                node.position.y = (e.clientY / this.canvasZoom) - startY;
+                element.style.left = node.position.x + 'px';
+                element.style.top = node.position.y + 'px';
+
+                if (!this._dragUpdateScheduled) {
+                    this._dragUpdateScheduled = true;
+                    requestAnimationFrame(() => {
+                        this.updateConnectedEdges(node.id);
+                        this._dragUpdateScheduled = false;
+                    });
+                }
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isDragging) {
+                isDragging = false;
+                isMultiDragging = false;
+                multiDragData = [];
+                element.style.zIndex = 1;
+                this.saveToLocalStorage();
+            }
+        });
+    }
+
+    /**
+     * 更新與節點相關的所有連線
+     */
+    updateConnectedEdges(nodeId) {
+        // console.log(`[updateConnectedEdges] 更新節點 ${nodeId} 的連接`);
+
+        // 找到所有與此節點相關的連線
+        const relatedEdges = this.edges.filter(edge =>
+            edge.source === nodeId || edge.target === nodeId
+        );
+
+        // console.log(`[updateConnectedEdges] 找到 ${relatedEdges.length} 條相關連接`);
+
+        // 重新繪製每條連線
+        relatedEdges.forEach(edge => {
+            const pathElement = document.getElementById(edge.id);
+
+            if (pathElement) {
+                // 更新路徑（使用 calculateEdgePath 會自動使用正確的貝茲曲線）
+                const newPath = this.calculateEdgePath(edge);
+                if (newPath) {
+                    pathElement.setAttribute('d', newPath);
+                    // console.log(`[updateConnectedEdges] ✅ 已更新連接 ${edge.id}`);
+                } else {
+                    console.warn(`[updateConnectedEdges] 無法計算路徑:`, edge);
+                }
+            } else {
+                console.warn(`[updateConnectedEdges] 找不到路徑元素:`, edge.id);
+            }
+        });
+    }
+
+    /**
+     * 計算連線的路徑（用於拖動更新）
+     */
+    calculateEdgePath(edge) {
+        const sourceNode = this.nodes.find(n => n.id === edge.source);
+        const targetNode = this.nodes.find(n => n.id === edge.target);
+
+        if (!sourceNode || !targetNode) {
+            console.warn(`[calculateEdgePath] 找不到節點: ${edge.source} -> ${edge.target} `);
+            return null;
+        }
+
+        const sourceElement = document.getElementById(edge.source);
+        const targetElement = document.getElementById(edge.target);
+
+        if (!sourceElement || !targetElement) {
+            console.warn(`[calculateEdgePath] 找不到節點元素`);
+            return null;
+        }
+
+        // 獲取節點尺寸
+        const sourceWidth = sourceElement.offsetWidth;
+        const sourceHeight = sourceElement.offsetHeight;
+        const targetWidth = targetElement.offsetWidth;
+        const targetHeight = targetElement.offsetHeight;
+
+        // 直接使用節點的 position 屬性
+        const startX = sourceNode.position.x + sourceWidth;
+        const startY = sourceNode.position.y + sourceHeight / 2;
+        const endX = targetNode.position.x;
+        const endY = targetNode.position.y + targetHeight / 2;
+
+        // 使用保存的控制點（如果有）
+        return this.createCurvePath(startX, startY, endX, endY, edge.controlPoint);
+    }
+
+    /**
+     * 選中節點
+     */
+    selectNode(nodeId) {
+        // 移除之前的選中狀態
+        document.querySelectorAll('.flow-node').forEach(el => {
+            el.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
+        });
+
+        // 選中新節點
+        const element = document.getElementById(nodeId);
+        if (element) {
+            element.style.boxShadow = '0 0 0 3px rgba(52, 152, 219, 0.3)';
+        }
+
+        this.selectedNode = nodeId;
+        this.showNodeProperties(nodeId);
+    }
+
+    /**
+     * 顯示節點屬性面板
+     */
+    showNodeProperties(nodeId) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (!node) {
+            return;
+        }
+
+        const sidebar = document.getElementById('flow-node-editor');
+        const properties = sidebar; // Use same element since it serves as properties container
+
+        if (!sidebar) {
+            console.error('[showNodeProperties] Sidebar element not found');
+            return;
+        }
+
+        sidebar.classList.add('active');
+
+        // Wrap content in node-editor-form class for styling
+        setInnerHTML(properties, `
+            <div class="node-editor-form">
+                <h5><i class="bi ${node.config.icon}"></i> ${node.config.label}</h5>
+                <p class="text-muted small">${node.config.description}</p>
+                <hr>
+                ${this.renderNodeProperties(node)}
+                <button class="btn btn-sm btn-danger w-100 mt-3" id="delete-node-btn" data-node-id="${nodeId}">
+                    <i class="bi bi-trash"></i> 刪除節點
+                </button>
+            </div>
+        `);
+
+        // Bind delete button event
+        const deleteBtn = properties.querySelector('#delete-node-btn');
+        if (deleteBtn) {
+            deleteBtn.addEventListener('click', () => {
+                this.deleteNode(nodeId);
+            });
+        }
+
+        // Bind properties panel buttons (richmenu, flex, imagemap load buttons)
+        const loadRichmenuBtn = properties.querySelector('[data-action="load-richmenu"]');
+        if (loadRichmenuBtn) {
+            loadRichmenuBtn.addEventListener('click', () => {
+                this.selectRichmenu(loadRichmenuBtn.dataset.nodeId);
+            });
+        }
+
+        const expandRichmenuBtn = properties.querySelector('[data-action="expand-richmenu"]');
+        if (expandRichmenuBtn) {
+            expandRichmenuBtn.addEventListener('click', () => {
+                const node = this.nodes.find(n => n.id === expandRichmenuBtn.dataset.nodeId);
+                if (node) this.expandRichmenuButtons(node);
+            });
+        }
+
+        const loadFlexBtn = properties.querySelector('[data-action="load-flex"]');
+        if (loadFlexBtn) {
+            loadFlexBtn.addEventListener('click', () => {
+                this.selectFlex(loadFlexBtn.dataset.nodeId);
+            });
+        }
+
+        const expandFlexBtn = properties.querySelector('[data-action="expand-flex"]');
+        if (expandFlexBtn) {
+            expandFlexBtn.addEventListener('click', () => {
+                const node = this.nodes.find(n => n.id === expandFlexBtn.dataset.nodeId);
+                if (node) this.expandFlexButtons(node);
+            });
+        }
+
+        const loadImagemapBtn = properties.querySelector('[data-action="load-imagemap"]');
+        if (loadImagemapBtn) {
+            loadImagemapBtn.addEventListener('click', () => {
+                this.selectImagemap(loadImagemapBtn.dataset.nodeId);
+            });
+        }
+
+        const expandImagemapBtn = properties.querySelector('[data-action="expand-imagemap"]');
+        if (expandImagemapBtn) {
+            expandImagemapBtn.addEventListener('click', () => {
+                const node = this.nodes.find(n => n.id === expandImagemapBtn.dataset.nodeId);
+                if (node) this.expandImagemapButtons(node);
+            });
+        }
+    }
+
+    /**
+     * 切換側邊欄顯示/隱藏
+     */
+    toggleSidebar() {
+        const sidebar = document.getElementById('sidebar');
+        sidebar.classList.toggle('show');
+    }
+
+    /**
+     * 隱藏側邊欄
+     */
+    hideSidebar() {
+        const sidebar = document.getElementById('sidebar');
+        sidebar.classList.remove('show');
+    }
+
+    /**
+     * 渲染節點屬性編輯器
+     */
+    renderNodeProperties(node) {
+        switch (node.type) {
+            case NodeTypes.RICHMENU:
+                return this.renderRichmenuProperties(node);
+            case NodeTypes.MESSAGE_FLEX:
+                return this.renderFlexProperties(node);
+            case NodeTypes.MESSAGE_IMAGEMAP:
+                return this.renderImagemapProperties(node);
+            case NodeTypes.MESSAGE_TEXT:
+                return this.renderTextProperties(node);
+            case NodeTypes.MESSAGE_SEQUENCE:
+                return this.renderSequenceProperties(node);
+            case NodeTypes.KEYWORD:
+                return this.renderKeywordProperties(node);
+            case NodeTypes.ACTION_DELAY:
+                return this.renderDelayProperties(node);
+            case NodeTypes.ACTION_TAG:
+                return this.renderTagProperties(node);
+            default:
+                return this.renderGenericProperties(node);
+        }
+    }
+
+    /**
+     * Richmenu 屬性編輯器
+     */
+    renderRichmenuProperties(node) {
+        // ✅ 判斷是否已載入（有 buttons 或者是自動創建的）
+        const isLoaded = node.data.buttons && node.data.buttons.length > 0;
+        const isAutoCreated = node.data.isAutoCreated; // 通過 menu switch 自動創建的
+        const shouldDisableSelector = isLoaded || isAutoCreated;
+
+        return `
+            ${dataLoader.renderResourceSelector('richmenu', node.data.richmenuId, shouldDisableSelector)}
+            
+            ${!shouldDisableSelector ? `
+                <button class="btn btn-sm btn-primary w-100 mt-2" 
+                        data-action="load-richmenu" data-node-id="${node.id}">
+                    <i class="bi bi-arrow-right-circle"></i> 載入 Richmenu
+                </button>
+            ` : ''}
+            
+            ${node.data.buttons.length > 0 ? `
+                <div class="mt-3">
+                    <button class="btn btn-sm btn-success w-100" 
+                            data-action="expand-richmenu" data-node-id="${node.id}">
+                        <i class="bi bi-diagram-3"></i> 展開所有按鈕
+                    </button>
+                </div>
+                <div class="mt-3">
+                    <label class="form-label">按鈕列表</label>
+                    <div class="list-group list-group-flush">
+                        ${node.data.buttons.map((btn, idx) => `
+                            <div class="list-group-item small">
+                                <strong>按鈕 ${idx + 1}:</strong> ${btn.label}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            ` : '<p class="text-muted small mt-2">尚未選擇 Richmenu</p>'}
+        `;
+    }
+
+    /**
+     * Flex Message 屬性編輯器
+     */
+    renderFlexProperties(node) {
+        return `
+            ${dataLoader.renderResourceSelector('flex', node.data.flexId)}
+            
+            <button class="btn btn-sm btn-primary w-100 mt-2" 
+                    data-action="load-flex" data-node-id="${node.id}">
+                <i class="bi bi-arrow-right-circle"></i> 載入 Flex Message
+            </button>
+            
+            ${node.data.buttons && node.data.buttons.length > 0 ? `
+                <div class="mt-3">
+                    <button class="btn btn-sm btn-success w-100" 
+                            data-action="expand-flex" data-node-id="${node.id}">
+                        <i class="bi bi-diagram-3"></i> 自動展開所有按鈕
+                    </button>
+                </div>
+                <div class="mt-3">
+                    <label class="form-label">Flex 按鈕（輸出點）</label>
+                    <div class="list-group list-group-flush">
+                        ${node.data.buttons.map((btn, idx) => `
+                            <div class="list-group-item small">
+                                ${btn.label}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            ` : ''}
+        `;
+    }
+
+    /**
+     * Imagemap 屬性編輯器
+     */
+    renderImagemapProperties(node) {
+        console.log('[renderImagemapProperties] node.data:', node.data);
+        console.log('[renderImagemapProperties] node.data.actions:', node.data.actions);
+        console.log('[renderImagemapProperties] actions.length:', node.data.actions?.length);
+
+        // ✅ 判斷是否已載入（有 actions）
+        const isLoaded = node.data.actions && node.data.actions.length > 0;
+        const shouldDisableSelector = isLoaded;
+
+        return `
+            ${dataLoader.renderResourceSelector('imagemap', node.data.imagemapId, shouldDisableSelector)}
+            
+            ${!shouldDisableSelector ? `
+                <button class="btn btn-sm btn-primary w-100 mt-2" 
+                        data-action="load-imagemap" data-node-id="${node.id}">
+                    <i class="bi bi-arrow-right-circle"></i> 載入 Imagemap
+                </button>
+            ` : ''}
+            
+            ${node.data.actions && node.data.actions.length > 0 ? `
+                <div class="mt-3">
+                    <button class="btn btn-sm btn-success w-100" 
+                            data-action="expand-imagemap" data-node-id="${node.id}">
+                        <i class="bi bi-diagram-3"></i> 展開所有區域
+                    </button>
+                </div>
+                <div class="mt-3">
+                    <label class="form-label">可點擊區域</label>
+                    <div class="list-group list-group-flush">
+                        ${node.data.actions.map((action, idx) => `
+                            <div class="list-group-item small">
+                                <strong>區域 ${idx + 1}:</strong> ${action.type === 'uri' ? '🔗 ' + (action.linkUri || 'URL') : action.type === 'message' ? '💬 ' + (action.text || 'Message') : '📦 ' + action.type}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            ` : '<p class="text-muted small mt-2">尚未選擇 Imagemap</p>'}
+        `;
+    }
+
+    /**
+     * 文字訊息屬性編輯器
+     */
+    renderTextProperties(node) {
+        return `
+            <div class="mb-3">
+                <label class="form-label">訊息內容</label>
+                <textarea class="form-control" rows="4" id="text-content-${node.id}"
+                          oninput="flowDesigner.updateNodeText('${node.id}', this.value)">${node.data.text || ''}</textarea>
+                <div class="form-text">最多 2000 字</div>
+            </div>
+        `;
+    }
+
+    /**
+     * 訊息序列屬性編輯器
+     */
+    renderSequenceProperties(node) {
+        const messages = node.data.messages || [];
+        const messagesHTML = messages.map((msg, index) => `
+            <div class="message-item mb-2 p-2 border rounded" data-index="${index}">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <span class="badge bg-primary">${index + 1}</span>
+                    <button class="btn btn-sm btn-danger" onclick="flowDesigner.removeSequenceMessage('${node.id}', ${index})">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+                <div class="mb-1">
+                    <select class="form-select form-select-sm" onchange="flowDesigner.updateMessageType('${node.id}', ${index}, this.value)">
+                        <option value="text" ${msg.type === 'text' ? 'selected' : ''}>文字訊息</option>
+                        <option value="image" ${msg.type === 'image' ? 'selected' : ''}>圖片訊息 (暫未支援)</option>
+                    </select>
+                </div>
+                ${msg.type === 'text' ? `
+                    <textarea class="form-control form-control-sm" rows="2" 
+                              onchange="flowDesigner.updateMessageContent('${node.id}', ${index}, this.value)">${msg.text || ''}</textarea>
+                ` : ''}
+            </div>
+        `).join('');
+
+        return `
+            <div class="mb-3">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <label class="form-label mb-0">訊息列表 (${messages.length}/5)</label>
+                    <button class="btn btn-sm btn-success" 
+                            onclick="flowDesigner.addSequenceMessage('${node.id}')"
+                            ${messages.length >= 5 ? 'disabled' : ''}>
+                        <i class="bi bi-plus-circle"></i> 新增
+                    </button>
+                </div>
+                <div id="messages-container-${node.id}">
+                    ${messagesHTML || '<div class="text-muted">尚無訊息</div>'}
+                </div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">訊息間延遲（毫秒）</label>
+                <input type="number" class="form-control" min="0" max="5000" step="100"
+                       value="${node.data.delay || 0}"
+                       onchange="flowDesigner.updateSequenceDelay('${node.id}', this.value)">
+                <div class="form-text">0-5000 毫秒</div>
+            </div>
+        `;
+    }
+
+    /**
+     * 關鍵字屬性編輯器
+     */
+    renderKeywordProperties(node) {
+        return `
+            <div class="mb-3">
+                ${dataLoader.renderResourceSelector('keyword', node.data.keyword)}
+                <button class="btn btn-primary w-100 mt-2" onclick="flowDesigner.selectKeyword('${node.id}')">
+                    <i class="bi bi-download"></i> 載入 Keyword
+                </button>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">關鍵字</label>
+                <input type="text" class="form-control" value="${node.data.keyword || ''}"
+                       id="keyword-${node.id}"
+                       onchange="flowDesigner.updateNodeKeyword('${node.id}', this.value)" readonly>
+                <small class="text-muted">從上方選擇關鍵字後載入</small>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">比對方式</label>
+                <select class="form-select" id="match-type-${node.id}"
+                        onchange="flowDesigner.updateNodeMatchType('${node.id}', this.value)" disabled>
+                    <option value="exact" ${node.data.matchType === 'exact' ? 'selected' : ''}>完全符合</option>
+                    <option value="contains" ${node.data.matchType === 'contains' ? 'selected' : ''}>包含</option>
+                    <option value="regex" ${node.data.matchType === 'regex' ? 'selected' : ''}>正則表達式</option>
+                </select>
+                <small class="text-muted">從 keyword 載入後自動設定</small>
+            </div>
+        `;
+    }
+
+    /**
+     * 延遲屬性編輯器
+     */
+    renderDelayProperties(node) {
+        return `
+            <div class="mb-3">
+                <label class="form-label">延遲時間（秒）</label>
+                <input type="number" class="form-control" min="1" max="300"
+                       value="${node.data.seconds}"
+                       id="delay-${node.id}"
+                       onchange="flowDesigner.updateNodeDelay('${node.id}', this.value)">
+                <div class="form-text">1-300 秒</div>
+            </div>
+        `;
+    }
+
+    /**
+     * 標籤屬性編輯器
+     */
+    renderTagProperties(node) {
+        return `
+            <div class="mb-3">
+                <label class="form-label">操作類型</label>
+                <select class="form-select" id="tag-operation-${node.id}"
+                        onchange="flowDesigner.updateNodeTagOperation('${node.id}', this.value)">
+                    <option value="add" ${node.data.operation === 'add' ? 'selected' : ''}>新增標籤</option>
+                    <option value="remove" ${node.data.operation === 'remove' ? 'selected' : ''}>移除標籤</option>
+                </select>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">標籤</label>
+                <input type="text" class="form-control" 
+                       placeholder="輸入標籤，用逗號分隔"
+                       value="${(node.data.tags || []).join(', ')}"
+                       id="tags-${node.id}"
+                       onchange="flowDesigner.updateNodeTags('${node.id}', this.value)">
+            </div>
+        `;
+    }
+
+    /**
+     * 通用屬性編輯器
+     */
+    renderGenericProperties(node) {
+        return `
+            <div class="mb-3">
+                <label class="form-label">節點 ID</label>
+                <input type="text" class="form-control form-control-sm" value="${node.id}" disabled>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">節點資料</label>
+                <textarea class="form-control form-control-sm" rows="5">${JSON.stringify(node.data, null, 2)}</textarea>
+            </div>
+        `;
+    }
+
+    // ========== 節點資料更新函數 ==========
+
+    /**
+     * 載入 Keyword 列表（用於自動匹配）
+     */
+    async loadKeywordList() {
+        // 如果快取未過期（5分鐘），直接使用
+        const now = Date.now();
+        if (this.keywordList && this.keywordListLoadTime && (now - this.keywordListLoadTime < 5 * 60 * 1000)) {
+            return this.keywordList;
+        }
+
+        try {
+            const res = await fetch(`${apiBase}/keyword/list`, {
+                headers: { 'X-User-Id': getUserId() }
+            });
+
+            if (!res.ok) throw new Error('載入 keyword list 失敗');
+
+            const data = await res.json();
+            this.keywordList = data.data || [];
+            this.keywordListLoadTime = now;
+
+            console.log(`[Keyword] 已載入 ${this.keywordList.length} 個關鍵字`);
+            return this.keywordList;
+        } catch (error) {
+            console.error('[Keyword] 載入失敗:', error);
+            return [];
+        }
+    }
+
+    /**
+     * 匹配文字到 Keyword
+     * @param {string} text - 要匹配的文字
+     * @returns {object|null} - 匹配到的 keyword 物件，或 null
+     */
+    async matchKeyword(text) {
+        if (!text) return null;
+
+        const keywords = await this.loadKeywordList();
+        if (!keywords || keywords.length === 0) return null;
+
+        // 尋找匹配的 keyword
+        const matched = keywords.find(kw => {
+            if (kw.matchType === 'exact') {
+                return kw.keyword === text;
+            } else if (kw.matchType === 'contains') {
+                return text.includes(kw.keyword);
+            } else if (kw.matchType === 'regex') {
+                try {
+                    const regex = new RegExp(kw.keyword);
+                    return regex.test(text);
+                } catch (e) {
+                    return false;
+                }
+            }
+            return false;
+        });
+
+        return matched || null;
+    }
+
+    /**
+     * 選擇 Richmenu
+     */
+    async selectRichmenu(nodeId) {
+        const selectElement = document.getElementById('resource-select-richmenu');
+        const richMenuId = selectElement.value;
+
+        if (!richMenuId) {
+            toast.warning('請先選擇一個 Richmenu');
+            return;
+        }
+
+        showLoader('載入 Richmenu 資料中...');
+        try {
+            const details = await dataLoader.loadRichmenuDetails(richMenuId);
+            if (details) {
+                const node = this.nodes.find(n => n.id === nodeId);
+                if (node) {
+                    node.data.richmenuId = details.richMenuId;
+                    node.data.name = details.name;
+                    node.data.buttons = details.buttons;
+                    node.data.imageUrl = details.imageUrl;
+                    node.data.size = details.size;  // ✅ 儲存尺寸資訊
+
+                    // 重新渲染節點以顯示圖片和按鈕框框
+                    const nodeElement = document.getElementById(nodeId);
+                    if (nodeElement) {
+                        nodeElement.remove();
+                        this.renderNode(node);
+                    }
+
+                    this.showNodeProperties(nodeId);
+                    this.saveToLocalStorage();
+                    toast.success('✅ Richmenu 已載入');
+                }
+            }
+        } catch (error) {
+            console.error('[載入 Richmenu] 錯誤:', error);
+            toast.error('載入 Richmenu 失敗');
+        } finally {
+            hideLoader();
+        }
+    }
+
+    /**
+     * 自動展開 Richmenu 按鈕，創建對應的節點
+     */
+    async expandRichmenuButtons(richmenuNode, processedRichmenus = new Set()) {
+        if (!richmenuNode.data.buttons || richmenuNode.data.buttons.length === 0) {
+            return;
+        }
+
+        // ✅ 檢查是否已展開（避免重複展開）
+        if (richmenuNode.data.isExpanded) {
+            toast.warning('此 Richmenu 已展開，請勿重複展開');
+            console.log('[自動展開] Richmenu 已展開，跳過');
+            return;
+        }
+
+        showLoader(`展開 ${richmenuNode.data.buttons.length} 個按鈕...`);
+        try {
+            // 標記此 Richmenu 已處理（避免循環）
+            processedRichmenus.add(richmenuNode.data.richmenuId);
+
+            console.log(`[自動展開] Richmenu 位置:`, richmenuNode.position);
+
+            // 改進的佈局算法：根據按鈕類型分組排列
+            const baseX = richmenuNode.position.x + 400; // 按鈕節點在右側，增加間距
+            const startY = richmenuNode.position.y - 100; // 從 Richmenu 上方開始
+            const verticalGap = 120; // 減小垂直間距使佈局更緊湊
+
+            // 按類型分組
+            const buttonsByType = {
+                uri: [],
+                richmenuswitch: [],
+                postback: [],
+                message: [],
+                other: []
+            };
+
+            richmenuNode.data.buttons.forEach((button, index) => {
+                const action = button.action || button;
+                const type = action.type || 'other';
+                buttonsByType[type] = buttonsByType[type] || [];
+                buttonsByType[type].push({ button, action, index });
+            });
+
+            let currentY = startY;
+
+            console.log(`[自動展開] 按鈕分組:`, {
+                uri: buttonsByType.uri?.length || 0,
+                richmenuswitch: buttonsByType.richmenuswitch?.length || 0,
+                postback: buttonsByType.postback?.length || 0,
+                message: buttonsByType.message?.length || 0
+            });
+
+            for (let i = 0; i < richmenuNode.data.buttons.length; i++) {
+                const button = richmenuNode.data.buttons[i];
+                const action = button.action;
+
+                console.log(`[自動展開] 按鈕 ${i + 1}:`, button);
+
+                if (!action || action.type === 'none') {
+                    console.log(`[自動展開] 跳過按鈕 ${i + 1}:`, action?.type || 'no action');
+                    // 重要：即使跳過按鈕，也要增加 Y 位置，避免後續節點重疊
+                    currentY += verticalGap;
+                    continue;
+                }
+
+                const position = { x: baseX, y: currentY };
+                let newNode = null;
+
+                console.log(`[自動展開] 按鈕 ${i + 1} 位置:`, position);
+
+                try {
+                    // 添加微小延遲避免 Date.now() ID 衝突
+                    await new Promise(resolve => setTimeout(resolve, 5));
+
+                    switch (action.type) {
+                        case 'uri':
+                            console.log(`[自動展開] 創建 URL 節點:`, action.uri);
+                            newNode = this.addNode(NodeTypes.URL, position, true); // silent mode
+                            if (newNode && newNode.data) {
+                                newNode.data.url = action.uri || '';
+                                newNode.data.label = `🔘 ${i + 1} - ${action.label || button.label || 'URL'}`;
+                                // 重新渲染
+                                const element = document.getElementById(newNode.id);
+                                if (element) {
+                                    element.remove();
+                                    this.renderNode(newNode);
+                                }
+                            }
+                            break;
+
+                        case 'message':
+                            console.log(`[自動展開] 處理 Message action:`, action.text);
+
+                            // ✅ 檢查是否匹配 keyword
+                            const matchedKeyword = await this.matchKeyword(action.text);
+
+                            if (matchedKeyword) {
+                                // 匹配到 keyword，創建 KEYWORD 節點
+                                console.log(`[自動展開] 匹配到關鍵字: "${matchedKeyword.keyword}"，創建 Keyword 節點`);
+                                newNode = this.addNode(NodeTypes.KEYWORD, position, true);
+                                if (newNode && newNode.data) {
+                                    newNode.data.keyword = matchedKeyword.keyword;
+                                    newNode.data.matchType = matchedKeyword.matchType || 'exact';
+                                    newNode.data.label = `🔑 ${action.text}`;
+                                    // 重新渲染
+                                    const element = document.getElementById(newNode.id);
+                                    if (element) {
+                                        element.remove();
+                                        this.renderNode(newNode);
+                                    }
+
+                                    // TODO: 連接到 keyword 的回覆訊息
+                                    // 這需要從後端獲取 keyword 的回覆資料
+                                }
+                            } else {
+                                // 沒有匹配，創建普通 Text 節點
+                                console.log(`[自動展開] 未匹配關鍵字，創建 Text 節點:`, action.text);
+                                newNode = this.addNode(NodeTypes.MESSAGE_TEXT, position, true);
+                                if (newNode && newNode.data) {
+                                    newNode.data.text = action.text || '';
+                                    newNode.data.label = `🔘 ${i + 1} - ${action.label || button.label || 'Message'}`;
+                                    // 重新渲染
+                                    const element = document.getElementById(newNode.id);
+                                    if (element) {
+                                        element.remove();
+                                        this.renderNode(newNode);
+                                    }
+                                }
+                            }
+                            break;
+
+                        case 'postback':
+                            console.log(`[自動展開] 創建 Postback 節點:`, action.data);
+                            newNode = this.addNode(NodeTypes.POSTBACK, position, true); // silent mode
+                            if (newNode && newNode.data) {
+                                newNode.data.data = action.data || '';
+                                newNode.data.label = `🔘 ${i + 1} - ${action.label || button.label || 'Postback'}`;
+                                newNode.data.displayText = action.displayText || '';
+                                // 重新渲染
+                                const element = document.getElementById(newNode.id);
+                                if (element) {
+                                    element.remove();
+                                    this.renderNode(newNode);
+                                }
+                            }
+                            break;
+
+                        case 'richmenuswitch':
+                            const targetAliasOrId = action.richMenuAliasId;
+                            console.log(`[自動展開] 處理 Richmenuswitch: ${targetAliasOrId}`);
+
+                            // 第一步：創建 Menu Switch 中間節點
+                            const switchNode = this.addNode(NodeTypes.POSTBACK, position, true);
+                            if (switchNode && switchNode.data) {
+                                switchNode.data.data = `switch_to_${targetAliasOrId}`;
+                                switchNode.data.label = `🔄 ${i + 1} - Menu Switch`;
+                                switchNode.data.displayText = `切換到: ${action.label || button.label || targetAliasOrId}`;
+
+                                // 設置特殊標記表示這是 menu switch
+                                switchNode.data.isMenuSwitch = true;
+                                switchNode.data.targetRichmenuId = targetAliasOrId;
+
+                                // 重新渲染 switch 節點
+                                const switchElement = document.getElementById(switchNode.id);
+                                if (switchElement) {
+                                    switchElement.remove();
+                                    this.renderNode(switchNode);
+                                }
+
+                                console.log(`✅ [自動展開] 創建 Menu Switch 節點: ${switchNode.id}`);
+                            }
+
+                            // 第二步：解析目標 Richmenu 並創建/連接
+                            const actualRichmenuId = await dataLoader.resolveRichmenuAlias(targetAliasOrId);
+
+                            if (!actualRichmenuId) {
+                                console.error(`[自動展開] 無法解析 Richmenu ID/Alias: ${targetAliasOrId}`);
+                                newNode = switchNode; // 至少保留 switch 節點
+                                break;
+                            }
+
+                            console.log(`[自動展開] 解析後的 Richmenu ID: ${actualRichmenuId}`);
+
+                            // 第三步：查找或創建目標 Richmenu
+                            const targetRichmenuPosition = {
+                                x: position.x + 300, // Menu Switch 右側
+                                y: position.y
+                            };
+
+                            let targetNode = this.nodes.find(n =>
+                                n.type === NodeTypes.RICHMENU &&
+                                n.data.richmenuId === actualRichmenuId
+                            );
+
+                            if (targetNode) {
+                                console.log(`✅ [自動展開] 找到已存在的 Richmenu 節點: ${targetNode.id} (${targetNode.data.name})`);
+                            } else {
+                                console.log(`[自動展開] 未找到現有節點，創建新的 Richmenu 節點`);
+                                targetNode = this.addNode(NodeTypes.RICHMENU, targetRichmenuPosition, true);
+                                if (targetNode) {
+                                    try {
+                                        console.log(`[自動展開] 開始載入 Richmenu 詳情: ${actualRichmenuId}`);
+                                        const details = await dataLoader.loadRichmenuDetails(actualRichmenuId);
+
+                                        if (details) {
+                                            targetNode.data.richmenuId = details.richMenuId;
+                                            targetNode.data.name = details.name;
+                                            targetNode.data.buttons = details.buttons;
+                                            targetNode.data.imageUrl = details.imageUrl;
+                                            targetNode.data.size = details.size;
+                                            targetNode.data.isAutoCreated = true;  // ✅ 標記為自動創建
+
+                                            const element = document.getElementById(targetNode.id);
+                                            if (element) {
+                                                element.remove();
+                                                this.renderNode(targetNode);
+                                            }
+
+                                            // 只有新創建的節點才需要繼續展開
+                                            if (!processedRichmenus.has(actualRichmenuId)) {
+                                                console.log(`[自動展開] 繼續展開 Richmenu: ${actualRichmenuId}`);
+                                                await this.expandRichmenuButtons(targetNode, processedRichmenus);
+                                            }
+                                        }
+                                    } catch (error) {
+                                        console.error('[自動展開] 載入 Richmenu 失敗:', error);
+                                    }
+                                }
+                            }
+
+                            // 第四步：創建 Menu Switch -> 目標 Richmenu 的連接
+                            if (switchNode && targetNode) {
+                                console.log(`[自動展開] 創建連接: ${switchNode.id} -> ${targetNode.id}`);
+                                this.createEdge(switchNode.id, null, targetNode.id, null);
+                            }
+
+                            // 返回 switchNode（這樣主 Richmenu 會連到 switch node）
+                            newNode = switchNode;
+                            break;
+
+                        default:
+                            console.warn(`[自動展開] 未知的動作類型: ${action.type}`);
+                    }
+
+                    if (newNode) {
+                        console.log(`[自動展開] newNode.id = ${newNode.id}, richmenuNode.id = ${richmenuNode.id}`);
+                        console.log(`[自動展開] 創建連接: ${richmenuNode.id} -> ${newNode.id} (button_${i})`);
+                        this.createEdge(richmenuNode.id, `button_${i}`, newNode.id, null);
+                    } else {
+                        console.error(`[自動展開] 節點創建失敗，按鈕 ${i + 1}`);
+                    }
+
+                    // 無論節點是否創建成功，都要增加 Y 位置（為下一個按鈕預留空間）
+                    currentY += verticalGap;
+                } catch (error) {
+                    console.error(`[自動展開] 處理按鈕 ${i + 1} 時發生錯誤:`, error);
+                    // 發生錯誤時也要增加 Y 位置
+                    currentY += verticalGap;
+                }
+            }
+
+            // 不需要 renderAll，因為每個節點和連接都已經在創建時渲染了
+            console.log(`[自動展開] 完成！共創建 ${this.edges.length} 條連接`);
+
+            // ✅ 標記為已展開
+            richmenuNode.data.isExpanded = true;
+
+            this.saveToLocalStorage();
+            toast.success(`✅ 已展開 ${richmenuNode.data.name} 的所有按鈕`);
+        } catch (error) {
+            console.error('[自動展開] 發生錯誤:', error);
+            toast.error('展開失敗: ' + error.message);
+        } finally {
+            hideLoader();
+        }
+    }
+
+    /**
+     * 自動展開 Flex Message 按鈕，創建對應的節點
+     */
+    async expandFlexButtons(flexNode) {
+        if (!flexNode.data.buttons || flexNode.data.buttons.length === 0) {
+            toast.warning('此 Flex Message 沒有按鈕');
+            return;
+        }
+
+        // ✅ 檢查是否已展開
+        if (flexNode.data.isExpanded) {
+            toast.warning('此 Flex Message 已展開，請勿重複展開');
+            return;
+        }
+
+        showLoader(`展開 ${flexNode.data.buttons.length} 個按鈕...`);
+        try {
+            const baseX = flexNode.position.x + 400;
+            const startY = flexNode.position.y - 100;
+            const verticalGap = 120;
+            let currentY = startY;
+
+            for (let i = 0; i < flexNode.data.buttons.length; i++) {
+                const button = flexNode.data.buttons[i];
+                const action = button.action;
+
+                if (!action || action.type === 'none') {
+                    currentY += verticalGap;
+                    continue;
+                }
+
+                const position = { x: baseX, y: currentY };
+                let newNode = null;
+
+                await new Promise(resolve => setTimeout(resolve, 5));
+
+                switch (action.type) {
+                    case 'uri':
+                        newNode = this.addNode(NodeTypes.URL, position, true);
+                        if (newNode) {
+                            newNode.data.url = action.uri || '';
+                            newNode.data.label = `🔘 ${i + 1} - ${action.label || button.label || 'URL'}`;
+                            const el = document.getElementById(newNode.id);
+                            if (el) { el.remove(); this.renderNode(newNode); }
+                        }
+                        break;
+                    case 'message':
+                        newNode = this.addNode(NodeTypes.MESSAGE_TEXT, position, true);
+                        if (newNode) {
+                            newNode.data.text = action.text || '';
+                            newNode.data.label = `🔘 ${i + 1} - ${action.label || button.label || 'Message'}`;
+                            const el = document.getElementById(newNode.id);
+                            if (el) { el.remove(); this.renderNode(newNode); }
+                        }
+                        break;
+                    case 'postback':
+                        newNode = this.addNode(NodeTypes.POSTBACK, position, true);
+                        if (newNode) {
+                            newNode.data.data = action.data || '';
+                            newNode.data.label = `🔘 ${i + 1} - ${action.label || button.label || 'Postback'}`;
+                            const el = document.getElementById(newNode.id);
+                            if (el) { el.remove(); this.renderNode(newNode); }
+                        }
+                        break;
+                }
+
+                if (newNode) {
+                    this.createEdge(flexNode.id, `button_${i}`, newNode.id, 'input');
+                }
+
+                currentY += verticalGap;
+            }
+
+
+            flexNode.data.isExpanded = true;
+            this.saveToLocalStorage();
+            toast.success(`✅ 已展開 ${flexNode.data.title || 'Flex Message'} 的所有按鈕`);
+        } catch (error) {
+            console.error('[展開 Flex] 錯誤:', error);
+            toast.error('展開失敗');
+        } finally {
+            hideLoader();
+        }
+    }
+
+    /**
+     * 自動展開 Imagemap 按鈕，創建對應的節點
+     */
+    async expandImagemapButtons(imagemapNode) {
+        if (!imagemapNode.data.actions || imagemapNode.data.actions.length === 0) {
+            toast.warning('此 Imagemap 沒有可點擊區域');
+            return;
+        }
+
+        // 檢查是否已展開
+        if (imagemapNode.data.isExpanded) {
+            toast.warning('此 Imagemap 已展開，請勿重複展開');
+            return;
+        }
+
+        showLoader(`展開 ${imagemapNode.data.actions.length} 個可點擊區域...`);
+        try {
+            console.log(`[展開 Imagemap] 開始展開`, imagemapNode);
+
+            // 佈局設定
+            const baseX = imagemapNode.position.x + 400; // 按鈕節點在右側
+            const startY = imagemapNode.position.y - 100;
+            const verticalGap = 120;
+            let currentY = startY;
+
+            for (let i = 0; i < imagemapNode.data.actions.length; i++) {
+                const action = imagemapNode.data.actions[i];
+
+                console.log(`[展開 Imagemap] 區域 ${i + 1}:`, action);
+
+                if (!action || action.type === 'none') {
+                    console.log(`[展開 Imagemap] 跳過區域 ${i + 1}`);
+                    currentY += verticalGap;
+                    continue;
+                }
+
+                const position = { x: baseX, y: currentY };
+                let newNode = null;
+
+                // 添加微小延遲避免 ID 衝突
+                await new Promise(resolve => setTimeout(resolve, 5));
+
+                switch (action.type) {
+                    case 'uri':
+                        console.log(`[展開 Imagemap] 創建 URL 節點:`, action.linkUri);
+                        newNode = this.addNode(NodeTypes.URL, position, true);
+                        if (newNode && newNode.data) {
+                            newNode.data.url = action.linkUri || '';
+                            newNode.data.label = `🗺️ ${i + 1} - URL`;
+                            const el = document.getElementById(newNode.id);
+                            if (el) { el.remove(); this.renderNode(newNode); }
+                        }
+                        break;
+
+                    case 'message':
+                        console.log(`[展開 Imagemap] 處理 Message action:`, action.text);
+
+                        // 檢查是否匹配 keyword
+                        const matchedKeyword = await this.matchKeyword(action.text);
+
+                        if (matchedKeyword) {
+                            console.log(`[展開 Imagemap] 匹配到關鍵字: "${matchedKeyword.keyword}"`);
+                            newNode = this.addNode(NodeTypes.KEYWORD, position, true);
+                            if (newNode && newNode.data) {
+                                newNode.data.keyword = matchedKeyword.keyword;
+                                newNode.data.matchType = matchedKeyword.matchType || 'exact';
+                                newNode.data.label = `🔑 ${action.text}`;
+                                const el = document.getElementById(newNode.id);
+                                if (el) { el.remove(); this.renderNode(newNode); }
+                            }
+                        } else {
+                            console.log(`[展開 Imagemap] 創建 Text 節點`);
+                            newNode = this.addNode(NodeTypes.MESSAGE_TEXT, position, true);
+                            if (newNode && newNode.data) {
+                                newNode.data.text = action.text || '';
+                                newNode.data.label = `🗺️ ${i + 1} - ${action.text?.substring(0, 15) || 'Text'}`;
+                                const el = document.getElementById(newNode.id);
+                                if (el) { el.remove(); this.renderNode(newNode); }
+                            }
+                        }
+                        break;
+
+                    case 'postback':
+                        console.log(`[展開 Imagemap] 創建 Postback 節點:`, action.data);
+                        newNode = this.addNode(NodeTypes.POSTBACK, position, true);
+                        if (newNode) {
+                            newNode.data.data = action.data || '';
+                            newNode.data.label = `🗺️ ${i + 1} - Postback`;
+                            const el = document.getElementById(newNode.id);
+                            if (el) { el.remove(); this.renderNode(newNode); }
+                        }
+                        break;
+
+                    default:
+                        console.log(`[展開 Imagemap] 未知的 action 類型: ${action.type}`);
+                }
+
+                // 創建連線
+                if (newNode) {
+                    this.createEdge(imagemapNode.id, `action_${i}`, newNode.id, 'input');
+                }
+
+                currentY += verticalGap;
+            }
+
+            imagemapNode.data.isExpanded = true;
+            this.saveToLocalStorage();
+            toast.success(`✅ 已展開 ${imagemapNode.data.title || 'Imagemap'} 的所有區域`);
+        } catch (error) {
+            console.error('[展開 Imagemap] 錯誤:', error);
+            toast.error('展開失敗: ' + error.message);
+        } finally {
+            hideLoader();
+        }
+    }
+
+    /**
+     * 選擇 Flex Message
+     */
+    async selectFlex(nodeId) {
+        const selectElement = document.getElementById('resource-select-flex');
+        const flexId = selectElement.value;
+
+        if (!flexId) {
+            toast.warning('請先選擇一個 Flex Message');
+            return;
+        }
+
+        showLoader('載入 Flex Message 資料中...');
+        try {
+            const details = await dataLoader.loadFlexMessageDetails(flexId);
+            if (details) {
+                const node = this.nodes.find(n => n.id === nodeId);
+                if (node) {
+                    node.data.flexId = details.flexId;
+                    node.data.title = details.title || '未命名';
+                    node.data.altText = details.altText || details.title;
+                    node.data.contents = details.contents; // 保存完整的 Flex JSON
+
+                    // ✅ 提取按鈕資料
+                    node.data.buttons = this.extractFlexButtons(details.contents);
+                    console.log(`[載入 Flex] 找到 ${node.data.buttons.length} 個按鈕`);
+
+                    // 重新渲染節點以顯示預覽
+                    const nodeElement = document.getElementById(nodeId);
+                    if (nodeElement) {
+                        nodeElement.remove();
+                        this.renderNode(node);
+                    }
+
+                    this.showNodeProperties(nodeId);
+                    this.saveToLocalStorage();
+                    toast.success('✅ Flex Message 已載入');
+                }
+            }
+        } catch (error) {
+            console.error('[載入 Flex] 錯誤:', error);
+            toast.error('載入失敗');
+        } finally {
+            hideLoader();
+        }
+    }
+
+    /**
+     * 選擇 Keyword
+     */
+    async selectKeyword(nodeId) {
+        const selectElement = document.getElementById('resource-select-keyword');
+        const keyword = selectElement.value;
+
+        if (!keyword) {
+            toast.warning('請先選擇一個關鍵字');
+            return;
+        }
+
+        showLoader('載入 Keyword 資料中...');
+        try {
+            // 從 keyword list 中找到這個 keyword
+            const keywords = await this.loadKeywordList();
+            const keywordData = keywords.find(kw => kw.keyword === keyword);
+
+            if (keywordData) {
+                const node = this.nodes.find(n => n.id === nodeId);
+                if (node) {
+                    node.data.keyword = keywordData.keyword;
+                    node.data.matchType = keywordData.matchType || 'exact';
+                    node.data.label = `🔑 ${keywordData.keyword}`;
+
+                    // ✅ 載入並創建回覆節點
+                    if (keywordData.replies && keywordData.replies.length > 0) {
+                        console.log(`[載入 Keyword] 找到 ${keywordData.replies.length} 個回覆`);
+
+                        const baseX = node.position.x + 400;
+                        const startY = node.position.y - 50;
+                        const verticalGap = 120;
+                        let currentY = startY;
+
+                        for (let i = 0; i < keywordData.replies.length; i++) {
+                            const reply = keywordData.replies[i];
+                            const position = { x: baseX, y: currentY };
+                            let replyNode = null;
+
+                            console.log(`[載入 Keyword] 處理回覆 ${i + 1}:`, reply);
+
+                            // 根據回覆類型創建對應節點
+                            if (reply.type === 'imagemap') {
+                                console.log('[載入 Keyword] 創建 Imagemap 節點');
+                                console.log('[載入 Keyword] reply.baseUrl:', reply.baseUrl);
+                                console.log('[載入 Keyword] reply.altText:', reply.altText);
+
+                                replyNode = this.addNode(NodeTypes.MESSAGE_IMAGEMAP, position, true);
+                                if (replyNode) {
+                                    try {
+                                        // ✅ 關鍵修正：reply 本身就包含完整資料！
+                                        // 不需要再從 dataLoader 載入，直接使用 reply 的資料
+                                        if (reply.baseUrl && reply.actions) {
+                                            console.log('[載入 Keyword] ✅ 使用 reply 中的 Imagemap 資料');
+
+                                            // 直接設置完整資料
+                                            replyNode.data.imagemapId = reply.baseUrl;
+                                            replyNode.data.title = reply.altText || 'Imagemap';
+                                            replyNode.data.altText = reply.altText;
+                                            replyNode.data.baseUrl = reply.baseUrl;
+                                            replyNode.data.baseSize = reply.baseSize;
+                                            replyNode.data.actions = reply.actions;
+                                            replyNode.data.imageUrl = reply.baseUrl;
+                                            replyNode.data.label = `🗺️ ${reply.altText || 'Imagemap'}`;
+
+                                            // 重新渲染以顯示圖片
+                                            const el = document.getElementById(replyNode.id);
+                                            if (el) {
+                                                el.remove();
+                                                this.renderNode(replyNode);
+                                            }
+
+                                            // ⚠️ 不要自動展開，讓用戶手動展開避免位置混亂
+                                        } else {
+                                            console.warn('[載入 Keyword] ❌ reply 缺少 baseUrl 或 actions');
+                                            replyNode.data.label = `🗺️ Imagemap (資料不完整)`;
+                                        }
+
+                                    } catch (error) {
+                                        console.error('[載入 Keyword] 載入 Imagemap 失敗:', error);
+                                        replyNode.data.label = `🗺️ Imagemap (載入失敗)`;
+                                    }
+                                }
+                            } else if (reply.type === 'flex') {
+                                console.log('[載入 Keyword] 創建 Flex Message 節點');
+                                console.log('[載入 Keyword] reply.id:', reply.id);
+                                console.log('[載入 Keyword] reply.title:', reply.title);
+
+                                replyNode = this.addNode(NodeTypes.MESSAGE_FLEX, position, true);
+                                if (replyNode) {
+                                    try {
+                                        // ✅ 載入完整的 Flex Message 資料
+                                        if (reply.id) {
+                                            const flexMessages = await dataLoader.loadFlexMessages();
+                                            const flexMessage = flexMessages.find(fm => fm.id === reply.id);
+
+                                            if (flexMessage && flexMessage.contents) {
+                                                console.log('[載入 Keyword] ✅ 找到 Flex Message:', flexMessage.title);
+
+                                                // 設置完整資料
+                                                replyNode.data.flexId = flexMessage.id;
+                                                replyNode.data.title = flexMessage.title || reply.title || 'Flex Message';
+                                                replyNode.data.contents = flexMessage.contents;
+                                                replyNode.data.label = `📱 ${flexMessage.title || 'Flex Message'}`;
+
+                                                // 重新渲染以顯示 Flex 內容
+                                                const el = document.getElementById(replyNode.id);
+                                                if (el) {
+                                                    el.remove();
+                                                    this.renderNode(replyNode);
+                                                }
+
+                                                // ⚠️ 不要自動展開，讓用戶手動展開避免位置混亂
+                                            } else {
+                                                console.warn('[載入 Keyword] ❌ 找不到 Flex Message:', reply.id);
+                                                replyNode.data.flexId = reply.id;
+                                                replyNode.data.title = reply.title || 'Flex Message';
+                                                replyNode.data.label = `📱 ${reply.title || 'Flex Message (未載入)'}`;
+                                            }
+                                        } else {
+                                            console.warn('[載入 Keyword] ❌ reply 缺少 id');
+                                            replyNode.data.title = reply.title || 'Flex Message';
+                                            replyNode.data.label = `📱 ${reply.title || 'Flex Message (無ID)'}`;
+                                        }
+
+                                    } catch (error) {
+                                        console.error('[載入 Keyword] 載入 Flex 失敗:', error);
+                                        replyNode.data.flexId = reply.id;
+                                        replyNode.data.title = reply.title || 'Flex Message';
+                                        replyNode.data.label = `📱 ${reply.title || 'Flex Message (載入失敗)'}`;
+                                    }
+                                }
+                            } else if (reply.type === 'message' || reply.type === 'text') {
+                                console.log('[載入 Keyword] 處理 Text 回覆:', reply.text);
+
+                                // ✅ 檢查是否匹配 keyword
+                                const matchedKeyword = await this.matchKeyword(reply.text);
+
+                                if (matchedKeyword) {
+                                    // 匹配到 keyword，創建 KEYWORD 節點
+                                    console.log('[載入 Keyword] ✅ 匹配到關鍵字:', matchedKeyword.keyword);
+                                    replyNode = this.addNode(NodeTypes.KEYWORD, position, true);
+                                    if (replyNode) {
+                                        replyNode.data.keyword = matchedKeyword.keyword;
+                                        replyNode.data.matchType = matchedKeyword.matchType || 'exact';
+                                        replyNode.data.label = `🔑 ${reply.text}`;
+
+                                        const el = document.getElementById(replyNode.id);
+                                        if (el) { el.remove(); this.renderNode(replyNode); }
+                                    }
+                                } else {
+                                    // 沒有匹配，創建普通 Text 節點
+                                    console.log('[載入 Keyword] 創建 Text 節點');
+                                    replyNode = this.addNode(NodeTypes.MESSAGE_TEXT, position, true);
+                                    if (replyNode) {
+                                        replyNode.data.text = reply.text || '';
+                                        replyNode.data.label = `💬 ${reply.text?.substring(0, 20) || 'Text'}`;
+
+                                        const el = document.getElementById(replyNode.id);
+                                        if (el) { el.remove(); this.renderNode(replyNode); }
+                                    }
+                                }
+                            }
+
+                            // 創建連接
+                            if (replyNode) {
+                                this.createEdge(nodeId, 'output', replyNode.id, 'input');
+                            }
+
+                            currentY += verticalGap;
+                        }
+                    }
+
+                    // 重新渲染 keyword 節點
+                    const nodeElement = document.getElementById(nodeId);
+                    if (nodeElement) {
+                        nodeElement.remove();
+                        this.renderNode(node);
+                    }
+
+                    this.showNodeProperties(nodeId);
+                    this.saveToLocalStorage();
+                    toast.success(`✅ Keyword 已載入，創建 ${keywordData.replies?.length || 0} 個回覆節點`);
+                }
+            } else {
+                toast.error('找不到指定的 Keyword');
+            }
+        } catch (error) {
+            console.error('[載入 Keyword] 錯誤:', error);
+            toast.error('載入失敗');
+        } finally {
+            hideLoader();
+        }
+    }
+
+    /**
+     * 從 Flex JSON 提取按鈕資料
+     */
+    extractFlexButtons(contents) {
+        if (!contents) return [];
+
+        const buttons = [];
+
+        // 遞迴搜尋 Flex JSON 中的所有 action
+        const findActions = (obj, path = '') => {
+            if (!obj || typeof obj !== 'object') return;
+
+            if (obj.type === 'button' && obj.action) {
+                buttons.push({
+                    label: obj.action.label || obj.label || '按鈕',  // ✅ 優先嘗試 action.label，再試 label
+                    action: obj.action
+                });
+            }
+
+            // 遞迴搜尋子元素
+            for (const key in obj) {
+                if (Array.isArray(obj[key])) {
+                    obj[key].forEach((item, idx) => findActions(item, `${path}.${key}[${idx}]`));
+                } else if (typeof obj[key] === 'object') {
+                    findActions(obj[key], `${path}.${key}`);
+                }
+            }
+        };
+
+        findActions(contents);
+
+        console.log(`[extractFlexButtons] 找到 ${buttons.length} 個按鈕:`, buttons);
+
+        return buttons;
+    }
+
+    /**
+     * 選擇 Imagemap
+     */
+    async selectImagemap(nodeId) {
+        // 嘗試多種方式找到選擇器
+        let selectElement = document.getElementById('resource-select-imagemap');
+
+        // 如果找不到，嘗試在屬性面板中查找
+        if (!selectElement) {
+            const propertiesPanel = document.getElementById('node-properties');
+            if (propertiesPanel) {
+                selectElement = propertiesPanel.querySelector('select.form-select');
+            }
+        }
+
+        console.log('[selectImagemap] 找到的選擇器元素:', selectElement);
+
+        if (!selectElement) {
+            console.error('[selectImagemap] 找不到選擇器元素');
+            toast.error('找不到選擇器');
+            return;
+        }
+
+        const imagemapId = selectElement.value;
+        console.log('[selectImagemap] 開始載入，選擇的 ID:', imagemapId);
+        console.log('[selectImagemap] 選擇器的所有選項:', Array.from(selectElement.options).map(opt => ({ value: opt.value, text: opt.text, selected: opt.selected })));
+        console.log('[selectImagemap] 選擇器的 selectedIndex:', selectElement.selectedIndex);
+        console.log('[selectImagemap] 當前選中的選項:', selectElement.options[selectElement.selectedIndex]);
+
+        if (!imagemapId) {
+            toast.warning('請先選擇一個 Imagemap');
+            return;
+        }
+
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (!node) {
+            toast.error('找不到節點');
+            return;
+        }
+
+        try {
+            showLoader('載入 Imagemap 資料...');
+
+            // 載入所有 Imagemap
+            const imagemaps = await dataLoader.loadImagemaps();
+            console.log('[selectImagemap] 載入的 Imagemap 列表:', imagemaps);
+            console.log('[selectImagemap] Imagemap 數量:', imagemaps.length);
+
+            // Debug: 顯示所有 Imagemap 的 baseUrl
+            if (imagemaps.length > 0) {
+                console.log('[selectImagemap] 所有 Imagemap baseUrls:', imagemaps.map(i => i.baseUrl));
+                console.log('[selectImagemap] 第一個 Imagemap 的完整資料:', imagemaps[0]);
+            }
+
+            const imagemap = imagemaps.find(i => i.baseUrl === imagemapId);
+            console.log('[selectImagemap] 找到的 Imagemap:', imagemap);
+
+            if (!imagemap) {
+                console.error('[selectImagemap] 找不到 Imagemap！');
+                console.error('[selectImagemap] 尋找的 baseUrl:', imagemapId);
+                console.error('[selectImagemap] 可用的 baseUrls:', imagemaps.map(i => i.baseUrl));
+                throw new Error('找不到 Imagemap');
+            }
+
+            console.log('[selectImagemap] Imagemap 完整資料:', imagemap);
+
+            // 更新節點資料（使用 baseUrl 作為 ID）
+            node.data.imagemapId = imagemap.baseUrl;  // 使用 baseUrl 作為 ID
+            node.data.title = imagemap.altText || imagemap.baseUrl;
+            node.data.altText = imagemap.altText;
+            node.data.baseUrl = imagemap.baseUrl;    // Imagemap 基礎 URL
+            node.data.baseSize = imagemap.baseSize;  // 圖片尺寸
+            node.data.actions = imagemap.actions;    // 保存 actions
+            node.data.imageUrl = imagemap.baseUrl;   // 使用 baseUrl 作為圖片 URL
+
+            console.log('✅ [selectImagemap] Imagemap 資料已載入:', node.data);
+
+            // 重新渲染節點以顯示圖片
+            const oldElement = document.getElementById(node.id);
+            if (oldElement) {
+                oldElement.remove();
+            }
+            this.renderNode(node);
+
+            // 更新連線
+            this.updateConnectedEdges(node.id);
+
+            // 更新屬性面板
+            this.showNodeProperties(nodeId);
+
+            // 儲存
+            this.saveToLocalStorage();
+
+            toast.success('✅ Imagemap 已載入');
+        } catch (err) {
+            console.error('❌ [selectImagemap] 載入 Imagemap 失敗:', err);
+            console.error('[selectImagemap] 錯誤堆疊:', err.stack);
+            toast.error('載入 Imagemap 失敗: ' + err.message);
+        } finally {
+            hideLoader();
+        }
+    }
+
+    /**
+     * 更新文字內容
+     */
+    updateNodeText(nodeId, text) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (node) {
+            node.data.text = text;
+
+            // 更新節點的視覺顯示
+            const nodeElement = document.getElementById(nodeId);
+            if (nodeElement) {
+                const previewElement = nodeElement.querySelector('.node-preview');
+                if (previewElement) {
+                    const preview = text.length > 30 ? text.substring(0, 30) + '...' : text;
+                    previewElement.textContent = preview || '(空白訊息)';
+                }
+            }
+
+            this.saveToLocalStorage();
+        }
+    }
+
+    /**
+     * 添加訊息到序列
+     */
+    addSequenceMessage(nodeId) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (node && node.data.messages) {
+            if (node.data.messages.length >= 5) {
+                toast.warning('最多只能添加 5 個訊息');
+                return;
+            }
+
+            // 添加新的文字訊息
+            node.data.messages.push({
+                type: 'text',
+                text: '請輸入訊息內容'
+            });
+
+            // 重新渲染屬性面板
+            this.selectNode(nodeId);
+
+            //更新節點預覽
+            this.updateNodePreview(nodeId);
+
+            this.saveToLocalStorage();
+            toast.success('已添加訊息');
+        }
+    }
+
+    /**
+     * 刪除序列中的訊息
+     */
+    removeSequenceMessage(nodeId, index) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (node && node.data.messages) {
+            node.data.messages.splice(index, 1);
+
+            // 重新渲染屬性面板
+            this.selectNode(nodeId);
+
+            // 更新節點預覽
+            this.updateNodePreview(nodeId);
+
+            this.saveToLocalStorage();
+            toast.success('已刪除訊息');
+        }
+    }
+
+    /**
+     * 更新訊息內容
+     */
+    updateMessageContent(nodeId, index, content) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (node && node.data.messages && node.data.messages[index]) {
+            node.data.messages[index].text = content;
+            this.saveToLocalStorage();
+        }
+    }
+
+    /**
+     * 更新訊息類型
+     */
+    updateMessageType(nodeId, index, type) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (node && node.data.messages && node.data.messages[index]) {
+            node.data.messages[index].type = type;
+
+            // 重新渲染屬性面板以顯示對應的編輯器
+            this.selectNode(nodeId);
+            this.saveToLocalStorage();
+        }
+    }
+
+    /**
+     * 更新序列延遲時間
+     */
+    updateSequenceDelay(nodeId, delay) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (node) {
+            node.data.delay = parseInt(delay) || 0;
+            this.saveToLocalStorage();
+        }
+    }
+
+    /**
+     * 更新節點預覽
+     */
+    updateNodePreview(nodeId) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (!node) return;
+
+        const nodeElement = document.getElementById(nodeId);
+        if (nodeElement) {
+            const previewElement = nodeElement.querySelector('.node-preview');
+            if (previewElement) {
+                previewElement.textContent = this.getNodeDataPreview(node);
+            }
+        }
+    }
+
+    /**
+     * 更新關鍵字
+     */
+    updateNodeKeyword(nodeId, keyword) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (node) {
+            node.data.keyword = keyword;
+            this.saveToLocalStorage();
+        }
+    }
+
+    /**
+     * 更新比對方式
+     */
+    updateNodeMatchType(nodeId, matchType) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (node) {
+            node.data.matchType = matchType;
+            this.saveToLocalStorage();
+        }
+    }
+
+    /**
+     * 更新延遲時間
+     */
+    updateNodeDelay(nodeId, seconds) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (node) {
+            node.data.seconds = parseInt(seconds);
+            this.saveToLocalStorage();
+        }
+    }
+
+    /**
+     * 更新標籤操作
+     */
+    updateNodeTagOperation(nodeId, operation) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (node) {
+            node.data.operation = operation;
+            this.saveToLocalStorage();
+        }
+    }
+
+    /**
+     * 更新標籤
+     */
+    updateNodeTags(nodeId, tagsString) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (node) {
+            node.data.tags = tagsString.split(',').map(t => t.trim()).filter(t => t);
+            this.saveToLocalStorage();
+        }
+    }
+
+    /**
+     * 縮放畫布
+     */
+    zoomCanvas(delta) {
+        const oldZoom = this.canvasZoom;
+        this.canvasZoom = Math.max(0.25, Math.min(3.0, this.canvasZoom + delta));
+
+        if (oldZoom === this.canvasZoom) {
+            if (this.canvasZoom >= 3.0) {
+                toast.info('已達最大縮放 (300%)');
+            } else {
+                toast.info('已達最小縮放 (25%)');
+            }
+            return;
+        }
+
+        // 應用縮放
+        this.applyCanvasZoom();
+
+        const percentage = Math.round(this.canvasZoom * 100);
+        // toast.success(`縮放: ${percentage}%`); // 移除：縮放時不顯示 toast
+    }
+
+    /**
+     * 在指定點縮放（用於滾輪縮放）
+     */
+    zoomAtPoint(delta, mouseX, mouseY) {
+        const oldZoom = this.canvasZoom;
+        this.canvasZoom = Math.max(0.25, Math.min(3.0, this.canvasZoom + delta));
+
+        if (oldZoom === this.canvasZoom) return;
+
+        // 計算縮放前的滾動位置
+        const oldScrollX = this.container.scrollLeft;
+        const oldScrollY = this.container.scrollTop;
+
+        // 應用縮放
+        this.applyCanvasZoom();
+
+        // 調整滾動位置，使滑鼠位置保持不變
+        const zoomRatio = this.canvasZoom / oldZoom;
+        const newScrollX = (oldScrollX + mouseX) * zoomRatio - mouseX;
+        const newScrollY = (oldScrollY + mouseY) * zoomRatio - mouseY;
+
+        this.container.scrollLeft = newScrollX;
+        this.container.scrollTop = newScrollY;
+
+        const percentage = Math.round(this.canvasZoom * 100);
+        // toast.success(`縮放: ${percentage}%`); // 移除：滾輪縮放時不顯示 toast
+    }
+
+
+    /**
+     * 設定固定縮放級別（以滑鼠位置為中心）
+     */
+    setZoom(zoom, mouseX = null, mouseY = null) {
+        const oldZoom = this.canvasZoom;
+        this.canvasZoom = zoom;
+
+        // 如果有滑鼠位置，以滑鼠為中心縮放
+        if (mouseX !== null && mouseY !== null) {
+            const containerRect = this.container.getBoundingClientRect();
+            const relativeX = mouseX - containerRect.left;
+            const relativeY = mouseY - containerRect.top;
+
+            // 計算縮放前的滾動位置
+            const oldScrollX = this.container.scrollLeft;
+            const oldScrollY = this.container.scrollTop;
+
+            // 應用縮放
+            this.applyCanvasZoom();
+
+            // 調整滾動位置，使滑鼠位置保持不變
+            const zoomRatio = this.canvasZoom / oldZoom;
+            const newScrollX = (oldScrollX + relativeX) * zoomRatio - relativeX;
+            const newScrollY = (oldScrollY + relativeY) * zoomRatio - relativeY;
+
+            this.container.scrollLeft = newScrollX;
+            this.container.scrollTop = newScrollY;
+        } else {
+            // 沒有滑鼠位置，直接縮放
+            this.applyCanvasZoom();
+        }
+
+        const percentage = Math.round(zoom * 100);
+        toast.success(`縮放: ${percentage}%`);
+    }
+
+    /**
+     * 重置縮放
+     */
+    resetZoom() {
+        this.canvasZoom = 1.0;
+        this.applyCanvasZoom();
+        toast.success('縮放已重置 (100%)');
+    }
+
+    /**
+     * 適應螢幕（顯示所有節點）
+     */
+    fitScreen() {
+        if (this.nodes.length === 0) {
+            toast.warning('沒有節點可顯示');
+            return;
+        }
+
+        // 計算所有節點的邊界
+        let minX = Infinity, minY = Infinity;
+        let maxX = -Infinity, maxY = -Infinity;
+
+        this.nodes.forEach(node => {
+            const x = node.position.x;
+            const y = node.position.y;
+            const width = 250; // 節點平均寬度
+            const height = 200; // 節點平均高度
+
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x + width);
+            maxY = Math.max(maxY, y + height);
+        });
+
+        // 計算需要的縮放比例
+        const contentWidth = maxX - minX + 100; // 添加邊距
+        const contentHeight = maxY - minY + 100;
+        const containerWidth = this.container.clientWidth;
+        const containerHeight = this.container.clientHeight;
+
+        const scaleX = containerWidth / contentWidth;
+        const scaleY = containerHeight / contentHeight;
+        const targetZoom = Math.min(scaleX, scaleY, 1.0); // 最大不超過 100%
+
+        this.canvasZoom = Math.max(0.25, targetZoom);
+        this.applyCanvasZoom();
+
+        // 置中顯示
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+
+        this.container.scrollLeft = centerX * this.canvasZoom - containerWidth / 2;
+        this.container.scrollTop = centerY * this.canvasZoom - containerHeight / 2;
+
+        const percentage = Math.round(this.canvasZoom * 100);
+        toast.success(`已適應螢幕 (${percentage}%)`);
+    }
+
+    /**
+     * 聚焦到指定節點（居中並放大）
+     */
+    focusOnNode(nodeId) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (!node) return;
+
+        const nodeElement = document.getElementById(nodeId);
+        if (!nodeElement) return;
+
+        // 獲取畫布和節點的尺寸
+        const containerRect = this.container.getBoundingClientRect();
+        const nodeWidth = nodeElement.offsetWidth;
+        const nodeHeight = nodeElement.offsetHeight;
+
+        // 計算需要的平移量，使節點居中
+        const centerX = containerRect.width / 2;
+        const centerY = containerRect.height / 2;
+
+        // 節點當前位置
+        const nodeCenterX = node.position.x + nodeWidth / 2;
+        const nodeCenterY = node.position.y + nodeHeight / 2;
+
+        // 計算需要移動的距離
+        const deltaX = centerX - nodeCenterX;
+        const deltaY = centerY - nodeCenterY;
+
+        // 平移所有節點
+        this.nodes.forEach(n => {
+            n.position.x += deltaX;
+            n.position.y += deltaY;
+        });
+
+        //設置縮放為 1.5x
+        this.canvasZoom = 1.5;
+
+        // 重新渲染
+        this.renderAll();
+        this.saveToLocalStorage();
+
+        // 選中該節點
+        this.selectNode(nodeId);
+        this.showNodeProperties(nodeId);
+
+        console.log(`🎯 已聚焦到節點: ${nodeId}, zoom: ${this.canvasZoom}`);
+    }
+
+    /**
+     * 應用畫布縮放
+     */
+    applyCanvasZoom() {
+        if (!this.canvasContent) return;
+
+        this.canvasContent.style.transform = `scale(${this.canvasZoom})`;
+        this.canvasContent.style.transformOrigin = 'top left';
+
+        // 調整內容容器大小以配合縮放
+        const baseSize = 5000;
+        this.canvasContent.style.width = `${baseSize}px`;
+        this.canvasContent.style.height = `${baseSize}px`;
+    }
+
+    /**
+     * 刪除節點（包含級聯刪除展開的子節點）
+     */
+    deleteNode(nodeId) {
+        // 收集所有要刪除的節點（包含子節點）
+        const nodesToDelete = this.collectChildNodes(nodeId);
+        nodesToDelete.push(nodeId);  // 加入自己
+
+        const message = nodesToDelete.length > 1
+            ? `⚠️ 確定要刪除此節點嗎？\n\n將同時刪除 ${nodesToDelete.length} 個節點（包含展開的子節點）及相關連線。`
+            : '⚠️ 確定要刪除此節點嗎？\n\n相關連線也會一併刪除。';
+
+        // 使用 Modal 確認
+        this.showConfirm(
+            '刪除節點',
+            message.replace(/\n/g, '<br>'),
+            () => this._executeDeleteNode(nodesToDelete)
+        );
+    }
+
+    /**
+     * 執行刪除節點（內部方法）
+     */
+    _executeDeleteNode(nodesToDelete) {
+
+        console.log(`[刪除節點] 將刪除 ${nodesToDelete.length} 個節點:`, nodesToDelete);
+
+        // ✅ 先刪除相關的邊的 DOM 元素（SVG path 和控制點）
+        const edgesToRemove = this.edges.filter(edge =>
+            nodesToDelete.includes(edge.source) || nodesToDelete.includes(edge.target)
+        );
+
+        console.log(`[刪除節點] 將刪除 ${edgesToRemove.length} 條連線`);
+
+        edgesToRemove.forEach(edge => {
+            // 移除 SVG path（使用 edge.id）
+            const pathElement = document.getElementById(edge.id);
+            if (pathElement) {
+                console.log(`[刪除節點] 移除連線 path:`, edge.id);
+                pathElement.remove();
+            }
+
+            // 移除控制點（使用 data-edge-id 屬性）
+            const controlPoint = document.querySelector(`[data-edge-id="${edge.id}"]`);
+            if (controlPoint) {
+                console.log(`[刪除節點] 移除控制點:`, edge.id);
+                controlPoint.remove();
+            }
+        });
+
+        // 刪除所有節點和相關的邊
+        this.nodes = this.nodes.filter(n => !nodesToDelete.includes(n.id));
+        this.edges = this.edges.filter(e =>
+            !nodesToDelete.includes(e.source) && !nodesToDelete.includes(e.target)
+        );
+
+        // 從 DOM 移除所有節點元素
+        nodesToDelete.forEach(id => {
+            const element = document.getElementById(id);
+            if (element) element.remove();
+        });
+
+        this.selectedNode = null;
+        document.getElementById('sidebar').classList.remove('show');
+        this.saveToLocalStorage();
+
+        const message = nodesToDelete.length > 1
+            ? `已刪除 ${nodesToDelete.length} 個節點（包含展開的子節點）`
+            : '節點已刪除';
+        toast.success(message);
+    }
+
+    /**
+     * 遞歸收集所有子節點（從指定節點展開出來的節點）
+     */
+    collectChildNodes(nodeId, collected = []) {
+        // 找到所有從這個節點連出去的邊
+        const outgoingEdges = this.edges.filter(e => e.source === nodeId);
+
+        outgoingEdges.forEach(edge => {
+            const targetId = edge.target;
+
+            // 避免重複收集
+            if (!collected.includes(targetId)) {
+                collected.push(targetId);
+                // 遞歸收集該子節點的子節點
+                this.collectChildNodes(targetId, collected);
+            }
+        });
+
+        return collected;
+    }
+
+    /**
+     * 調試：輸出流程結構
+     */
+    debugFlowStructure() {
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('📊 流程結構調試信息');
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+        // 準備 HTML 輸出
+        let htmlOutput = '<div style="font-family: monospace; font-size: 12px; line-height: 1.6;">';
+        htmlOutput += '<h3 style="margin-top: 0;">📊 流程結構調試信息</h3>';
+
+        // 1. 節點信息
+        console.log(`\n📦 節點列表 (共 ${this.nodes.length} 個):`);
+        console.log('─────────────────────────────────────────────');
+        htmlOutput += `<h4>📦 節點列表 (共 ${this.nodes.length} 個):</h4>`;
+        htmlOutput += '<div style="margin-left: 20px;">';
+
+        this.nodes.forEach((node, index) => {
+            const label = node.data.label || node.config.label;
+            console.log(`${index + 1}. ${label}`);
+            console.log(`   ID: ${node.id}`);
+            console.log(`   類型: ${node.type}`);
+            console.log(`   位置: (${node.position.x}, ${node.position.y})`);
+
+            htmlOutput += `<div style="margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-left: 3px solid ${node.config.color};">`;
+            htmlOutput += `<strong>${index + 1}. ${label}</strong><br>`;
+            htmlOutput += `ID: <code>${node.id}</code><br>`;
+            htmlOutput += `類型: ${node.type}<br>`;
+            htmlOutput += `位置: (${node.position.x}, ${node.position.y})<br>`;
+
+            // 顯示節點數據摘要
+            if (node.type === NodeTypes.URL) {
+                const url = node.data.url || '(空)';
+                console.log(`   URL: ${url}`);
+                htmlOutput += `URL: <a href="${url}" target="_blank">${url}</a><br>`;
+            } else if (node.type === NodeTypes.MESSAGE_TEXT) {
+                const text = (node.data.text || '(空)').substring(0, 50);
+                console.log(`   文字: ${text}...`);
+                htmlOutput += `文字: ${text}...<br>`;
+            } else if (node.type === NodeTypes.POSTBACK) {
+                const data = node.data.data || '(空)';
+                console.log(`   Data: ${data}`);
+                htmlOutput += `Data: ${data}<br>`;
+            } else if (node.type === NodeTypes.RICHMENU) {
+                const name = node.data.name || '(未命名)';
+                console.log(`   名稱: ${name}`);
+                console.log(`   Richmenu ID: ${node.data.richmenuId}`);
+                console.log(`   按鈕數: ${node.data.buttons?.length || 0}`);
+                htmlOutput += `<span style="color: #0066cc; font-weight: bold;">名稱: ${name}</span><br>`;
+                htmlOutput += `Richmenu ID: ${node.data.richmenuId}<br>`;
+                htmlOutput += `按鈕數: ${node.data.buttons?.length || 0}<br>`;
+            }
+            htmlOutput += '</div>';
+            console.log('');
+        });
+        htmlOutput += '</div>';
+
+        // 2. 連接信息
+        console.log(`\n🔗 連接列表 (共 ${this.edges.length} 條):`);
+        console.log('─────────────────────────────────────────────');
+        htmlOutput += `<h4>🔗 連接列表 (共 ${this.edges.length} 條):</h4>`;
+        htmlOutput += '<div style="margin-left: 20px;">';
+
+        this.edges.forEach((edge, index) => {
+            const sourceNode = this.nodes.find(n => n.id === edge.source);
+            const targetNode = this.nodes.find(n => n.id === edge.target);
+
+            const sourceLabel = sourceNode?.data.label || sourceNode?.config.label || edge.source;
+            const targetLabel = targetNode?.data.label || targetNode?.config.label || edge.target;
+
+            console.log(`${index + 1}. ${edge.id}`);
+            console.log(`   起點: ${sourceLabel} (${edge.source})`);
+            console.log(`   終點: ${targetLabel} (${edge.target})`);
+
+            htmlOutput += `<div style="margin-bottom: 10px; padding: 8px; background: #e7f3ff; border-radius: 4px;">`;
+            htmlOutput += `<strong>${index + 1}.</strong> ${sourceLabel} → ${targetLabel}<br>`;
+            htmlOutput += `<small>起點: ${edge.source}</small><br>`;
+            htmlOutput += `<small>終點: ${edge.target}</small><br>`;
+
+            if (edge.sourceHandle) {
+                console.log(`   Handle: ${edge.sourceHandle}`);
+                htmlOutput += `<small>Handle: ${edge.sourceHandle}</small><br>`;
+            }
+
+            // 計算路徑坐標
+            if (sourceNode && targetNode) {
+                const sourceEl = document.getElementById(edge.source);
+                const targetEl = document.getElementById(edge.target);
+                if (sourceEl && targetEl) {
+                    const startX = sourceNode.position.x + sourceEl.offsetWidth;
+                    const startY = sourceNode.position.y + sourceEl.offsetHeight / 2;
+                    const endX = targetNode.position.x;
+                    const endY = targetNode.position.y + targetEl.offsetHeight / 2;
+                    console.log(`   路徑: (${startX.toFixed(1)}, ${startY.toFixed(1)}) → (${endX.toFixed(1)}, ${endY.toFixed(1)})`);
+                    htmlOutput += `<small style="color: #666;">路徑: (${startX.toFixed(1)}, ${startY.toFixed(1)}) → (${endX.toFixed(1)}, ${endY.toFixed(1)})</small>`;
+                }
+            }
+            htmlOutput += '</div>';
+            console.log('');
+        });
+        htmlOutput += '</div>';
+
+        // 3. 連接關係圖
+        console.log('\n🌳 連接關係樹:');
+        console.log('─────────────────────────────────────────────');
+        htmlOutput += '<h4>🌳 連接關係樹:</h4>';
+        htmlOutput += '<div style="margin-left: 20px;">';
+
+        const nodeConnections = new Map();
+
+        // 建立連接關係
+        this.nodes.forEach(node => {
+            nodeConnections.set(node.id, {
+                node: node,
+                outgoing: [],
+                incoming: []
+            });
+        });
+
+        this.edges.forEach(edge => {
+            const sourceConn = nodeConnections.get(edge.source);
+            const targetConn = nodeConnections.get(edge.target);
+            if (sourceConn) sourceConn.outgoing.push(edge);
+            if (targetConn) targetConn.incoming.push(edge);
+        });
+
+        // 輸出關係樹
+        nodeConnections.forEach((conn, nodeId) => {
+            if (conn.outgoing.length > 0) {
+                const nodeLabel = conn.node.data.label || conn.node.config.label;
+                console.log(`${nodeLabel}:`);
+                htmlOutput += `<div style="margin-bottom: 10px;"><strong>${nodeLabel}:</strong><br>`;
+
+                conn.outgoing.forEach(edge => {
+                    const target = this.nodes.find(n => n.id === edge.target);
+                    const targetLabel = target?.data.label || target?.config.label || edge.target;
+                    console.log(`  └─→ ${targetLabel}`);
+                    htmlOutput += `<div style="margin-left: 20px;">└─→ ${targetLabel}</div>`;
+                });
+                htmlOutput += '</div>';
+                console.log('');
+            }
+        });
+        htmlOutput += '</div>';
+
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        htmlOutput += '</div>';
+
+        // 顯示在畫面上的 Modal
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            max-width: 80%;
+            max-height: 80%;
+            overflow: auto;
+            z-index: 10000;
+        `;
+        setInnerHTML(modal, htmlOutput);
+
+        // 添加關閉按鈕
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = '關閉';
+        closeBtn.style.cssText = `
+            position: sticky;
+            top: 0;
+            float: right;
+            margin-bottom: 10px;
+            padding: 8px 16px;
+            background: #e74c3c;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        `;
+        closeBtn.onclick = () => {
+            document.body.removeChild(overlay);
+        };
+        modal.insertBefore(closeBtn, modal.firstChild);
+
+        // 添加遮罩
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 9999;
+        `;
+        overlay.onclick = () => {
+            document.body.removeChild(overlay);
+        };
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+
+        toast.success('調試信息已顯示（同時已輸出到 Console）');
+
+        return {
+            nodes: this.nodes.length,
+            edges: this.edges.length,
+            summary: `${this.nodes.length} 個節點, ${this.edges.length} 條連接`
+        };
+    }
+
+    /**
+     * 儲存流程
+     */
+    async saveFlow() {
+        const flowData = {
+            id: this.flowId,
+            name: this.flowName,
+            nodes: this.nodes,
+            edges: this.edges,
+            createdAt: this.flowId ? undefined : new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
+
+        try {
+            const res = await fetch(`${apiBase}/flow/save`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-User-Id': getUserId()
+                },
+                body: JSON.stringify(flowData)
+            });
+
+            if (!res.ok) throw new Error('儲存失敗');
+
+            const result = await res.json();
+            this.flowId = result.flowId;
+
+            this.saveToLocalStorage();
+            toast.success('✅ 流程已儲存');
+        } catch (err) {
+            console.error('儲存失敗:', err);
+            toast.error('❌ 儲存失敗: ' + err.message);
+        }
+    }
+
+    /**
+     * 載入流程
+     */
+    async loadFlow(flowId) {
+        try {
+            const res = await fetch(`${apiBase}/flow/get/${flowId}`, {
+                headers: { 'X-User-Id': getUserId() }
+            });
+
+            if (!res.ok) throw new Error('載入失敗');
+
+            const flowData = await res.json();
+            this.flowId = flowData.id;
+            this.flowName = flowData.name;
+            this.nodes = flowData.nodes;
+            this.edges = flowData.edges;
+
+            this.renderAll();
+            toast.success('✅ 流程已載入');
+        } catch (err) {
+            console.error('載入失敗:', err);
+            toast.error('❌ 載入失敗: ' + err.message);
+        }
+    }
+
+    /**
+     * 重新載入流程（刷新最新資料）
+     */
+    async reloadFlow() {
+        try {
+            showLoader('正在重新載入流程資料...');
+
+            // 如果有 flowId，從後端載入
+            if (this.flowId) {
+                const res = await fetch(`${apiBase}/flow/get/${this.flowId}`, {
+                    headers: { 'X-User-Id': getUserId() }
+                });
+
+                if (!res.ok) throw new Error('重新載入失敗');
+
+                const flowData = await res.json();
+                this.flowName = flowData.name;
+                this.nodes = flowData.nodes;
+                this.edges = flowData.edges;
+
+                this.renderAll();
+
+                // ✅ 重新載入所有 Richmenu 節點的圖片資料
+                await this.refreshAllRichmenuData();
+
+                toast.success('✅ 流程已從後端重新載入');
+                console.log('🔄 流程已更新:', this.flowName);
+            }
+            // 如果沒有 flowId，從 localStorage 重新載入
+            else {
+                const data = localStorage.getItem('flow_designer_draft');
+                if (data) {
+                    const parsed = JSON.parse(data);
+                    this.nodes = parsed.nodes || [];
+                    this.edges = parsed.edges || [];
+                    this.flowId = parsed.flowId;
+                    this.flowName = parsed.flowName || '未命名流程';
+                    this.renderAll();
+
+                    // ✅ 重新載入所有 Richmenu 節點的圖片資料
+                    await this.refreshAllRichmenuData();
+
+                    toast.success('✅ 流程已從本地重新載入');
+                    console.log('🔄 從 localStorage 重新載入');
+                } else {
+                    toast.warning('⚠️ 沒有可載入的流程資料');
+                }
+            }
+        } catch (err) {
+            console.error('重新載入失敗:', err);
+            toast.error('❌ 重新載入失敗: ' + err.message);
+        } finally {
+            hideLoader();
+        }
+    }
+
+    /**
+     * 重新載入所有 Richmenu 節點的資料（圖片等）
+     */
+    async refreshAllRichmenuData() {
+        const richmenuNodes = this.nodes.filter(n => n.type === NodeTypes.RICHMENU && n.data.richmenuId);
+
+        if (richmenuNodes.length === 0) {
+            console.log('[刷新 Richmenu] 沒有 Richmenu 節點需要刷新');
+            return;
+        }
+
+        console.log(`[刷新 Richmenu] 開始刷新 ${richmenuNodes.length} 個 Richmenu 節點`);
+
+        for (const node of richmenuNodes) {
+            try {
+                const details = await dataLoader.loadRichmenuDetails(node.data.richmenuId);
+                if (details) {
+                    // 更新節點資料
+                    node.data.name = details.name;
+                    node.data.imageUrl = details.imageUrl;
+                    node.data.buttons = details.buttons || [];
+
+                    // 重新渲染節點
+                    const nodeElement = document.getElementById(node.id);
+                    if (nodeElement) {
+                        nodeElement.remove();
+                        this.renderNode(node);
+                    }
+
+                    console.log(`[刷新 Richmenu] ✅ ${node.data.name} 已刷新`);
+                }
+            } catch (error) {
+                console.error(`[刷新 Richmenu] ❌ ${node.id} 刷新失敗:`, error);
+            }
+        }
+
+        console.log('[刷新 Richmenu] 全部完成');
+    }
+
+    /**
+     * 重新渲染所有節點
+     */
+    renderAll() {
+        // 清空畫布內容
+        if (this.canvasContent) {
+            this.canvasContent.remove();
+        }
+
+        // 重新創建 SVG 圖層和內容容器
+        this.createSvgLayer();
+
+        // 渲染所有節點
+        this.nodes.forEach(node => this.renderNode(node));
+
+        // 渲染所有連線
+        this.edges.forEach(edge => this.renderEdge(edge));
+    }
+
+    /**
+     * 儲存到 LocalStorage
+     */
+    saveToLocalStorage() {
+        const data = {
+            nodes: this.nodes,
+            edges: this.edges,
+            flowId: this.flowId,
+            flowName: this.flowName
+        };
+        localStorage.setItem('flow_designer_draft', JSON.stringify(data));
+    }
+
+    /**
+     * 從 LocalStorage 載入
+     */
+    loadFromLocalStorage() {
+        const data = localStorage.getItem('flow_designer_draft');
+        if (data) {
+            try {
+                const parsed = JSON.parse(data);
+                this.nodes = parsed.nodes || [];
+                this.edges = parsed.edges || [];
+                this.flowId = parsed.flowId;
+                this.flowName = parsed.flowName;
+                this.renderAll();
+                console.log('📂 已載入草稿');
+            } catch (err) {
+                console.error('載入草稿失敗:', err);
+            }
+        }
+    }
+
+    /**
+     * 清空流程
+     */
+    clearFlow() {
+        if (this.nodes.length > 0) {
+            // 使用 Modal 確認對話框
+            this.showConfirm(
+                '清空畫布',
+                '⚠️ 確定要清空畫布嗎？所有節點和連線都會被刪除，且無法復原。',
+                () => this._executeClearFlow()
+            );
+        } else {
+            // 畫布已經是空的，直接清空
+            this._executeClearFlow();
+        }
+    }
+
+    /**
+     * 顯示確認對話框（使用 Bootstrap Modal）
+     * @param {string} title - 標題
+     * @param {string} message - 訊息
+     * @param {Function} onConfirm - 確認後執行的回調函數
+     */
+    showConfirm(title, message, onConfirm) {
+        const modal = document.getElementById('confirmModal');
+        const modalTitle = document.getElementById('confirmModalTitle');
+        const modalBody = document.getElementById('confirmModalBody');
+        const confirmBtn = document.getElementById('confirmModalConfirm');
+
+        if (!modal || !modalTitle || !modalBody || !confirmBtn) {
+            console.error('[showConfirm] Modal 元素未找到');
+            // 降級到原生 confirm
+            if (window.confirm(message)) {
+                onConfirm();
+            }
+            return;
+        }
+
+        // 設置內容
+        modalTitle.textContent = title;
+        setInnerHTML(modalBody, `<p class="mb-0">${message}</p>`);
+
+        // 建立 Bootstrap Modal 實例
+        const bsModal = new bootstrap.Modal(modal);
+
+        // 移除舊的事件監聽器（如果有）
+        const newConfirmBtn = confirmBtn.cloneNode(true);
+        confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+
+        // 綁定確認按鈕事件
+        newConfirmBtn.addEventListener('click', () => {
+            bsModal.hide();
+            onConfirm();
+        }, { once: true });
+
+        // 顯示 Modal
+        bsModal.show();
+    }
+
+    /**
+     * 執行清空流程（內部方法）
+     */
+    _executeClearFlow() {
+        this.nodes = [];
+        this.edges = [];
+        this.flowId = null;
+        this.flowName = '未命名流程';
+        this.renderAll();
+        localStorage.removeItem('flow_designer_draft');
+
+        toast.success('✅ 畫布已清空');
+    }
+
+    /**
+     * 顯示 Flex Message 完整預覽
+     */
+    showFlexPreview(nodeId) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (!node || !node.data.contents) {
+            toast.error('無法載入 Flex Message 資料');
+            return;
+        }
+
+        // 取得 modal 元素
+        const modal = document.getElementById('flexPreviewModal');
+        const content = document.getElementById('flexPreviewContent');
+
+        // 清空內容
+        setInnerHTML(content, '');
+
+        try {
+            // 檢查 flex2html 是否已載入
+            if (typeof flex2html !== 'function') {
+                toast.error('flex2html 尚未載入');
+                console.error('flex2html function not found');
+                return;
+            }
+
+            // 準備 Flex Message 資料
+            const flexMessage = {
+                type: 'flex',
+                altText: node.data.altText || node.data.title || 'Flex Message',
+                contents: node.data.contents
+            };
+
+            // 建立一個唯一的容器 ID
+            const containerId = `flex-preview-${Date.now()}`;
+            setInnerHTML(content, `<div id="${containerId}"></div>`);
+
+            // 使用 flex2html 渲染
+            flex2html(containerId, flexMessage);
+
+            // 顯示 modal
+            const bsModal = new bootstrap.Modal(modal);
+            bsModal.show();
+
+            toast.success('Flex Message 已渲染');
+
+        } catch (error) {
+            console.error('Flex Message 渲染錯誤:', error);
+            toast.error('Flex Message 渲染失敗: ' + error.message);
+            setInnerHTML(content, `
+                <div class="alert alert-danger">
+                    <strong>渲染錯誤</strong><br>
+                    ${error.message}
+                </div>
+            `);
+        }
+    }
+}
+
+// 匯出供全域使用
+export default FlowDesigner;
+
+// =================================================================
+// 🎯 pageInit - 頁面初始化函數（支援主頁面導航）
+// =================================================================
+
+/**
+ * Flow Designer 頁面初始化函數
+ * 
+ * 用途：
+ * 1. 讓 Flow Designer 可以從主頁面（index.html）導航進入
+ * 2. 防止重複初始化
+ * 3. 與其他 builder (richmenu, flex, imagemap) 保持一致
+ * 
+ * 呼叫時機：
+ * - 從主頁面點擊「視覺化流程設計」
+ * - 直接訪問 flow_designer_full.html
+ * - 從其他頁面跳轉回來
+ */
+export function pageInit() {
+    console.log('🎨 [Flow Designer] pageInit 執行');
+
+    // 防止重複初始化
+    if (window._flowDesignerInitialized) {
+        console.log('[Flow Designer] 已初始化，跳過重複初始化');
+        return;
+    }
+
+    try {
+        // 檢查容器是否存在
+        const container = document.getElementById('flow-canvas');
+        if (!container) {
+            console.error('[Flow Designer] 找不到容器 #flow-canvas');
+            return;
+        }
+
+        // 初始化 Flow Designer
+        console.log('[Flow Designer] 創建 FlowDesigner 實例...');
+        window.flowDesigner = new FlowDesigner('flow-canvas');
+
+        // 標記已初始化
+        window._flowDesignerInitialized = true;
+
+        console.log('✅ [Flow Designer] 初始化完成');
+        console.log('💡 提示: 右鍵點擊畫布可新增節點');
+
+    } catch (error) {
+        console.error('❌ [Flow Designer] 初始化失敗:', error);
+        window._flowDesignerInitialized = false;
+    }
+}
+
+// 自動執行初始化（如果直接訪問此頁面）
+if (typeof window !== 'undefined') {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', pageInit);
+    } else {
+        // DOM 已載入，立即執行
+        pageInit();
+    }
+}

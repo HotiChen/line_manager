@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>會員等級設定</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .tier-card {
+            transition: transform 0.2s;
+            border-left: 5px solid transparent;
+        }
+
+        .tier-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .tier-0 {
+            border-left-color: #4caf50;
+        }
+
+        .tier-1 {
+            border-left-color: #2196f3;
+        }
+
+        .tier-2 {
+            border-left-color: #ff9800;
+        }
+
+        .tier-3 {
+            border-left-color: #f44336;
+        }
+
+        .badge-interactions {
+            background-color: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        .badge-time {
+            background-color: #e3f2fd;
+            color: #1565c0;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container py-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h2 class="fw-bold mb-0">👑 會員等級系統</h2>
+                <p class="text-muted">設定會員等級規則與自動升級制度</p>
+            </div>
+            <div class="d-flex gap-2">
+                <button class="btn btn-outline-secondary" id="reset-defaults-btn">🔄 重設為預設值</button>
+                <button class="btn btn-primary" id="save-all-btn">💾 儲存所有變更</button>
+            </div>
+        </div>
+
+        <!-- 統計概覽 -->
+        <div class="row mb-4" id="stats-container">
+            <!-- 動態生成統計卡片 -->
+        </div>
+
+        <!-- 等級清單與規則 -->
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card mb-4">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">等級規則設定</h5>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="enable-auto-upgrade" checked>
+                            <label class="form-check-label" for="enable-auto-upgrade">啟用自動升級</label>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table align-middle">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 150px;">等級</th>
+                                        <th>顯示名稱</th>
+                                        <th>問候語 (用於 @tier)</th>
+                                        <th style="width: 150px;">互動次數需達</th>
+                                        <th style="width: 150px;">加入天數需達</th>
+                                        <th>切換 Rich Menu</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tier-rules-body">
+                                    <!-- 動態生成規則行 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 權益設定 -->
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card shadow-sm mb-4">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0">✨ 等級權益開關</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="benefit-custom-title" checked>
+                            <label class="form-check-label" for="benefit-custom-title">
+                                <strong>專屬稱呼支援</strong><br>
+                                <small class="text-muted">回覆訊息時可使用 (@tier) 變數替換為等級問候語</small>
+                            </label>
+                        </div>
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="benefit-specific-replies" checked>
+                            <label class="form-check-label" for="benefit-specific-replies">
+                                <strong>分眾回覆內容 (MVP)</strong><br>
+                                <small class="text-muted">不同等級會員觸發同一關鍵字可收到不同內容</small>
+                            </label>
+                        </div>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="benefit-rich-menu">
+                            <label class="form-check-label" for="benefit-rich-menu">
+                                <strong>分眾圖文選單</strong><br>
+                                <small class="text-muted">根據會員等級自動切換不同 Rich Menu</small>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="card shadow-sm border-warning mb-4">
+                    <div class="card-header bg-warning text-dark">
+                        <h5 class="mb-0">💡 使用說明</h5>
+                    </div>
+                    <div class="card-body">
+                        <ul>
+                            <li><strong>自動升級：</strong> 會員在 LINE 中傳送訊息或點擊按鈕時，系統會自動檢查並升級。</li>
+                            <li><strong>變數使用：</strong> 在關鍵字回覆內容中加入 <code>(@tier)</code>，系統會自動轉換為對應等級的問候語。</li>
+                            <li><strong>手動調整：</strong> 您可以隨時在「會員管理」中手動修改特定會員的等級，手動修改後該會員仍會受到自動升級規則影響。</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script type="module" src="../js/tier_settings.js?v=20260109"></script>
+</body>
+
+</html>

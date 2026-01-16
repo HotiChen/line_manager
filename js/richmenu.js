@@ -1,9 +1,10 @@
 
 
-import { showLoader, hideLoader } from './shared/loader.js';
+import { showLoader, hideLoader, LoadingManager } from './shared/loader.js';
 import { setInnerHTML } from "../helper/security.js";
 import { processImageFor } from './image.helper.js';
 import { getUserId, setUserId, apiBase } from "../helper/state.js";
+import { api } from "../helper/api.client.js";
 import {
   detectBuilder,
   getSupportedMsgTypes,
@@ -19,8 +20,11 @@ import {
   clearMessageCache,
   refreshMessageType,
   searchMessages,
-  fetchRichMenuDetails
+  fetchRichMenuDetails,
+  MessageFactory
 } from "../helper/message.helper.js";
+
+import { toast, withButtonLoading } from "../helper/toast.js";
 
 // ====== 🌐 全域變數區 ======
 const canvas = document.getElementById('uploaded-image-canvas');
@@ -106,7 +110,7 @@ function resetUIState() {
   cloningRichmenuAreas = [];
 
   const areasTableBody = document.getElementById("areas-table").querySelector("tbody");
-  areasTableBody.innerHTML = "";
+  setInnerHTML(areasTableBody, "");
 
   document.querySelectorAll(".richmenu-thumbnail-container").forEach(container => {
     container.setAttribute("data-selected", "false");
@@ -200,9 +204,25 @@ async function openEditModal(area, index) {
   const container = document.getElementById("richmenu-action-editor-container");
   const saveBtn = document.getElementById("save-action-button");
   const deleteBtn = document.getElementById("delete-button");
+  const areaInfoDisplay = document.getElementById("area-info-display");
+
+  // 取得 userId
+  const userId = getUserId();
+
+  // 顯示區域資訊
+  if (areaInfoDisplay && area.bounds) {
+    const bounds = area.bounds;
+    areaInfoDisplay.innerHTML = `
+      <i class="bi bi-geo-alt text-primary"></i> 區域 ${index + 1} | 
+      座標: (${bounds.x}, ${bounds.y}) | 
+      尺寸: ${bounds.width} × ${bounds.height}
+    `;
+  } else if (areaInfoDisplay) {
+    areaInfoDisplay.innerHTML = `<i class="bi bi-plus-circle text-success"></i> 新增區域`;
+  }
 
   // 1. 準備並產生 UI
-  setInnerHTML(container, `<p class="text-muted">載入中...</p>`);
+  setInnerHTML(container, `<p class="text-muted text-center py-3"><span class="spinner-border spinner-border-sm me-2"></span>載入中...</p>`);
   modal.show();
 
   const initialReply = (index !== -1 && area.action) ? area.action : null;
@@ -227,10 +247,8 @@ async function openEditModal(area, index) {
 
   newSaveBtn.onclick = () => {
     const reply = getCurrentReplyInput(); // 從 helper 取得輸入結果
-    console.log("DEBUG: Result from getCurrentReplyInput:", reply);
     if (!reply || !reply.item) {
-      console.log("DEBUG: Validation failed. 'reply' or 'reply.item' is falsy.");
-      alert("請輸入或選擇有效的動作內容。");
+      toast.warning("請輸入或選擇有效的動作內容。");
       return;
     }
 
@@ -240,7 +258,7 @@ async function openEditModal(area, index) {
         // 使用 new URL() 來驗證是否為一個合法的絕對路徑網址
         new URL(reply.item.uri);
       } catch (e) {
-        alert("您輸入的連結不是一個有效的網址，請確認包含 https://");
+        toast.warning("您輸入的連結不是一個有效的網址，請確認包含 https://");
         return;
       }
     }
@@ -259,7 +277,17 @@ async function openEditModal(area, index) {
     sessionStorage.setItem("currentAreas", JSON.stringify(currentAreas));
     redrawCanvasWithAreas();
     updateAreasTable();
+
+    // 正確關閉 modal 並清理 backdrop
     modal.hide();
+
+    // 確保 backdrop 和 body 樣式被清理
+    setTimeout(() => {
+      document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+      document.body.classList.remove('modal-open');
+      document.body.style.removeProperty('overflow');
+      document.body.style.removeProperty('padding-right');
+    }, 300);
   };
 
   // 3. 處理刪除按鈕點擊事件
@@ -272,15 +300,99 @@ async function openEditModal(area, index) {
   } else {
     newDeleteBtn.style.display = 'inline-block';
     newDeleteBtn.onclick = () => {
-      if (confirm('確定要刪除這個區域嗎？')) {
-        const currentAreas = JSON.parse(sessionStorage.getItem("currentAreas") || "[]");
+      // 使用 Modal 確認刪除
+      const currentAreas = JSON.parse(sessionStorage.getItem("currentAreas") || "[]");
+      const areaInfo = currentAreas[index];
+      const areaNum = index + 1;
+
+
+      // 設定 Modal 內容
+      const deleteAreaInfo = document.getElementById('delete-area-info');
+
+      // 取得動作資訊
+      const action = areaInfo.action || {};
+      let actionText = '無動作';
+      let contentText = '-';
+
+      // 根據動作類型設定顯示文字
+      switch (action.type) {
+        case 'uri':
+          actionText = '🔗 開啟網址';
+          contentText = action.uri || '-';
+          break;
+        case 'message':
+          actionText = '💬 發送訊息';
+          contentText = action.text || '-';
+          break;
+        case 'postback':
+          actionText = '📤 Postback';
+          contentText = '不顯示';
+          break;
+        case 'richmenuswitch':
+          actionText = '📱 切換選單';
+          // 優先顯示 label（richmenu 名稱）
+          if (action.label) {
+            contentText = action.label;
+          } else if (action.richMenuAliasId) {
+            // 如果沒有 label，嘗試從 allRichmenus 中查找對應的名稱
+            const targetMenu = allRichmenus.find(m => m.alias === action.richMenuAliasId);
+            contentText = targetMenu ? targetMenu.name : action.richMenuAliasId;
+          } else if (action.data) {
+            // 最後嘗試用 data 查找
+            const targetRichmenu = allRichmenus.find(rm => rm.richMenuId === action.data);
+            contentText = targetRichmenu ? targetRichmenu.name : action.data;
+          } else {
+            contentText = action.richMenuId || '-';
+          }
+          break;
+        default:
+          actionText = '無動作';
+          contentText = '-';
+      }
+
+      // 組合顯示內容
+      const infoText = `區域 ${areaNum}
+座標：(${areaInfo.bounds.x}, ${areaInfo.bounds.y})
+尺寸：${areaInfo.bounds.width} x ${areaInfo.bounds.height}
+功能：${actionText}
+內容：${contentText}`;
+
+      deleteAreaInfo.textContent = infoText;
+      deleteAreaInfo.style.whiteSpace = 'pre-line';
+
+
+      // 顯示 Modal
+      const deleteModal = new bootstrap.Modal(document.getElementById('confirm-delete-area-modal'));
+
+      // 移除舊的事件監聽器
+      const confirmBtn = document.getElementById('confirm-delete-area-btn');
+      const newConfirmBtn = confirmBtn.cloneNode(true);
+      confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+
+      // 綁定確認刪除事件
+      document.getElementById('confirm-delete-area-btn').addEventListener('click', function () {
         currentAreas.splice(index, 1);
         sessionStorage.setItem("currentAreas", JSON.stringify(currentAreas));
-
-        redrawCanvasWithAreas();
         updateAreasTable();
         modal.hide();
-      }
+        deleteModal.hide();
+
+        // 確保 backdrop 被清理
+        setTimeout(() => {
+          document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+          document.body.classList.remove('modal-open');
+          document.body.style.removeProperty('overflow');
+          document.body.style.removeProperty('padding-right');
+        }, 300);
+
+        // 🆕 重繪 Canvas 以移除已刪除區域的框框
+        redrawCanvasWithAreas();
+
+        // 顯示成功通知
+        toast.success(`已刪除區域 ${areaNum}`);
+      });
+
+      deleteModal.show();
     };
   }
 }
@@ -373,7 +485,7 @@ canvas.addEventListener('mouseup', (e) => {
   const existingAreas = JSON.parse(sessionStorage.getItem("currentAreas")) || [];
 
   if (existingAreas.length >= 20) {
-    alert('最多只能選取20個區域');
+    toast.warning('最多只能選取20個區域');
     return;
   }
 
@@ -385,7 +497,7 @@ canvas.addEventListener('mouseup', (e) => {
   const rectHeight = Math.round(Math.abs(endPoint.y - startPoint.y));
 
   if (rectWidth < 100 || rectHeight < 10) {
-    alert("您的框框太小囉 ");
+    toast.warning("您的框框太小囉 ");
     return;
   }
 
@@ -396,7 +508,8 @@ canvas.addEventListener('mouseup', (e) => {
       width: Math.round(rectWidth / scaleFactor),
       height: Math.round(rectHeight / scaleFactor)
     },
-    action: { type: "uri", data: "" }
+    action: MessageFactory.empty('uri')  // ✅ 使用 MessageFactory 統一格式
+
   };
 
   let hasOverlap = false;
@@ -408,7 +521,7 @@ canvas.addEventListener('mouseup', (e) => {
   }
 
   if (hasOverlap) {
-    alert('區域不能重疊');
+    toast.warning('區域不能重疊');
     return;
   }
 
@@ -507,21 +620,37 @@ function updateAreasTable() {
 
   const currentAreas = JSON.parse(sessionStorage.getItem("currentAreas") || "[]");
 
-  currentAreas.forEach((area, index) => {
-    let row = tableBody.rows[index];
-    if (!row) {
-      row = tableBody.insertRow(index);
-      for (let i = 0; i < 8; i++) {
-        row.insertCell(i);
-      }
-      const editButton = document.createElement('button');
-      editButton.textContent = '修改';
-      editButton.classList.add('btn', 'btn-primary');
-      editButton.addEventListener('click', () => openEditModal(area, index));
-      row.cells[7].appendChild(editButton);
-    }
+  // 定義類型的圖示和顏色配置
+  const typeConfig = {
+    uri: { icon: '🔗', label: '網址', color: 'primary' },
+    message: { icon: '💬', label: '文字', color: 'success' },
+    postback: { icon: '📦', label: '回傳', color: 'info' },
+    richmenuswitch: { icon: '🔄', label: '切換選單', color: 'warning' },
+    keyword: { icon: '🔑', label: '關鍵字', color: 'secondary' }
+  };
 
-    let x, y, width, height;
+  currentAreas.forEach((area, index) => {
+    const row = document.createElement('tr');
+    row.style.cursor = 'pointer';
+    row.style.transition = 'background-color 0.2s';
+
+    // Hover 效果
+    row.addEventListener('mouseenter', () => {
+      row.style.backgroundColor = '#f8f9fa';
+    });
+    row.addEventListener('mouseleave', () => {
+      row.style.backgroundColor = '';
+    });
+
+    // 點擊整行編輯
+    row.addEventListener('click', (e) => {
+      if (!e.target.closest('button')) {
+        openEditModal(area, index);
+      }
+    });
+
+    // 獲取座標資訊
+    let x = 0, y = 0, width = 0, height = 0;
     if (area.bounds) {
       x = Math.round(area.bounds.x);
       y = Math.round(area.bounds.y);
@@ -532,40 +661,222 @@ function updateAreasTable() {
       y = Math.round(area.startPoint.y / scaleFactor);
       width = Math.round((area.endPoint.x - area.startPoint.x) / scaleFactor);
       height = Math.round((area.endPoint.y - area.startPoint.y) / scaleFactor);
+    } else {
+      console.warn('[updateAreasTable] Invalid area structure:', area);
     }
 
-    row.cells[0].textContent = index + 1;
-    row.cells[1].textContent = x;
-    row.cells[2].textContent = y;
-    row.cells[3].textContent = width;
-    row.cells[4].textContent = height;
+    // 獲取動作資訊
     const action = area.action || {};
-    row.cells[5].textContent = action.type || "uri";
+    const actionType = action.type || "uri";
+    const config = typeConfig[actionType] || { icon: '❓', label: actionType, color: 'secondary' };
 
     let actionDisplay = "";
-    switch (action.type) {
+    switch (actionType) {
       case "uri":
         actionDisplay = action.uri || action.data || "";
         break;
       case "message":
         actionDisplay = action.text || action.data || "";
         break;
+      case "keyword":
+        actionDisplay = action.keyword || action.text || action.data || "";
+        break;
       case "postback":
-        actionDisplay = action.data || action.text || "";
+        actionDisplay = "不顯示";
         break;
       case "richmenuswitch":
-        actionDisplay = action.richMenuAliasId || action.richMenuId || "";
+        // 優先顯示 label（richmenu 名稱）
+        if (action.label) {
+          actionDisplay = action.label;
+        } else if (action.richMenuAliasId) {
+          // 如果沒有 label，嘗試從 allRichmenus 中查找對應的名稱
+          const targetMenu = allRichmenus.find(m => m.alias === action.richMenuAliasId);
+          actionDisplay = targetMenu ? targetMenu.name : action.richMenuAliasId;
+        } else {
+          actionDisplay = action.richMenuId || "";
+        }
         break;
       default:
         actionDisplay = action.data || action.uri || action.text || "";
     }
 
-    row.cells[6].textContent = actionDisplay;
+    // 截斷過長的內容
+    const maxLength = 40;
+    const displayText = actionDisplay.length > maxLength
+      ? actionDisplay.substring(0, maxLength) + '...'
+      : actionDisplay;
+
+    // 建立表格內容 - 使用 DOM API
+
+    // 第1列：序號
+    const cell1 = document.createElement('td');
+    cell1.className = 'text-center';
+    cell1.style.width = '60px';
+    const badge = document.createElement('span');
+    badge.className = 'badge bg-secondary rounded-circle';
+    badge.textContent = index + 1;
+    cell1.appendChild(badge);
+
+    // 第2列：座標與尺寸
+    const cell2 = document.createElement('td');
+    cell2.style.width = '150px';
+    cell2.style.fontSize = '0.85rem';
+    cell2.style.color = '#6c757d';
+    const coordDiv = document.createElement('div');
+    coordDiv.textContent = `📍 (${x}, ${y})`;
+    const sizeDiv = document.createElement('div');
+    sizeDiv.style.fontSize = '0.75rem';
+    sizeDiv.textContent = `📐 ${width} × ${height}`;
+    cell2.appendChild(coordDiv);
+    cell2.appendChild(sizeDiv);
+
+    // 第3列：類型
+    const cell3 = document.createElement('td');
+    cell3.style.width = '130px';
+    const typeBadge = document.createElement('span');
+    typeBadge.className = `badge bg-${config.color}`;
+    typeBadge.style.fontSize = '0.85rem';
+    typeBadge.textContent = `${config.icon} ${config.label}`;
+    cell3.appendChild(typeBadge);
+
+    // 第4列：內容
+    const cell4 = document.createElement('td');
+    cell4.style.minWidth = '250px';
+    cell4.style.maxWidth = '400px';
+    cell4.style.overflow = 'hidden';
+    cell4.style.textOverflow = 'ellipsis';
+    cell4.style.whiteSpace = 'nowrap';
+    cell4.title = actionDisplay;
+    const contentSpan = document.createElement('span');
+    contentSpan.style.fontSize = '0.9rem';
+    contentSpan.textContent = displayText;
+    cell4.appendChild(contentSpan);
+
+    // 第5列：操作按鈕
+    const cell5 = document.createElement('td');
+    cell5.className = 'text-center';
+    cell5.style.width = '120px';
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn btn-sm btn-outline-primary me-1';
+    editBtn.title = '編輯';
+    editBtn.textContent = '✏️';
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'btn btn-sm btn-outline-danger';
+    deleteBtn.title = '刪除';
+    deleteBtn.textContent = '🗑️';
+
+    cell5.appendChild(editBtn);
+    cell5.appendChild(deleteBtn);
+
+    // 組裝所有列到 row
+    row.appendChild(cell1);
+    row.appendChild(cell2);
+    row.appendChild(cell3);
+    row.appendChild(cell4);
+    row.appendChild(cell5);
+
+    // 綁定按鈕事件
+
+    editBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openEditModal(area, index);
+    });
+
+
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+
+      // 使用 Modal 確認刪除
+      const currentAreas = JSON.parse(sessionStorage.getItem("currentAreas") || "[]");
+      const areaInfo = currentAreas[index];
+      const areaNum = index + 1;
+
+      // 設定 Modal 內容
+      const deleteAreaInfo = document.getElementById('delete-area-info');
+
+      // 取得動作資訊
+      const action = areaInfo.action || {};
+      let actionText = '無動作';
+      let contentText = '-';
+
+      // 根據動作類型設定顯示文字
+      switch (action.type) {
+        case 'uri':
+          actionText = '🔗 開啟網址';
+          contentText = action.uri || '-';
+          break;
+        case 'message':
+          actionText = '💬 發送訊息';
+          contentText = action.text || '-';
+          break;
+        case 'postback':
+          actionText = '📤 Postback';
+          contentText = '不顯示';
+          break;
+        case 'richmenuswitch':
+          actionText = '📱 切換選單';
+          // 優先顯示 label（richmenu 名稱）
+          if (action.label) {
+            contentText = action.label;
+          } else if (action.richMenuAliasId) {
+            // 如果沒有 label，嘗試從 allRichmenus 中查找對應的名稱
+            const targetMenu = allRichmenus.find(m => m.alias === action.richMenuAliasId);
+            contentText = targetMenu ? targetMenu.name : action.richMenuAliasId;
+          } else if (action.data) {
+            // 最後嘗試用 data 查找
+            const targetRichmenu = allRichmenus.find(rm => rm.richMenuId === action.data);
+            contentText = targetRichmenu ? targetRichmenu.name : action.data;
+          } else {
+            contentText = action.richMenuId || '-';
+          }
+          break;
+        default:
+          actionText = '無動作';
+          contentText = '-';
+      }
+
+      // 組合顯示內容
+      const infoText = `區域 ${areaNum}
+座標：(${areaInfo.bounds.x}, ${areaInfo.bounds.y})
+尺寸：${areaInfo.bounds.width} x ${areaInfo.bounds.height}
+功能：${actionText}
+內容：${contentText}`;
+
+      deleteAreaInfo.textContent = infoText;
+      deleteAreaInfo.style.whiteSpace = 'pre-line';
+
+      // 顯示 Modal
+      const deleteModal = new bootstrap.Modal(document.getElementById('confirm-delete-area-modal'));
+
+      // 移除舊的事件監聽器
+      const confirmBtn = document.getElementById('confirm-delete-area-btn');
+      const newConfirmBtn = confirmBtn.cloneNode(true);
+      confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+
+      // 綁定確認刪除事件
+      document.getElementById('confirm-delete-area-btn').addEventListener('click', function () {
+        const currentAreas = JSON.parse(sessionStorage.getItem("currentAreas") || "[]");
+        currentAreas.splice(index, 1);
+        sessionStorage.setItem("currentAreas", JSON.stringify(currentAreas));
+        redrawCanvasWithAreas();
+        updateAreasTable();
+        deleteModal.hide();
+
+        // 顯示成功通知
+        toast.success(`已刪除區域 ${areaNum}`);
+      });
+
+      deleteModal.show();
+    });
+
+
+    tableBody.appendChild(row);
   });
 }
 
 function displayRichmenuThumbnails(richmenus) {
-  console.log("[displayRichmenuThumbnails] 開始顯示 Richmenu 縮略圖");
   const container = document.getElementById("richmenu-thumbnails");
   setInnerHTML(container, "");
 
@@ -573,7 +884,6 @@ function displayRichmenuThumbnails(richmenus) {
     const thumbnail = createRichmenuThumbnail(richmenu, index);
     container.appendChild(thumbnail);
   });
-  console.log("[displayRichmenuThumbnails] Richmenu 縮略圖顯示完成");
 }
 
 function createRichmenuThumbnail(richmenu, index) {
@@ -600,7 +910,6 @@ function createRichmenuThumbnail(richmenu, index) {
     richmenuContainer.setAttribute("data-selected", "true");
     richmenuContainer.style.backgroundColor = "#A58A7B";
     loadRichmenuData(richmenu);
-    console.log("[createRichmenuThumbnail] 更新顯示 redrawCanvasWithAreas");
     redrawCanvasWithAreas();
     highlightThumbnail(richmenuContainer.querySelector("img"));
   });
@@ -706,10 +1015,8 @@ function loadRichmenuData(richmenu) {
   cloningRichmenuAreas = [];
 
   currentRichmenu = richmenu;
-  console.log("[loadRichmenuData] 開始載入 Richmenu 數據:", richmenu);
 
   selectedAreas = richmenu.areas.map(area => {
-    console.log("[loadRichmenuData] 處理區域:", area);
     if (area.bounds) {
       return {
         bounds: area.bounds,
@@ -730,17 +1037,32 @@ function loadRichmenuData(richmenu) {
     };
   });
 
-  console.log("[loadRichmenuData] 轉換後的區域數據:", selectedAreas);
 
   sessionStorage.setItem("currentAreas", JSON.stringify(selectedAreas));
-  console.log("[loadRichmenuData] 已保存區域數據到 sessionStorage");
 
   const menuNameInput = document.getElementById("menu-name");
   menuNameInput.value = richmenu.name;
 
+  // 顯示詳細資訊面板
+  const detailsPanel = document.getElementById("richmenu-details-panel");
+  if (detailsPanel) {
+    detailsPanel.style.display = "block";
+
+    // 填入聊天列文字
+    const chatBarInput = document.getElementById("edit-chat-bar-text");
+    if (chatBarInput) chatBarInput.value = richmenu.chatBarText || "Tap to open";
+
+    // 填入別名
+    const aliasInput = document.getElementById("edit-alias");
+    if (aliasInput) aliasInput.value = richmenu.alias || "";
+
+    // 填入預設開啟狀態
+    const selectedCheck = document.getElementById("edit-selected");
+    if (selectedCheck) selectedCheck.checked = richmenu.selected || false;
+  }
+
   const newImg = new Image();
   newImg.onload = function () {
-    console.log("[loadRichmenuData] 圖片載入完成");
     if (richmenu.diamention && Array.isArray(richmenu.diamention)) {
       canvas.width = richmenu.diamention[0] * scaleFactor;
       canvas.height = richmenu.diamention[1] * scaleFactor;
@@ -754,7 +1076,6 @@ function loadRichmenuData(richmenu) {
 
     img = newImg;
 
-    console.log("[loadRichmenuData] 繪製區域 redrawCanvasWithAreas");
     redrawCanvasWithAreas();
   };
 
@@ -799,51 +1120,69 @@ function createUniqueAlieasID() {
 
 
 async function saveEditedRichmenu() {
-  console.log("[saveEditedRichmenu] 開始保存編輯的 Richmenu");
   const richmenuName = document.getElementById("menu-name").value;
   if (!richmenuName) {
-    alert("請輸入 Richmenu 名稱");
+    toast.warning("請輸入 Richmenu 名稱");
     return;
   }
 
-  console.log("[saveEditedRichmenu] 準備從 sessionStorage 獲取當前區域數據");
   const currentAreas = JSON.parse(sessionStorage.getItem("currentAreas") || "[]");
-  console.log("[saveEditedRichmenu] 當前區域數量:", currentAreas.length);
-  console.log("[saveEditedRichmenu] 當前區域:", JSON.stringify(currentAreas));
 
   const canvas = document.getElementById("uploaded-image-canvas");
   const file = document.getElementById("new-image-upload").files[0];
   const imageUrl = file ? await convertImageToDataURL(file) : canvas.toDataURL();
 
-  const chatBarInputField = document.getElementById("new-chat-bar-text");
+  // 讀取詳細資訊欄位
+  const chatBarInputField = document.getElementById("edit-chat-bar-text");
   const chatBarTextInput = (chatBarInputField && chatBarInputField.value.trim())
     ? chatBarInputField.value.trim()
     : (currentRichmenu?.chatBarText || "Tap to open");
 
+  const aliasInputField = document.getElementById("edit-alias");
+  const aliasInput = aliasInputField ? aliasInputField.value.trim() : (currentRichmenu?.alias || "");
+
+  const selectedCheckbox = document.getElementById("edit-selected");
+  const selectedInput = selectedCheckbox ? selectedCheckbox.checked : false;
+
   const existingIndex = allRichmenus.findIndex(menu => menu.name === currentRichmenu?.name);
 
   if (existingIndex !== -1) {
-    console.log("[saveEditedRichmenu] 更新現有 Richmenu:", currentRichmenu.name);
     const updatedMenu = allRichmenus[existingIndex];
+    updatedMenu.name = richmenuName;
     updatedMenu.areas = currentAreas;
+    updatedMenu.chatBarText = chatBarTextInput;
+    updatedMenu.alias = aliasInput;
+    updatedMenu.selected = selectedInput;
     updatedMenu.isUpdated = true;
 
-    console.log("[saveEditedRichmenu] 更新後 Richmenu 資料：", updatedMenu);
   } else {
-    console.log("[saveEditedRichmenu] 創建新 Richmenu:", richmenuName);
-    console.log("[saveEditedRichmenu] 創建新 alias id", currentRichmenu.alias);
+    // 如果 currentRichmenu 為 null，建立新的
+    if (!currentRichmenu) {
+      currentRichmenu = new Richmenu(
+        richmenuName,
+        [2500, 1686],
+        imageUrl,
+        null,
+        aliasInput || null,
+        currentAreas,
+        chatBarTextInput,
+        selectedInput
+      );
+      currentRichmenu.isNew = true;
+      currentRichmenu.isUpdated = true;
+    } else {
+      currentRichmenu.name = richmenuName;
+      currentRichmenu.diamention = [2500, 1686];
+      currentRichmenu.imageUrl = imageUrl;
+      currentRichmenu.areas = currentAreas;
+      currentRichmenu.chatBarText = chatBarTextInput;
+      currentRichmenu.alias = aliasInput;
+      currentRichmenu.selected = selectedInput;
+      currentRichmenu.isNew = true;
+      currentRichmenu.isUpdated = true;
+    }
 
-    currentRichmenu.name = richmenuName;
-    currentRichmenu.diamention = [2500, 1686];
-    currentRichmenu.imageUrl = imageUrl;
-    currentRichmenu.areas = currentAreas;
-    currentRichmenu.chatBarText = chatBarTextInput;
-    currentRichmenu.isNew = true;
-    currentRichmenu.isUpdated = true;
-
-    console.log("[saveEditedRichmenu] 新 Richmenu 資料：", currentRichmenu);
     allRichmenus.push(currentRichmenu);
-    console.log("[saveEditedRichmenu] all Richmenu 資料：", allRichmenus);
   }
 
   redrawCanvasWithAreas();
@@ -858,36 +1197,27 @@ async function saveEditedRichmenu() {
   cloneSourceRichmenu = null;
   cloningRichmenuAreas = [];
 
-  alert(`Richmenu 儲存成功！\n名稱: ${richmenuName}\n區域數量: ${currentAreas.length}`);
+  toast.success(`Richmenu 儲存成功！\n名稱: ${richmenuName}\n區域數量: ${currentAreas.length}`);
 }
 
-console.log("🕒 頁面初始階段 document.readyState =", document.readyState);
 
 async function fetchRichMenuList() {
   try {
-    showLoader();
-    console.log("[richmenu.js] 嘗試 fetch richmenu list");
+    LoadingManager.show('richmenu-fetch', '載入 Richmenu 列表...');
 
-    const response = await fetch(`${apiBase}/richmenu/list`, {
-      method: "GET",
-      headers: { "X-User-Id": getUserId() }
-    });
+    const response = await api.get('/richmenu/list');
+    console.log('🎨 Richmenu API 回應:', response);
 
-    if (!response.ok) {
-      throw new Error("無法取得 Richmenu 列表");
-    }
-
-    const data = await response.json();
-
-    allRichmenus = data.richmenus || [];
+    // api.get 直接返回解析後的 JSON
+    allRichmenus = response.richmenus || [];
 
     if (allRichmenus.length === 0) {
-      document.getElementById("richmenu-thumbnails").innerHTML = "<p class='text-muted'>目前沒有設定任何 Richmenu，請新增</p>";
-      hideLoader();
+      setInnerHTML(document.getElementById("richmenu-thumbnails"), "<p class='text-muted'>目前沒有設定任何 Richmenu，請新增</p>");
+      LoadingManager.hide('richmenu-fetch');
       return;
     }
 
-    defaultRichmenuId = await getDefaultRichMenuId();
+    defaultRichmenuId = await loadDefaultRichmenu();
 
     const fragment = document.createDocumentFragment();
     await Promise.all(
@@ -901,13 +1231,13 @@ async function fetchRichMenuList() {
     );
 
     const thumbnailsContainer = document.getElementById("richmenu-thumbnails");
-    thumbnailsContainer.innerHTML = "";
+    setInnerHTML(thumbnailsContainer, "");
     thumbnailsContainer.appendChild(fragment);
 
   } catch (error) {
     console.error("❌ 取得 Richmenu 失敗:", error);
   } finally {
-    hideLoader();
+    LoadingManager.hide('richmenu-fetch');
   }
 }
 
@@ -943,7 +1273,6 @@ async function fetchRichMenuImage(richmenuData, isDefault = false) {
     const richmenuIndex = allRichmenus.findIndex(menu => menu.richMenuId === richMenuId);
     if (richmenuIndex !== -1) {
       allRichmenus[richmenuIndex] = richmenu;
-      console.log("更新 Richmenu" + richmenuIndex + " 資訊:", richmenu);
     } else {
       allRichmenus.push(richmenu);
     }
@@ -964,20 +1293,18 @@ function highlightThumbnail(selectedImg) {
 }
 
 
-async function getDefaultRichMenuId() {
+async function loadDefaultRichmenu() {
   try {
-    const response = await fetch(`${apiBase}/richmenu/default`, {
-      method: "GET",
-      headers: { "X-User-Id": getUserId() }
-    });
+    const response = await api.get('/richmenu/default');
+    console.log('🏠 Default Richmenu API 回應:', response);
 
-    if (!response.ok) {
+    // API 直接返回 { richMenuId: 'xxx' }，沒有 success 欄位
+    if (response.richMenuId) {
+      return response.richMenuId;
+    } else {
       console.warn("⚠️ 無法取得 Default Richmenu");
       return null;
     }
-
-    const data = await response.json();
-    return data.richMenuId || null;
   } catch (error) {
     console.error("❌ 取得 Default Richmenu 失敗:", error);
     return null;
@@ -986,7 +1313,7 @@ async function getDefaultRichMenuId() {
 
 document.getElementById("show-default-richmenu").addEventListener("click", async function () {
   if (!defaultRichmenuId) {
-    alert("❌ 目前沒有設定 Default Richmenu");
+    toast.info("目前沒有設定 Default Richmenu");
     return;
   }
 
@@ -998,13 +1325,13 @@ document.getElementById("show-default-richmenu").addEventListener("click", async
 });
 
 function clearRichMenuDisplay() {
-  document.getElementById("richmenu-thumbnails").innerHTML = "";
+  setInnerHTML(document.getElementById("richmenu-thumbnails"), "");
 
   const canvas = document.getElementById("uploaded-image-canvas");
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  document.querySelector("#areas-table tbody").innerHTML = "";
+  setInnerHTML(document.querySelector("#areas-table tbody"), "");
 
   document.getElementById("status").innerText = "";
 
@@ -1015,25 +1342,61 @@ if (deleteButton) {
   deleteButton.addEventListener("click", function () {
     const selectedIndex = getSelectedRichmenuIndex();
     if (selectedIndex !== -1) {
-      const confirmed = confirm("確定要刪除這個 Richmenu 嗎？");
-      if (confirmed) {
+      const richmenuName = allRichmenus[selectedIndex].name;
+
+      // 顯示 Modal 確認對話框
+      const deleteModal = new bootstrap.Modal(document.getElementById('confirm-delete-modal'));
+      const deleteNameEl = document.getElementById('delete-richmenu-name');
+      const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+
+      // 設定要刪除的 richmenu 名稱
+      deleteNameEl.textContent = richmenuName;
+
+      // 移除舊的事件監聽器（避免重複綁定）
+      const newConfirmBtn = confirmDeleteBtn.cloneNode(true);
+      confirmDeleteBtn.parentNode.replaceChild(newConfirmBtn, confirmDeleteBtn);
+
+      // 綁定確認刪除事件
+      document.getElementById('confirm-delete-btn').addEventListener('click', function () {
+        // 標記為已刪除
         allRichmenus[selectedIndex].isDeleted = true;
+
+        // 重新渲染縮略圖（顯示「已刪除」標籤）
         displayRichmenuThumbnails(allRichmenus);
-        resetUIState();
-      }
+
+        // 清空編輯區
+        document.getElementById("menu-name").value = "";
+        clearCanvas();
+        const areasTableBody = document.getElementById("areas-table").querySelector("tbody");
+        setInnerHTML(areasTableBody, "");
+
+        // 重新選中這個項目，讓用戶看到「已刪除」標籤
+        const containers = document.querySelectorAll(".richmenu-thumbnail-container");
+        if (containers[selectedIndex]) {
+          containers[selectedIndex].setAttribute("data-selected", "true");
+          containers[selectedIndex].style.backgroundColor = "#A58A7B";
+        }
+
+        // 關閉 Modal
+        deleteModal.hide();
+
+        // 顯示成功訊息
+        toast.success(`已標記「${richmenuName}」為刪除\n請點擊「同步所有變更至 Line@」來套用變更`);
+      });
+
+      // 顯示 Modal
+      deleteModal.show();
     } else {
-      alert("請先選擇一個要刪除的 Richmenu");
+      toast.warning("請先選擇一個要刪除的 Richmenu");
     }
   });
 }
 
 async function syncRichmenusToServer() {
-  console.log("[syncRichmenusToServer] 開始同步至後端...");
-  console.log("[syncRichmenusToServer] allRichmenus 資料：", allRichmenus);
-  showLoader("同步中請稍候...");
+  LoadingManager.show('richmenu-sync', '同步中請稍候...');
 
   const log = document.getElementById("upload-task-log");
-  if (log) log.innerHTML = "";
+  if (log) setInnerHTML(log, "");
 
   function addLog(msg, isSuccess = true) {
     if (!log) return;
@@ -1043,106 +1406,181 @@ async function syncRichmenusToServer() {
     log.appendChild(li);
   }
 
-  console.log("[syncRichmenusToServer] 同步的 allRichmenus", allRichmenus);
+  try {
+    const removeList = allRichmenus.filter(menu => menu.isDeleted && menu.imageID).map(menu => menu.imageID);
+    if (removeList.length > 0) {
+      addLog(`🗑️ 刪除 ${removeList.length} 個 Richmenu...`);
+      const result = await api.post('/richmenu/sync', { add: [], update: [], remove: removeList, setDefault: null });
+      console.log('🗑️ 刪除 API 回應:', result);
 
-  const removeList = allRichmenus.filter(menu => menu.isDeleted && menu.imageID).map(menu => menu.imageID);
-  if (removeList.length > 0) {
-    addLog(`🗑️ 刪除 ${removeList.length} 個 Richmenu...`);
-    const res = await fetch(`${apiBase}/richmenu/sync`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-User-Id": getUserId() },
-      body: JSON.stringify({ add: [], update: [], remove: removeList, setDefault: null })
-    });
-    const result = await res.json();
-    if (!res.ok || result.errors?.length) {
-      addLog("❌ 刪除失敗，停止後續同步", false);
-      console.error("❌ 刪除失敗", result.errors);
-      return;
-    }
-    addLog("✅ 刪除成功");
-  }
-
-  for (const richmenu of allRichmenus) {
-    if (richmenu.isNew && !richmenu.isDeleted) {
-      console.log("📤 準備新增 Richmenu:", richmenu.name);
-      showLoader("資料上傳中 " + richmenu.name + "...");
-      const formData = new FormData();
-      formData.append("userId", getUserId());
-
-      formData.append("name", richmenu.name);
-      formData.append("diamention", JSON.stringify(richmenu.diamention));
-      formData.append("areas", JSON.stringify(richmenu.areas.map(area => ({
-        ...area,
-        action: createAction(area.action, 'richmenu')
-      }))));
-      formData.append("alias", richmenu.alias);
-      formData.append("chatBarText", richmenu.chatBarText || "Tap to open");
-      if (richmenu.imageFile) {
-        formData.append("imageFile", richmenu.imageFile);
-        console.log("✅ 傳送圖片檔案");
-      }
-
-      try {
-        const res = await fetch(apiBase + "/richmenu/sync", {
-          method: "POST",
-          body: formData,
-        });
-        const json = await res.json();
-        console.log("🔁 新增結果:", json);
-        if (json.added?.length > 0 && (!json.errors || json.errors.length === 0)) {
-
-          console.log("✅ 成功新增 Richmenu");
-          addLog(`✅ 成功新增 Richmenu: ${richmenu.name}`);
-          continue;
-        } else {
-          console.log("❌ 新增失敗，停止後續同步", json);
-          addLog(`❌ 新增失敗: ${richmenu.name}`, false);
-          alert("新增失敗：" + JSON.stringify(json));
-          hideLoader();
-          return;
-        }
-      } catch (err) {
-        console.error("❌ 新增 Richmenu 發生錯誤", err);
-        addLog(`❌ 新增失敗: ${richmenu.name}`, false);
-        alert("新增失敗：" + err);
-        hideLoader();
+      // 檢查是否有錯誤（有 errors 且長度 > 0 才算失敗）
+      if (result.errors && result.errors.length > 0) {
+        addLog("❌ 刪除失敗，停止後續同步", false);
+        console.error("❌ 刪除失敗", result.errors);
         return;
       }
+      addLog("✅ 刪除成功");
     }
-  }
 
-  const defaultMenu = allRichmenus.find(menu => menu.isDefault);
+    for (const richmenu of allRichmenus) {
+      if (richmenu.isNew && !richmenu.isDeleted) {
+        const formData = new FormData();
+        formData.append("userId", getUserId());
 
-  console.log("[syncRichmenusToServer] update default richmenu", JSON.stringify(defaultMenu));
-  if (defaultMenu) {
-    addLog(`🌟 設定預設選單：${defaultMenu.name}`);
-    const res = await fetch(`${apiBase}/richmenu/sync`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-User-Id": getUserId() },
-      body: JSON.stringify({ add: [], update: [], remove: [], setDefault: { name: defaultMenu.name, richMenuId: defaultMenu.imageID } })
-    });
-    const result = await res.json();
-    if (!res.ok || result.errors?.length) {
-      addLog("❌ 設定預設選單失敗", false);
-      console.error("❌ 預設選單設定失敗", result.errors);
-      hideLoader();
-      return;
+        formData.append("name", richmenu.name);
+        formData.append("diamention", JSON.stringify(richmenu.diamention));
+        formData.append("areas", JSON.stringify(richmenu.areas.map(area => {
+          const processedAction = createAction(area.action, 'richmenu');
+          return {
+            bounds: area.bounds,
+            action: processedAction
+          };
+        })));
+
+        formData.append("alias", richmenu.alias);
+        formData.append("chatBarText", richmenu.chatBarText || "Tap to open");
+        if (richmenu.imageFile) {
+          formData.append("imageFile", richmenu.imageFile);
+        }
+
+        try {
+          // ⚠️ 暫時使用 fetch 而非 api.post，因為 FormData 上傳需要特殊處理
+          // TODO: 未來統一 FormData 處理後改用 ApiClient
+          const res = await fetch(`${apiBase}/richmenu/sync`, {
+            method: 'POST',
+            headers: {
+              'X-User-Id': getUserId()
+            },
+            body: formData
+          });
+
+          const json = await res.json();
+          console.log('➕ 新增 API 回應:', json);
+
+          if (json.added?.length > 0 && (!json.errors || json.errors.length === 0)) {
+            addLog(`✅ 成功新增 Richmenu: ${richmenu.name}`);
+            continue;
+          } else {
+            addLog(`❌ 新增失敗: ${richmenu.name}`, false);
+            toast.error("新增失敗：" + JSON.stringify(json));
+            return;
+          }
+        } catch (err) {
+          console.error("❌ 新增 Richmenu 發生錯誤", err);
+          addLog(`❌ 新增失敗: ${richmenu.name}`, false);
+          toast.error("新增失敗：" + err);
+          return;
+        }
+      }
     }
-    addLog("✅ 預設選單已設定");
-  }
 
-  addLog("🎉 所有步驟同步完成！");
-  await fetchRichMenuList();
-  hideLoader();
+    const defaultMenu = allRichmenus.find(menu => menu.isDefault);
+
+    if (defaultMenu) {
+      addLog(`🌟 設定預設選單：${defaultMenu.name}`);
+      const res = await fetch(`${apiBase}/richmenu/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-User-Id": getUserId() },
+        body: JSON.stringify({ add: [], update: [], remove: [], setDefault: { name: defaultMenu.name, richMenuId: defaultMenu.imageID } })
+      });
+      const result = await res.json();
+      if (!res.ok || result.errors?.length) {
+        addLog("❌ 設定預設選單失敗", false);
+        console.error("❌ 預設選單設定失敗", result.errors);
+        return;
+      }
+      addLog("✅ 預設選單已設定");
+    }
+
+    addLog("🎉 所有步驟同步完成！");
+    await fetchRichMenuList();
+    await fetchRichMenuList();
+  } finally {
+    // 確保 loader 一定會被關閉
+    LoadingManager.hide('richmenu-sync');
+  }
 }
 
+// 搜尋篩選 Richmenu 列表
+function filterRichmenuList(searchTerm) {
+  const thumbnails = document.querySelectorAll("#richmenu-thumbnails > div");
+  const term = searchTerm.toLowerCase().trim();
+  let visibleCount = 0;
+
+  if (!term) {
+    // 如果搜尋欄位為空，顯示所有
+    thumbnails.forEach(thumb => {
+      thumb.style.display = "";
+      visibleCount++;
+    });
+  } else {
+    thumbnails.forEach(thumb => {
+      const title = thumb.querySelector("p")?.textContent.toLowerCase() || "";
+
+      if (title.includes(term)) {
+        thumb.style.display = "";
+        visibleCount++;
+      } else {
+        thumb.style.display = "none";
+      }
+    });
+  }
+
+  // 更新搜尋結果計數
+  const resultCount = document.getElementById("richmenu-search-result-count");
+  if (resultCount) {
+    if (term) {
+      resultCount.textContent = `找到 ${visibleCount} 個符合的 Richmenu`;
+    } else {
+      resultCount.textContent = "";
+    }
+  }
+}
+
+let isInitialized = false; // 防止重複初始化
+
 export async function pageInit(pageData) {
+  console.log('🎨 [Richmenu] pageInit 被調用', { isInitialized, pageData });
+
+  if (isInitialized) {
+    console.warn('⚠️ [Richmenu] 已經初始化過了，跳過重複調用');
+    return;
+  }
+
+  isInitialized = true;
+
   setUserId(pageData.userId);
   const userId = getUserId();
-  console.log(`[richmenu] ✅ pageInit 被執行, userId: ${userId}`);
 
   // Directly fetch the rich menu list as the project is now set globally.
   await fetchRichMenuList();
+
+  // 🆕 检查 URL 参数（从 Flow Designer 跳转过来）
+  const urlParams = new URLSearchParams(window.location.search);
+  const editRichmenuId = urlParams.get('edit');
+  const createNew = urlParams.get('new');
+
+  if (editRichmenuId) {
+    // 编辑模式：自动载入指定的 Richmenu
+    const richmenu = allRichmenus.find(rm => rm.richMenuId === editRichmenuId);
+    if (richmenu) {
+      // 找到对应的缩图并点击
+      setTimeout(() => {
+        const thumbnail = document.querySelector(`[data-richmenu-id="${editRichmenuId}"]`);
+        if (thumbnail) {
+          thumbnail.click();
+        }
+      }, 500); // 等待 UI 渲染完成
+    }
+  } else if (createNew === 'true') {
+    // 创建模式：打开创建 Modal
+    setTimeout(() => {
+      const createBtn = document.getElementById('create-new-richmenu');
+      if (createBtn) {
+        createBtn.click();
+      }
+    }, 500);
+  }
 
 
   const updateAllBtn = document.getElementById("update-all-richmenus");
@@ -1151,7 +1589,7 @@ export async function pageInit(pageData) {
 
   if (updateAllBtn && confirmUpdateBtn && defaultSelect) {
     updateAllBtn.addEventListener("click", function () {
-      defaultSelect.innerHTML = "";
+      setInnerHTML(defaultSelect, "");
 
       const defaultMenu = allRichmenus.find(menu => menu.isDefault);
       if (defaultMenu) {
@@ -1174,11 +1612,12 @@ export async function pageInit(pageData) {
       modal.show();
     });
 
-    confirmUpdateBtn.addEventListener("click", function () {
-      console.log("[confirmUpdateBtn] 點擊了 confirmUpdateBtn");
-      console.log("[confirmUpdateBtn] allRichmenus 資料：", allRichmenus);
+    confirmUpdateBtn.addEventListener("click", async function () {
 
-      syncRichmenusToServer();
+      await withButtonLoading(confirmUpdateBtn, async () => {
+        await syncRichmenusToServer();
+      }, '同步中...');
+
       const modal = bootstrap.Modal.getInstance(document.getElementById("confirm-update-modal"));
       modal.hide();
     });
@@ -1188,7 +1627,7 @@ export async function pageInit(pageData) {
       setDefaultButton.addEventListener("click", async function () {
         const selectedIndex = getSelectedRichmenuIndex();
         if (selectedIndex === -1) {
-          alert("請先選擇一個 Richmenu");
+          toast.warning("請先選擇一個 Richmenu");
           return;
         }
 
@@ -1198,16 +1637,15 @@ export async function pageInit(pageData) {
           selectedRichmenu.isDefault = true;
           defaultRichmenuId = selectedRichmenu.richMenuId;
           displayRichmenuThumbnails(allRichmenus);
-          alert(`✅ ${selectedRichmenu.name} 已設為預設 Richmenu`);
+          toast.success(`${selectedRichmenu.name} 已設為預設 Richmenu`);
         } catch (error) {
           console.error("❌ 設定預設 Richmenu 發生錯誤:", error);
-          alert("❌ 設定預設 Richmenu 發生錯誤");
+          toast.error("設定預設 Richmenu 發生錯誤");
         }
       });
     }
   }
 
-  console.log("[DOMContentLoaded] richmenu 新增 Richmenu 事件綁定");
   const imageUpload = document.getElementById("new-image-upload");
   const imagePreview = document.getElementById("image-preview");
   const menuNameInput = document.getElementById("new-menu-name");
@@ -1248,13 +1686,13 @@ export async function pageInit(pageData) {
     cloneButton.addEventListener("click", async () => {
       const selectedIndex = getSelectedRichmenuIndex();
       if (selectedIndex === -1) {
-        alert("請先選擇一個要複製的 Richmenu");
+        toast.warning("請先選擇一個要複製的 Richmenu");
         return;
       }
 
       const source = allRichmenus[selectedIndex];
       if (!source) {
-        alert("找不到要複製的 Richmenu");
+        toast.error("找不到要複製的 Richmenu");
         return;
       }
 
@@ -1279,7 +1717,6 @@ export async function pageInit(pageData) {
 
   if (newRichmenuModal) {
     newRichmenuModal.addEventListener("shown.bs.modal", function () {
-      console.log("✅ [shown.bs.modal] 新增 Richmenu Modal 綁定成功");
 
       const fileInput = document.getElementById("new-image-upload");
       const imagePreview = document.getElementById("image-preview");
@@ -1296,7 +1733,6 @@ export async function pageInit(pageData) {
           reader.onload = function (e) {
             imagePreview.src = e.target.result;
             imagePreview.style.display = "block";
-            console.log("🖼️ 圖片預覽已設定");
           };
           reader.readAsDataURL(file);
         }, { once: true });
@@ -1321,7 +1757,7 @@ export async function pageInit(pageData) {
       return;
     }
 
-    showLoader('正在處理圖片...');
+    LoadingManager.show('richmenu-image-process', '正在處理圖片...');
     try {
       const processedDataUrl = await processImageFor(file, 'richmenu');
 
@@ -1333,20 +1769,20 @@ export async function pageInit(pageData) {
       processedImageFile = dataURLtoFile(processedDataUrl, newFilename);
 
     } catch (error) {
-      alert(error.message);
+      toast.error(error.message);
       this.value = ''; // Reset file input
       imagePreview.src = "";
       imagePreview.style.display = "none";
       processedImageFile = null;
     } finally {
-      hideLoader();
+      LoadingManager.hide('richmenu-image-process');
     }
   });
 
   document.getElementById("preview-richmenu").addEventListener("click", function () {
     const imageSrc = imagePreview.src;
     if (!imageSrc || imageSrc === window.location.href) {
-      alert("請選擇圖片或輸入圖片網址");
+      toast.warning("請選擇圖片或輸入圖片網址");
       return;
     }
 
@@ -1361,7 +1797,6 @@ export async function pageInit(pageData) {
   });
 
   document.getElementById("save-new-richmenu").addEventListener("click", async function () {
-    console.log("✅ save-new-richmenu 被點擊了");
 
     const modalEl = document.getElementById("new-richmenu-modal");
     const sourceIndex = modalEl.dataset.cloneSourceIndex;
@@ -1372,11 +1807,11 @@ export async function pageInit(pageData) {
     const imageSrc = imagePreview.src;
 
     if (!menuName) {
-      alert("請輸入選單名稱");
+      toast.warning("請輸入選單名稱");
       return;
     }
     if (!imageSrc || imageSrc === window.location.href) {
-      alert("請提供圖片");
+      toast.warning("請提供圖片");
       return;
     }
 
@@ -1393,7 +1828,7 @@ export async function pageInit(pageData) {
     }
 
     if (!imageFile && !isCloning) {
-      alert("圖片資料遺失或處理失敗，請重新選擇圖片。");
+      toast.error("圖片資料遺失或處理失敗，請重新選擇圖片。");
       return;
     }
 
@@ -1405,7 +1840,7 @@ export async function pageInit(pageData) {
         imageFile = new File([blob], "cloned_image.png", { type: blob.type });
       } catch (err) {
         console.error("複製圖片時發生錯誤:", err);
-        alert("處理來源圖片時發生錯誤。");
+        toast.error("處理來源圖片時發生錯誤。");
         return;
       }
     }
@@ -1448,7 +1883,6 @@ export async function pageInit(pageData) {
     allRichmenus.push(currentRichmenu);
     displayRichmenuThumbnails(allRichmenus);
 
-    console.log("[save-new-richmenu] currentRichmenu:", currentRichmenu);
 
     delete modalEl.dataset.cloneSourceIndex;
     document.getElementById("newRichmenuLabel").textContent = "新增 Richmenu";
@@ -1456,16 +1890,28 @@ export async function pageInit(pageData) {
     modalInstance?.hide();
   });
 
-  console.log("[DOMContentLoaded] 綁定儲存編輯 Richmenu 按鈕事件區塊");
   const saveButton = document.getElementById("save-edited-richmenu");
   if (saveButton) {
     saveButton.addEventListener("click", function (e) {
-      console.log("Save button clicked");
-      console.log("click on save edited richmenu");
       saveEditedRichmenu();
     });
   } else {
     console.error("Save button not found!");
   }
+
+  // ✅ 綁定 Richmenu 搜尋功能
+  const richmenuSearchInput = document.getElementById("richmenu-search");
+  const clearRichmenuSearchBtn = document.getElementById("clear-richmenu-search");
+
+  richmenuSearchInput?.addEventListener("input", (e) => {
+    filterRichmenuList(e.target.value);
+  });
+
+  clearRichmenuSearchBtn?.addEventListener("click", () => {
+    if (richmenuSearchInput) {
+      richmenuSearchInput.value = "";
+      filterRichmenuList("");
+    }
+  });
 
 };

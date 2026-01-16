@@ -1,4 +1,5 @@
 import { apiBase, getUserId, setUserId } from "../helper/state.js";
+import { api } from "../helper/api.client.js";
 import {
   detectBuilder,
   getSupportedMsgTypes,
@@ -14,15 +15,23 @@ import {
   clearMessageCache,
   refreshMessageType
 } from "../helper/message.helper.js";
+import { toast, withButtonLoading } from "../helper/toast.js";
 import { setInnerHTML } from "../helper/security.js";
+import { LoadingManager } from './shared/loader.js';
+import { showConfirm } from '../helper/modal.helper.js';
 
-// let userId = null; // Module-level userId removed
+// 當前編輯的關鍵字（null 表示新增模式）
+let currentEditKeyword = null;
+let keywordModal = null;
 
 class KeywordReply {
-  constructor({ keyword = "", replies = [] }) {
+  constructor({ keyword = "", replies = [], quickReplyId = null, addTags = [], removeTags = [] }) {
     this.type = "keyword_reply";
     this.keyword = keyword;
-    this.replies = replies; // replies 為 array，可以是 text, imagemap, uri 等
+    this.replies = replies;
+    this.quickReplyId = quickReplyId;
+    this.addTags = addTags;
+    this.removeTags = removeTags;
   }
 
   addReply(reply) {
@@ -38,11 +47,17 @@ class KeywordReply {
   }
 
   toJSON() {
-    return {
+    const json = {
       type: this.type,
       keyword: this.keyword,
-      replies: this.replies
+      replies: this.replies,
+      addTags: this.addTags,
+      removeTags: this.removeTags
     };
+    if (this.quickReplyId) {
+      json.quickReplyId = this.quickReplyId;
+    }
+    return json;
   }
 
   isValid() {
@@ -50,587 +65,606 @@ class KeywordReply {
   }
 }
 
+// 暫存使用者目前選擇的訊息
+let latestSelectedReply = null;
 
-
-// js/keyword_reply_builder.js
-// 關鍵字回覆編輯器主程式
+/**
+ * 頁面初始化
+ */
 export async function pageInit(pageData) {
   setUserId(pageData.userId);
   const userId = getUserId();
-  // 新增：初始化全域選取回覆輸入
-  window.currentReplyInput = null;
-  console.log(`[keyword_reply_builder] ✅ pageInit 被執行, userId: ${userId}`);
 
   // 初始化全域變數
   window.currentReplies = [];
+  window.currentReplyInput = null;
 
-  // 偵測 builder 類型
-  const builder = "keywords";
-  console.log("[keyword_reply_builder] 偵測到 builder:", builder);
+  // 初始化 Modal
+  const modalEl = document.getElementById('keyword-modal');
+  if (modalEl) {
+    keywordModal = new bootstrap.Modal(modalEl);
+  }
 
-  // 載入該 builder 可用的訊息類型
-  const msgTypes = getSupportedMsgTypes(builder);
-  console.log("[keyword_reply_builder] 可用訊息類型:", msgTypes);
+  // 綁定「新增關鍵字」按鈕
+  document.getElementById('create-keyword-btn')?.addEventListener('click', () => {
+    openKeywordModal(null);
+  });
 
-  // 初始化 UI 元素
-  const replyFieldsContainer = document.getElementById("reply-dynamic-fields");
-  const selectedReplyDisplay = document.getElementById("selected-reply-display");
-  const keywordInput = document.getElementById("keyword-input");
-  const submitBtn = document.getElementById("submit");
-  const addReplyBtn = document.getElementById("add-reply-btn");
+  // 綁定「加入回覆」按鈕
+  document.getElementById('add-reply-btn')?.addEventListener('click', handleAddReply);
 
-  // 綁定事件
-  submitBtn?.addEventListener("click", handleKeywordSubmit);
-  addReplyBtn?.addEventListener("click", handleAddReply);
+  // 綁定「儲存」按鈕
+  document.getElementById('save-keyword-btn')?.addEventListener('click', handleKeywordSubmit);
 
-  // 顯示訊息選擇欄位
+  // 綁定刷新統計按鈕
+  document.getElementById('refresh-stats-btn')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    setInnerHTML(btn, '<i class="bi bi-arrow-clockwise spin"></i> 刷新中...');
+    try {
+      await renderReplyList(userId);
+      toast.success('統計數據已更新');
+    } catch (error) {
+      console.error('❌ 刷新統計失敗:', error);
+      toast.error('刷新統計失敗');
+    } finally {
+      btn.disabled = false;
+      setInnerHTML(btn, '<i class="bi bi-arrow-clockwise"></i> 刷新統計');
+    }
+  });
+
+  // 綁定全選 checkbox
+  document.getElementById('select-all-checkbox')?.addEventListener('change', (e) => {
+    document.querySelectorAll('.keyword-checkbox').forEach(cb => cb.checked = e.target.checked);
+  });
+
+  // 綁定刪除選取按鈕
+  document.getElementById('delete-selected-btn')?.addEventListener('click', handleDeleteSelected);
+
+  // 綁定搜尋功能
+  document.getElementById('keyword-search')?.addEventListener('input', (e) => {
+    filterKeywordList(e.target.value);
+  });
+  document.getElementById('clear-search')?.addEventListener('click', () => {
+    const searchInput = document.getElementById('keyword-search');
+    if (searchInput) {
+      searchInput.value = '';
+      filterKeywordList('');
+    }
+  });
+
+  // 載入關鍵字列表
+  await renderReplyList(userId);
+}
+
+/**
+ * 開啟新增/編輯 Modal
+ */
+async function openKeywordModal(item) {
+  currentEditKeyword = item?.keyword || null;
+  window.currentReplies = item?.replies ? [...item.replies] : [];
+  latestSelectedReply = null;
+
+  // 更新 Modal 標題
+  const titleEl = document.getElementById('keyword-modal-title');
+  if (titleEl) {
+    setInnerHTML(titleEl, item
+      ? '<i class="bi bi-pencil text-primary"></i> 編輯關鍵字'
+      : '<i class="bi bi-chat-dots text-primary"></i> 新增關鍵字');
+  }
+
+  // 設定關鍵字輸入
+  const keywordInput = document.getElementById('keyword-input');
+  if (keywordInput) {
+    keywordInput.value = item?.keyword || '';
+    keywordInput.readOnly = !!item; // 編輯模式時不可修改關鍵字
+  }
+
+  // 設定自動標籤
+  const addTagsInput = document.getElementById('keyword-add-tags');
+  const removeTagsInput = document.getElementById('keyword-remove-tags');
+  if (addTagsInput) addTagsInput.value = item?.addTags ? item.addTags.join(', ') : '';
+  if (removeTagsInput) removeTagsInput.value = item?.removeTags ? item.removeTags.join(', ') : '';
+
+  // 生成回覆選擇器 UI
+  const replyFieldsContainer = document.getElementById('reply-dynamic-fields');
   if (replyFieldsContainer) {
+    setInnerHTML(replyFieldsContainer, '');
     try {
       const ui = await generateReplyInputUI({
-        builder,
+        builder: 'keywords',
         userId: getUserId(),
-        onSelect: (type, item) => {
-          // 新增：更新全域選取狀態
-          window.currentReplyInput = { type, item };
-          console.log("✅ 使用者選擇訊息：", type, item);
-          latestSelectedReply = { type, ...item };
-          updateSelectedReplyDisplay(selectedReplyDisplay, type, item);
+        onSelect: (type, selectedItem) => {
+          window.currentReplyInput = { type, item: selectedItem };
+          latestSelectedReply = { type, ...selectedItem };
         }
       });
       replyFieldsContainer.appendChild(ui);
     } catch (error) {
-      console.error("❌ 生成回覆輸入 UI 失敗:", error);
-      setInnerHTML(replyFieldsContainer, "<div class='alert alert-warning'>載入回覆選項失敗，請重新整理頁面</div>");
+      console.error('❌ 生成回覆輸入 UI 失敗:', error);
+      setInnerHTML(replyFieldsContainer, '<div class="alert alert-warning">載入回覆選項失敗</div>');
     }
   }
 
-  // 載入已儲存的關鍵字回覆清單
-  await renderReplyList(userId);
+  // 渲染已加入的回覆
+  renderSelectedReplies();
 
-  // 綁定刷新統計按鈕事件
-  const refreshStatsBtn = document.getElementById("refresh-stats-btn");
-  if (refreshStatsBtn) {
-    refreshStatsBtn.addEventListener("click", async () => {
-      refreshStatsBtn.disabled = true;
-      setInnerHTML(refreshStatsBtn, "🔄 刷新中...");
-
-      try {
-        await renderReplyList(userId);
-        showNotification("✅ 統計數據已更新", "success");
-      } catch (error) {
-        console.error("❌ 刷新統計失敗:", error);
-        showNotification("❌ 刷新統計失敗", "error");
-      } finally {
-        refreshStatsBtn.disabled = false;
-        setInnerHTML(refreshStatsBtn, "🔄 刷新統計");
-      }
-    });
+  // 載入 QR 模板列表
+  // 優先使用 keyword 層級的 quickReplyId，若沒有則找 replies 中的（向下相容舊資料）
+  let selectedQRId = item?.quickReplyId || null;
+  if (!selectedQRId && item?.replies) {
+    const replyWithQR = item.replies.find(r => r.quickReplyId);
+    if (replyWithQR) {
+      selectedQRId = replyWithQR.quickReplyId;
+    }
   }
+  await loadQRTemplates(selectedQRId);
 
-
-  // ✅ 綁定全選 checkbox 行為
-  const selectAllCheckbox = document.getElementById("select-all-checkbox");
-  selectAllCheckbox?.addEventListener("change", () => {
-    const checkboxes = document.querySelectorAll(".keyword-checkbox");
-    checkboxes.forEach(cb => cb.checked = selectAllCheckbox.checked);
-  });
-
-  // ✅ 綁定刪除選取項目按鈕事件
-  const deleteSelectedBtn = document.getElementById("delete-selected-btn");
-  deleteSelectedBtn?.addEventListener("click", async () => {
-    const checkboxes = document.querySelectorAll(".keyword-checkbox:checked");
-    if (checkboxes.length === 0) {
-      alert("請先選取要刪除的項目");
-      return;
-    }
-
-    if (!confirm("確定要刪除選取的關鍵字回覆嗎？")) return;
-
-    const keywordsToDelete = Array.from(checkboxes).map(cb => cb.dataset.keyword);
-    for (const keyword of keywordsToDelete) {
-      try {
-        const res = await fetch(`${apiBase}/keyword/delete`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-User-Id": userId
-          },
-          body: JSON.stringify({ keyword })
-        });
-        console.log(`🗑️ 已刪除: ${keyword}`);
-      } catch (err) {
-        console.error("❌ 刪除失敗", keyword, err);
-      }
-    }
-
-    await renderReplyList(userId);
-  });
-
-
+  // 顯示 Modal
+  keywordModal?.show();
 }
 
-// 暫存使用者目前選擇的訊息
-let latestSelectedReply = null;
-
-
-
-function getSelectedReply() {
-  return latestSelectedReply;
-}
-
-// 更新選取回覆顯示
-function updateSelectedReplyDisplay(displayElement, type, item) {
-  if (!displayElement) return;
-  const preview = generateMessagePreviewHTML(type, item);
-  setInnerHTML(displayElement, `<div class="alert alert-success">✅ 已選擇：${preview}</div>`);
-}
-
-// 加入 addReply 處理邏輯
+/**
+ * 加入回覆
+ */
 function handleAddReply() {
   if (!latestSelectedReply) {
-    alert("請先選擇一個回覆項目");
+    toast.warning('請先選擇一個回覆項目');
     return;
   }
-  // Re-create the structure that the rest of the function expects
+
   const current = { type: latestSelectedReply.type, item: latestSelectedReply };
-
-  if (!current || !current.type) {
-    console.warn("❗ 無效的回覆輸入");
-    return;
-  }
-
   const reply = { type: current.type };
 
-
-
-  if (current.type === "text" && current.item?.text) {
+  if (current.type === 'text' && current.item?.text) {
     reply.text = current.item.text;
-  } else if (current.type === "flex" && current.item?.id) {
+  } else if (current.type === 'flex' && current.item?.id) {
     reply.id = current.item.id;
     reply.title = current.item.title;
-    reply.altText = current.item.title || 'Flex Message'; // Add altText for previews
+    reply.altText = current.item.title || 'Flex Message';
   } else if (current.item) {
     Object.assign(reply, current.item);
   }
 
-  console.log("✅ 加入回覆項目：", reply);
   window.currentReplies.push(reply);
   renderSelectedReplies();
+  toast.success('已加入回覆');
 }
 
-// 顯示目前已選擇加入的回覆（綠色區塊）
+/**
+ * 渲染已選擇的回覆
+ */
 function renderSelectedReplies() {
-  const selectedReplyDisplay = document.getElementById("selected-reply-display");
-  if (!selectedReplyDisplay) return;
+  const container = document.getElementById('selected-reply-display');
+  if (!container) return;
+
   if (!window.currentReplies || window.currentReplies.length === 0) {
-    setInnerHTML(selectedReplyDisplay, "");
+    setInnerHTML(container, `
+      <div class="text-muted text-center">
+        <i class="bi bi-inbox"></i> 尚未加入回覆
+      </div>
+    `);
     return;
   }
-  const previews = window.currentReplies.map(reply =>
-    `<div>${generateMessagePreviewHTML(reply.type, reply)}</div>`
-  ).join("");
-  setInnerHTML(selectedReplyDisplay, `<div class="alert alert-success">✅ 已加入回覆：${previews}</div>`);
-}
 
+  const repliesHTML = window.currentReplies.map((reply, index) => `
+    <div class="reply-item">
+      <span class="badge bg-secondary">${getMessageTypeIcon(reply.type)}</span>
+      <span class="flex-grow-1">${formatMessagePreview(reply.type, reply)}</span>
+      <button type="button" class="btn btn-sm btn-outline-danger remove-btn" onclick="window.removeReply(${index})">
+        <i class="bi bi-x"></i>
+      </button>
+    </div>
+  `).join('');
 
-async function createKeywordRow(item, index, onDelete) {
-  const tr = document.createElement("tr");
-  // 新增 checkbox 欄位
-  const tdCheckbox = document.createElement("td");
-  const checkbox = document.createElement("input");
-  checkbox.type = "checkbox";
-  checkbox.className = "keyword-checkbox";
-  checkbox.dataset.keyword = item.keyword;
-  tdCheckbox.appendChild(checkbox);
-  tr.appendChild(tdCheckbox);
-  // 關鍵字欄位
-  const tdKeyword = document.createElement("td");
-  const keywordBtn = document.createElement("button");
-  keywordBtn.className = "btn btn-outline-primary btn-sm";
-  keywordBtn.textContent = item.keyword;
-  keywordBtn.addEventListener("click", () => {
-    editKeyword(item, index);
-  });
-  tdKeyword.appendChild(keywordBtn);
-
-  // 回覆類型欄位
-  const tdTypes = document.createElement("td");
-  const replySummary = document.createElement("div");
-  replySummary.className = "d-flex flex-wrap gap-1";
-
-  item.replies.forEach((reply, replyIndex) => {
-    const badge = document.createElement("span");
-    badge.className = "badge bg-secondary me-1";
-    setInnerHTML(badge, `${getMessageTypeIcon(reply.type)} ${formatMessagePreview(reply.type, reply)}`);
-    replySummary.appendChild(badge);
-  });
-
-  tdTypes.appendChild(replySummary);
-
-  // 統計數據欄位
-  const tdTotal = document.createElement("td");
-  const tdThisMonth = document.createElement("td");
-  const tdLastMonth = document.createElement("td");
-
-  // 添加樣式類
-  tdTotal.className = "stats-cell";
-  tdThisMonth.className = "stats-cell";
-  tdLastMonth.className = "stats-cell";
-
-  // 獲取統計數據
-  try {
-    const stats = await getKeywordStats(item.keyword);
-
-    // 總觸發次數
-    const totalBadge = document.createElement("span");
-    totalBadge.className = "badge bg-primary stats-badge";
-    totalBadge.textContent = stats.total || 0;
-    tdTotal.appendChild(totalBadge);
-
-    // 本月觸發
-    const thisMonthBadge = document.createElement("span");
-    thisMonthBadge.className = "badge bg-success stats-badge";
-    thisMonthBadge.textContent = stats.thisMonth || 0;
-    tdThisMonth.appendChild(thisMonthBadge);
-
-    // 上月觸發
-    const lastMonthBadge = document.createElement("span");
-    lastMonthBadge.className = "badge bg-info stats-badge";
-    lastMonthBadge.textContent = stats.lastMonth || 0;
-    tdLastMonth.appendChild(lastMonthBadge);
-
-  } catch (error) {
-    console.error("❌ 獲取關鍵字統計失敗:", error);
-
-    // 顯示錯誤狀態
-    setInnerHTML(tdTotal, '<span class="badge bg-secondary stats-badge">-</span>');
-    setInnerHTML(tdThisMonth, '<span class="badge bg-secondary stats-badge">-</span>');
-    setInnerHTML(tdLastMonth, '<span class="badge bg-secondary stats-badge">-</span>');
-  }
-
-
-  tr.appendChild(tdKeyword);
-  tr.appendChild(tdTypes);
-  tr.appendChild(tdTotal);
-  tr.appendChild(tdThisMonth);
-  tr.appendChild(tdLastMonth);
-
-  return tr;
-}
-
-// 編輯關鍵字功能
-function editKeyword(item, index) {
-  // 填入表單
-  const keywordInput = document.getElementById("keyword-input");
-  if (keywordInput) {
-    keywordInput.value = item.keyword;
-  }
-
-  // 清空現有回覆
-  window.currentReplies = [...item.replies];
-
-  // 更新顯示
-  const selectedReplyDisplay = document.getElementById("selected-reply-display");
-  if (selectedReplyDisplay && item.replies.length > 0) {
-    const previews = item.replies.map(reply =>
-      generateMessagePreviewHTML(reply.type, reply)
-    ).join("");
-    setInnerHTML(selectedReplyDisplay, `<div class="alert alert-info">📝 編輯模式 - 已載入 ${item.replies.length} 個回覆：${previews}</div>`);
-  }
-
-  console.log("📝 進入編輯模式:", item);
-}
-
-export async function renderReplyList(userId) {
-  const replyListContainer = document.getElementById("reply-list");
-  const savedKeywordReplies = await fetchKeywordReplyList(userId);
-  setInnerHTML(replyListContainer, "");
-
-  // 將現有關鍵字存到 window.existingKeywords
-  const list = savedKeywordReplies || [];
-  window.existingKeywords = list.map(item => item.keyword);
-
-
-  // 顯示載入狀態
-  setInnerHTML(replyListContainer, `
-    <tr class="loading-row">
-      <td colspan="6" class="text-center">
-        <div class="spinner-border text-primary" role="status">
-          <span class="visually-hidden">載入中...</span>
-        </div>
-        <div class="mt-2">載入關鍵字統計中...</div>
-      </td>
-    </tr>
+  setInnerHTML(container, `
+    <div class="mb-2 text-muted small">已加入 ${window.currentReplies.length} 個回覆</div>
+    ${repliesHTML}
   `);
-
-  try {
-    const fragment = document.createDocumentFragment();
-
-    // 使用 Promise.all 來並行處理所有行的創建
-    const rowPromises = savedKeywordReplies.map(async (item, index) => {
-      return await createKeywordRow(item, index, async (i) => {
-        savedKeywordReplies.splice(i, 1);
-        await fetch(`${apiBase}/keyword/save`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-User-Id": userId
-          },
-          body: JSON.stringify(savedKeywordReplies)
-        });
-        renderReplyList(userId);
-      });
-    });
-
-    const rows = await Promise.all(rowPromises);
-    rows.forEach(row => fragment.appendChild(row));
-
-    setInnerHTML(replyListContainer, "");
-    replyListContainer.appendChild(fragment);
-
-  } catch (error) {
-    console.error("❌ 載入關鍵字清單失敗:", error);
-    setInnerHTML(replyListContainer, `
-      <tr>
-        <td colspan="6" class="text-center text-danger">
-          ❌ 載入失敗，請重新整理頁面
-        </td>
-      </tr>
-    `);
-  }
 }
 
+/**
+ * 移除回覆
+ */
+function removeReply(index) {
+  if (index >= 0 && index < window.currentReplies.length) {
+    const removed = window.currentReplies.splice(index, 1)[0];
+    renderSelectedReplies();
+    toast.info(`已移除：${removed.type}`);
+  }
+}
+window.removeReply = removeReply;
 
+/**
+ * 儲存關鍵字
+ */
 async function handleKeywordSubmit() {
-  try {
-    const keywordInput = document.getElementById("keyword-input");
-    const keyword = keywordInput?.value?.trim();
-    const replies = window.currentReplies;
+  const saveBtn = document.getElementById('save-keyword-btn');
 
-    // 新增重複檢查邏輯
-    const isDuplicate = window.existingKeywords?.some(item => item.toLowerCase() === keyword.toLowerCase());
-    if (isDuplicate) {
-      alert(`❗ 關鍵字「${keyword}」已存在，請使用其他關鍵字`);
-      return;
-    }
+  await withButtonLoading(saveBtn, async () => {
+    const keywordInput = document.getElementById('keyword-input');
+    const keyword = keywordInput?.value?.trim();
 
     if (!keyword) {
-      alert("請輸入關鍵字");
+      toast.warning('請輸入關鍵字');
       return;
     }
 
     if (!window.currentReplies || window.currentReplies.length === 0) {
-      alert("請至少加入一個回覆");
+      toast.warning('請至少加入一個回覆');
       return;
     }
 
-    // 確保所有回覆都有正確的類型
-    const enrichedReplies = window.currentReplies.map(reply => {
-      if (typeof reply === "object" && !reply.type) {
-        return { ...reply, type: detectReplyType(reply) };
+    // 檢查重複（僅新增模式）
+    if (!currentEditKeyword) {
+      const isDuplicate = window.existingKeywords?.some(k => k.toLowerCase() === keyword.toLowerCase());
+      if (isDuplicate) {
+        toast.warning(`關鍵字「${keyword}」已存在`);
+        return;
       }
-      return reply;
+    }
+
+    // 取得選擇的 QR 模板 ID（keyword 層級）
+    const qrSelect = document.getElementById('qr-template-select');
+    const quickReplyId = qrSelect?.value || null;
+
+    // Debug: 確認 QR 選取狀態
+    console.log('🔍 QR 選取狀態:', {
+      qrSelectElement: qrSelect,
+      selectedValue: qrSelect?.value,
+      quickReplyId: quickReplyId
     });
+
+    // 取得自動標籤
+    const addTagsRaw = document.getElementById('keyword-add-tags')?.value || '';
+    const removeTagsRaw = document.getElementById('keyword-remove-tags')?.value || '';
+    const addTags = addTagsRaw.split(',').map(t => t.trim()).filter(t => t.length > 0);
+    const removeTags = removeTagsRaw.split(',').map(t => t.trim()).filter(t => t.length > 0);
 
     const newItem = new KeywordReply({
       keyword,
-      replies: enrichedReplies,
+      replies: window.currentReplies,
+      quickReplyId,
+      addTags,
+      removeTags,
       createdAt: new Date().toISOString()
     });
 
-    if (!newItem.isValid()) {
-      alert("請至少加入一個有效回覆");
-      return;
-    }
+    // Debug: 查看準備發送的完整資料
+    const dataToSend = newItem.toJSON();
+    console.log('📤 準備發送資料:', dataToSend);
+    console.log('📤 dataToSend.quickReplyId:', dataToSend.quickReplyId);
 
-    // 顯示載入狀態
-    const submitBtn = document.getElementById("submit");
-    const originalText = submitBtn.textContent;
-    submitBtn.textContent = "儲存中...";
-    submitBtn.disabled = true;
+    try {
+      const result = await api.post('/keyword/save', dataToSend);
 
-    const res = await fetch(`${apiBase}/keyword/save`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-User-Id": userId
-      },
-      body: JSON.stringify(newItem.toJSON())
-    });
+      // Debug: 查看實際回應
+      console.log('💾 API 回應:', result);
 
-    const result = await res.json();
+      // ApiClient 已經返回解析後的 JSON，直接檢查
+      // 可能是 { success: true, data: ... } 或直接是 API 回應
+      const isSuccess = result?.success !== false; // 假設沒有 success 或 success=true 都視為成功
 
-    if (result.success) {
-      alert("✅ 已儲存關鍵字回覆");
+      if (isSuccess) {
+        const newTags = result.newTagsRegistered;
+        if (newTags && newTags.length > 0) {
+          toast.success(`已儲存關鍵字並註冊 ${newTags.length} 個標籤：${newTags.join(', ')}`);
+        } else {
+          toast.success(currentEditKeyword ? '已更新關鍵字' : '已新增關鍵字');
+        }
 
-      // 清空表單
-      keywordInput.value = "";
-      window.currentReplies = [];
-      const selectedReplyDisplay = document.getElementById("selected-reply-display");
-      if (selectedReplyDisplay) {
-        setInnerHTML(selectedReplyDisplay, "");
+        keywordModal?.hide();
+        await renderReplyList(getUserId());
+        clearMessageCache();
+      } else {
+        toast.error('儲存失敗：' + (result.error || result.message || '未知錯誤'));
       }
+    } catch (err) {
+      console.error('❌ 儲存失敗', err);
+      // err 可能是 Response 物件（ApiClient throw 的）
+      if (err instanceof Response) {
+        toast.error(`儲存失敗 (${err.status})`);
+      } else {
+        toast.error('儲存過程中發生錯誤: ' + (err.message || err));
+      }
+    }
+  }, '儲存中...');
+}
 
-      // 重新載入清單
-      await renderReplyList(userId);
+/**
+ * 刪除選取的關鍵字
+ */
+async function handleDeleteSelected() {
+  const checkboxes = document.querySelectorAll('.keyword-checkbox:checked');
+  if (checkboxes.length === 0) {
+    toast.warning('請先選取要刪除的項目');
+    return;
+  }
 
-      // 清除快取
-      clearMessageCache();
+  const keywords = Array.from(checkboxes).map(cb => cb.dataset.keyword);
+  const message = checkboxes.length === 1
+    ? `確定要刪除關鍵字「${keywords[0]}」嗎？`
+    : `確定要刪除 ${checkboxes.length} 個關鍵字嗎？`;
+
+  const confirmed = await showConfirm({
+    title: '確認刪除',
+    message,
+    type: 'danger'
+  });
+
+  if (!confirmed) return;
+
+  const deleteBtn = document.getElementById('delete-selected-btn');
+  await withButtonLoading(deleteBtn, async () => {
+    for (const keyword of keywords) {
+      try {
+        await api.post('/keyword/delete', { keyword });
+      } catch (err) {
+        console.error('❌ 刪除失敗', keyword, err);
+        toast.error(`刪除失敗: ${keyword}`);
+      }
+    }
+    await renderReplyList(getUserId());
+    toast.success(`已刪除 ${keywords.length} 個關鍵字`);
+  }, '刪除中...');
+}
+
+/**
+ * 搜尋篩選
+ */
+function filterKeywordList(searchTerm) {
+  const rows = document.querySelectorAll('#reply-list tr');
+  const term = searchTerm.toLowerCase().trim();
+  let visibleCount = 0;
+
+  rows.forEach(row => {
+    const keyword = row.querySelector('button')?.textContent.toLowerCase() || '';
+    const replyTypes = row.querySelector('.d-flex')?.textContent.toLowerCase() || '';
+
+    if (!term || keyword.includes(term) || replyTypes.includes(term)) {
+      row.style.display = '';
+      visibleCount++;
     } else {
-      alert("❌ 儲存失敗：" + (result.error || "未知錯誤"));
+      row.style.display = 'none';
     }
-  } catch (err) {
-    console.error("❌ 儲存失敗", err);
-    alert("儲存過程中發生錯誤，請稍後再試");
-  } finally {
-    // 恢復按鈕狀態
-    const submitBtn = document.getElementById("submit");
-    if (submitBtn) {
-      submitBtn.textContent = "儲存回覆";
-      submitBtn.disabled = false;
-    }
+  });
+
+  const resultCount = document.getElementById('search-result-count');
+  if (resultCount) {
+    resultCount.textContent = term ? `找到 ${visibleCount} 個符合的關鍵字` : '';
   }
 }
 
-// 🔍 根據物件特徵推斷 reply 類型 (更穩健的版本)
-function detectReplyType(reply) {
-  // 優先相信明確指定的 type 屬性
-  if (reply && reply.type) {
-    return reply.type;
+/**
+ * 渲染關鍵字列表
+ */
+export async function renderReplyList(userId) {
+  const replyListContainer = document.getElementById('reply-list');
+  const savedKeywordReplies = await fetchKeywordReplyList(userId);
+  setInnerHTML(replyListContainer, '');
+
+  window.existingKeywords = savedKeywordReplies.map(item => item.keyword);
+
+  LoadingManager.show('keyword-stats-load', '載入關鍵字統計中...');
+
+  try {
+    const fragment = document.createDocumentFragment();
+    const rows = await Promise.all(savedKeywordReplies.map((item, index) => createKeywordRow(item, index)));
+    rows.forEach(row => fragment.appendChild(row));
+
+    setInnerHTML(replyListContainer, '');
+    replyListContainer.appendChild(fragment);
+    LoadingManager.hide('keyword-stats-load');
+  } catch (error) {
+    console.error('❌ 載入關鍵字清單失敗:', error);
+    LoadingManager.hide('keyword-stats-load');
+    setInnerHTML(replyListContainer, `
+      <tr><td colspan="6" class="text-center text-danger">❌ 載入失敗，請重新整理頁面</td></tr>
+    `);
   }
-
-  // 若無 type 屬性，則根據物件特徵進行推斷 (相容舊資料)
-  if (reply.altText && reply.baseUrl) return "imagemap";
-  if (reply.contents) return "flex";
-  if (reply.uri) return "uri";
-  if (reply.data) return "postback";
-  if (typeof reply.text === "string") return "text";
-
-  return "unknown";
 }
 
-function getDynamicReply() {
-  const replyType = document.getElementById("reply-type")?.value;
-  const replyFieldContainer = document.getElementById("reply-dynamic-fields");
+/**
+ * 建立關鍵字表格行
+ */
+async function createKeywordRow(item, index) {
+  const tr = document.createElement('tr');
 
-  if (replyType === "text" || replyType === "uri") {
-    const textarea = replyFieldContainer.querySelector("textarea");
-    if (textarea && textarea.value.trim()) {
-      return { type: replyType, text: textarea.value.trim() };
-    }
+  // Checkbox
+  const tdCheckbox = document.createElement('td');
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.className = 'keyword-checkbox';
+  checkbox.dataset.keyword = item.keyword;
+  tdCheckbox.appendChild(checkbox);
+  tr.appendChild(tdCheckbox);
+
+  // 關鍵字按鈕
+  const tdKeyword = document.createElement('td');
+  const keywordBtn = document.createElement('button');
+  keywordBtn.className = 'btn btn-outline-primary btn-sm';
+  keywordBtn.textContent = item.keyword;
+  keywordBtn.addEventListener('click', () => openKeywordModal(item));
+  tdKeyword.appendChild(keywordBtn);
+  tr.appendChild(tdKeyword);
+
+  // 回覆類型
+  const tdTypes = document.createElement('td');
+  const replySummary = document.createElement('div');
+  replySummary.className = 'd-flex flex-wrap gap-1';
+
+  // 檢查 keyword 層級是否有 QR
+  const hasQR = !!item.quickReplyId;
+
+  item.replies.forEach(reply => {
+    const badge = document.createElement('span');
+    badge.className = 'badge bg-secondary';
+    setInnerHTML(badge, `${getMessageTypeIcon(reply.type)} ${formatMessagePreview(reply.type, reply)}`);
+    replySummary.appendChild(badge);
+  });
+
+  // 🆕 如果有 QR，加入 QR 標記
+  if (hasQR) {
+    const qrBadge = document.createElement('span');
+    qrBadge.className = 'badge bg-warning text-dark';
+    qrBadge.title = '此關鍵字包含 Quick Reply';
+    setInnerHTML(qrBadge, '<i class="bi bi-lightning-charge"></i> QR');
+    replySummary.appendChild(qrBadge);
   }
 
-  if (["imagemap", "flex", "postback"].includes(replyType)) {
-    const select = replyFieldContainer.querySelector("select");
-    if (select && select.value) {
-      const savedList = window.currentMessageList || getSavedMessages(replyType); // ✅ 使用暫存清單
-      const selectedItem = savedList.find(i => {
-        return i.altText === select.value || i.id === select.value || i.title === select.value || i.label === select.value;
-      });
-      if (!selectedItem) {
-        console.warn("[getDynamicReply] 找不到符合的選項：", select.value, "於", savedList);
-      }
-      if (selectedItem) {
-        return { ...selectedItem, type: replyType };
-      }
-    }
+  tdTypes.appendChild(replySummary);
+  tr.appendChild(tdTypes);
+
+  // 統計數據
+  try {
+    const stats = await getKeywordStats(item.keyword);
+    tr.appendChild(createStatCell(stats.total || 0, 'primary'));
+    tr.appendChild(createStatCell(stats.thisMonth || 0, 'success'));
+    tr.appendChild(createStatCell(stats.lastMonth || 0, 'info'));
+  } catch (error) {
+    tr.appendChild(createStatCell('-', 'secondary'));
+    tr.appendChild(createStatCell('-', 'secondary'));
+    tr.appendChild(createStatCell('-', 'secondary'));
   }
 
-  return null;
+  return tr;
+}
+
+function createStatCell(value, color) {
+  const td = document.createElement('td');
+  td.className = 'stats-cell text-center';
+  const badge = document.createElement('span');
+  badge.className = `badge bg-${color} stats-badge`;
+  badge.textContent = value;
+  td.appendChild(badge);
+  return td;
 }
 
 async function fetchKeywordReplyList(userId) {
-  const res = await fetch(`${apiBase}/keyword/list`, {
-    headers: { "X-User-Id": userId }
+  const json = await api.get('/keyword/list');
+  const list = json.data || [];
+
+  // Debug: 查看載入的資料
+  console.log('📋 載入的 keyword 列表:', list);
+  list.forEach((item, index) => {
+    if (item.quickReplyId) {
+      console.log(`✅ keyword[${index}] "${item.keyword}" 有 QR:`, item.quickReplyId);
+    }
   });
-  const json = await res.json();
-  return json.data || [];
+
+  return list;
 }
 
-// 獲取關鍵字統計數據
 async function getKeywordStats(keyword) {
   try {
-    const res = await fetch(`${apiBase}/keyword/stats`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-User-Id": userId
-      },
-      body: JSON.stringify({ keyword })
-    });
-
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-    }
-
-    const data = await res.json();
-    return data.stats || { total: 0, thisMonth: 0, lastMonth: 0 };
-  } catch (error) {
-    console.error("❌ 獲取關鍵字統計失敗:", error);
+    const json = await api.post('/keyword/stats', { keyword });
+    return json.data || { total: 0, thisMonth: 0, lastMonth: 0 };
+  } catch {
     return { total: 0, thisMonth: 0, lastMonth: 0 };
   }
 }
 
-// 顯示通知
-function showNotification(message, type = "info") {
-  // 創建通知元素
-  const notification = document.createElement("div");
-  notification.className = `alert alert-${type === "error" ? "danger" : type === "success" ? "success" : "info"} alert-dismissible fade show position-fixed`;
-  notification.style.cssText = "top: 20px; right: 20px; z-index: 9999; min-width: 300px;";
-  setInnerHTML(notification, `
-    ${message}
-    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-  `);
+// 儲存載入的 QR 模板（用於預覽）
+let cachedQRTemplates = [];
 
-  // 添加到頁面
-  document.body.appendChild(notification);
+/**
+ * 載入 QR 模板列表到下拉選單
+ */
+async function loadQRTemplates(selectedId = null) {
+  const select = document.getElementById('qr-template-select');
+  const previewArea = document.getElementById('qr-preview-area');
 
-  // 自動移除
-  setTimeout(() => {
-    if (notification.parentNode) {
-      notification.remove();
+  if (!select) return;
+
+  // 重設下拉選單
+  select.innerHTML = '<option value="">-- 不附加 Quick Reply --</option>';
+  if (previewArea) previewArea.style.display = 'none';
+
+  try {
+    const json = await api.get('/quickreply/list');
+
+    // 🆕 去除重複的 QR 模板（以 id 為準）
+    const rawList = json.data || [];
+    const uniqueMap = new Map();
+    rawList.forEach(qr => {
+      if (!uniqueMap.has(qr.id)) {
+        uniqueMap.set(qr.id, qr);
+      }
+    });
+    cachedQRTemplates = Array.from(uniqueMap.values());
+    console.log(`[QR] 載入 ${cachedQRTemplates.length} 個不重複的 QR 模板`);
+
+    cachedQRTemplates.forEach(qr => {
+      const option = document.createElement('option');
+      option.value = qr.id;
+      option.textContent = `${qr.name} (${qr.items?.length || 0} 個按鈕)`;
+      if (selectedId && qr.id === selectedId) {
+        option.selected = true;
+      }
+      select.appendChild(option);
+    });
+
+    // 如果有預選的 QR，顯示預覽
+    if (selectedId) {
+      showQRPreview(selectedId);
     }
-  }, 5000);
+  } catch (err) {
+    console.error('❌ 載入 QR 模板失敗:', err);
+  }
+
+  // 綁定預覽按鈕事件
+  const previewBtn = document.getElementById('preview-qr-btn');
+  if (previewBtn) {
+    previewBtn.onclick = () => {
+      const qrId = select.value;
+      if (qrId) {
+        showQRPreview(qrId);
+      } else {
+        if (previewArea) previewArea.style.display = 'none';
+        toast.info('請先選擇 Quick Reply 模板');
+      }
+    };
+  }
+
+  // 下拉選單變更時自動更新預覽
+  select.onchange = () => {
+    const qrId = select.value;
+    if (qrId) {
+      showQRPreview(qrId);
+    } else {
+      if (previewArea) previewArea.style.display = 'none';
+    }
+  };
 }
 
-// === Reset form button event ===
-// 綁定重設表單按鈕，清空所有輸入欄位與 UI
-document.addEventListener("DOMContentLoaded", () => {
-  const resetBtn = document.getElementById("reset-form-btn");
-  if (resetBtn) {
-    resetBtn.addEventListener("click", () => {
-      resetForm();
-    });
-  }
-});
+/**
+ * 顯示 QR 按鈕預覽
+ */
+function showQRPreview(qrId) {
+  const previewArea = document.getElementById('qr-preview-area');
+  const buttonsContainer = document.getElementById('qr-buttons-preview');
 
-// 新重設表單邏輯，預設回到 text 類型並顯示 textarea
-function resetForm() {
-  console.log("🧹 resetForm called");
+  if (!previewArea || !buttonsContainer) return;
 
-  // 清空目前選取的回覆與欄位
-  window.currentReplyInput = null;
-
-  const replyTypeSelect = document.getElementById("reply-type");
-  if (replyTypeSelect) {
-    replyTypeSelect.value = "text"; // 預設為文字
+  const qr = cachedQRTemplates.find(q => q.id === qrId);
+  if (!qr || !qr.items) {
+    previewArea.style.display = 'none';
+    return;
   }
 
-  const dynamicFields = document.getElementById("reply-dynamic-fields");
-  if (dynamicFields) {
-    setInnerHTML(dynamicFields, "");
-  }
+  // 清空並渲染按鈕預覽
+  buttonsContainer.innerHTML = '';
+  qr.items.forEach(item => {
+    const btn = document.createElement('span');
+    btn.className = 'badge bg-primary';
+    btn.style.fontSize = '0.85rem';
+    btn.style.padding = '6px 12px';
 
-  const replyInputArea = document.getElementById("reply-input-area");
-  if (replyInputArea) {
-    setInnerHTML(replyInputArea, "");
-  }
+    const action = item.action || {};
+    let label = action.label || action.text || action.type || '按鈕';
+    btn.textContent = label;
+    buttonsContainer.appendChild(btn);
+  });
 
-  const selectedReplyDisplay = document.getElementById("selected-reply-display");
-  if (selectedReplyDisplay) {
-    setInnerHTML(selectedReplyDisplay, "");
-  }
-
-  // 重新建立文字回覆欄位
-  generateReplyInputUI("text", {});
+  previewArea.style.display = 'block';
 }

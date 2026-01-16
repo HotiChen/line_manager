@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>加入團隊邀請 - Pinti Line Bot</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .invite-card {
+            max-width: 400px;
+            width: 90%;
+            border-radius: 16px;
+            border: none;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
+        }
+
+        .icon-circle {
+            width: 80px;
+            height: 80px;
+            background-color: #e7f1ff;
+            color: #0d6efd;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+            margin: 0 auto 1.5rem;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Debug Info (僅測試環境顯示) -->
+    <div id="debug-info" class="position-fixed top-0 start-0 m-3 p-2 bg-dark text-white rounded"
+        style="font-size: 0.75rem; z-index: 9999; display: none; max-width: 300px;">
+        <div class="fw-bold mb-1">🔧 Debug Info</div>
+        <div><strong>User ID:</strong> <span id="debug-user-id" class="text-warning">載入中...</span></div>
+        <div><strong>環境:</strong> <span id="debug-env" class="text-info">載入中...</span></div>
+        <div><strong>API Base:</strong> <span id="debug-api" class="text-success"
+                style="font-size: 0.65rem; word-break: break-all;">載入中...</span></div>
+    </div>
+
+    <div class="card invite-card p-4 text-center">
+        <div class="card-body">
+            <!-- Loading State -->
+            <div id="loading-state">
+                <div class="spinner-border text-primary mb-3" style="width: 3rem; height: 3rem;" role="status"></div>
+                <h4 class="fw-bold">正在載入邀請資訊...</h4>
+                <p class="text-muted">請稍候，正在驗證您的邀請連結。</p>
+            </div>
+
+            <!-- Confirmation State (NEW) -->
+            <div id="confirmation-state" class="d-none">
+                <div class="icon-circle">
+                    <i class="bi bi-people-fill"></i>
+                </div>
+                <h3 class="fw-bold mb-2">團隊邀請</h3>
+                <p class="text-muted mb-3">您被邀請加入以下團隊：</p>
+
+                <!-- Team Info -->
+                <div class="bg-light rounded-3 p-3 mb-4 text-start">
+                    <div class="d-flex align-items-center mb-2">
+                        <i class="bi bi-building me-2 text-primary"></i>
+                        <strong>專案名稱:</strong>
+                        <span class="ms-2 text-dark fw-bold" id="invite-bot-id">載入中...</span>
+                    </div>
+                    <div class="d-flex align-items-center mb-2">
+                        <i class="bi bi-person-badge me-2 text-primary"></i>
+                        <strong>您的角色:</strong>
+                        <span class="ms-2" id="invite-role">
+                            <span class="badge bg-info">載入中...</span>
+                        </span>
+                    </div>
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-person-check me-2 text-primary"></i>
+                        <strong>邀請者:</strong>
+                        <span class="ms-2 text-muted" id="invite-creator">載入中...</span>
+                    </div>
+                </div>
+
+                <!-- Warning -->
+                <div class="alert alert-warning text-start mb-4" role="alert">
+                    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                    <small>
+                        <strong>注意：</strong>接受邀請後，您將能夠管理此 Bot 的內容。
+                        <span id="owner-warning" class="d-none">作為管理員，您將擁有完整的管理權限。</span>
+                    </small>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="d-grid gap-2">
+                    <button id="btn-accept-invite" class="btn btn-primary py-2 rounded-pill">
+                        <i class="bi bi-check-circle me-2"></i>接受邀請
+                    </button>
+                    <button id="btn-decline-invite" class="btn btn-outline-secondary py-2 rounded-pill">
+                        <i class="bi bi-x-circle me-2"></i>拒絕邀請
+                    </button>
+                </div>
+            </div>
+
+            <!-- Success State -->
+            <div id="success-state" class="d-none">
+                <div class="icon-circle bg-success-subtle text-success">
+                    <i class="bi bi-check-lg"></i>
+                </div>
+                <h3 class="fw-bold mb-2">歡迎加入！</h3>
+                <p class="text-muted mb-4">您已成功加入團隊。現在您可以開始協作管理了。</p>
+                <a href="/" class="btn btn-primary w-100 py-2 rounded-pill">前往管理後台</a>
+            </div>
+
+            <!-- Error State -->
+            <div id="error-state" class="d-none">
+                <div class="icon-circle bg-danger-subtle text-danger">
+                    <i class="bi bi-x-lg"></i>
+                </div>
+                <h3 class="fw-bold mb-2">邀請無效</h3>
+                <p class="text-muted mb-4" id="error-message">連結可能已過期或已被使用。</p>
+                <button onclick="window.close()" class="btn btn-outline-secondary w-100 py-2 rounded-pill">關閉視窗</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <script type="module" src="../js/invite_handler.js"></script>
+</body>
+
+</html>

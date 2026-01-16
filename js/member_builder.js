@@ -1,368 +1,679 @@
-// js/member_builder.js
-import { apiBase, getUserId, setUserId } from "../helper/state.js";
-import { setInnerHTML } from "../helper/security.js";
+// js/member_builder.js - 完整會員管理系統
+import { getUserId, setUserId } from "../helper/state.js";
+import { setInnerHTML } from '../helper/security.js';
+import api from '../helper/api.client.js';
+import { toast } from '../helper/toast.js';
+import { LoadingManager } from './shared/loader.js';
+import { confirmDanger } from '../helper/modal.helper.js';
+
 let members = [];
 let tags = [];
-// let userId = null; // Module-level userId removed
+let currentEditingMember = null;
 
-
-// 初始化頁面
+/**
+ * 頁面初始化
+ */
 export async function pageInit(pageData) {
   setUserId(pageData.userId);
-  const userId = getUserId();
-  console.log(`[member_builder.js] page loaded, userId: ${userId}`);
 
-  await Promise.all([
-    loadMembers(),
-    loadTags()
-  ]);
-  setupEventListeners();
+  LoadingManager.show('member-init', '載入會員資料...');
+
+  try {
+    await Promise.all([
+      loadMembers(),
+      loadTags()
+    ]);
+
+    renderMemberTable();
+    setupEventListeners();
+
+    LoadingManager.hide('member-init');
+  } catch (error) {
+    console.error("❌ 初始化失敗:", error);
+    toast.error('載入失敗');
+    LoadingManager.hide('member-init');
+  }
 }
 
-// 載入會員資料
+/**
+ * 載入所有會員
+ */
 async function loadMembers() {
   try {
-    const res = await fetch(`${apiBase}/member/list-full`, {
-      headers: {
-        "Content-Type": "application/json",
-        "X-User-Id": getUserId()
-      }
-    });
-    const data = await res.json();
-    console.log(data);
-    if (data.success && Array.isArray(data.data)) {
-      members = data.data;
-    } else {
-      members = [];
+    const result = await api.get('/member/list-full');
+
+    if (result.success) {
+      members = result.data || [];
+      console.log(`✅ 載入 ${members.length} 位會員`);
     }
-    renderMemberTable();
-  } catch (err) {
-    console.error("❌ 載入會員失敗", err);
-    members = [];
+  } catch (error) {
+    console.error("❌ 載入會員失敗:", error);
+    toast.error('載入會員失敗');
   }
 }
 
-// 載入所有標籤
+/**
+ * 載入所有標籤
+ */
 async function loadTags() {
   try {
-    const res = await fetch(`${apiBase}/tag/list`, {
-      headers: {
-        "Content-Type": "application/json",
-        "X-User-Id": getUserId()
-      }
-    });
-    const data = await res.json();
-    tags = data.success ? data.data : [];
-    renderTagCheckboxes();
-  } catch (err) {
-    console.error("❌ 載入 tag 失敗", err);
-    tags = [];
+    const result = await api.get('/tag/list');
+
+    if (result.success) {
+      // 後端現在回傳 [{name, total, stats}, ...]
+      tags = result.data || [];
+      console.log(`✅ 載入 ${tags.length} 個標籤`);
+    }
+  } catch (error) {
+    console.error("❌ 載入標籤失敗:", error);
   }
 }
 
-// 渲染會員表格
+/**
+ * 渲染會員表格
+ */
 function renderMemberTable() {
-  const tbody = document.getElementById("member-table-body");
-  setInnerHTML(tbody, "");
-  for (const m of members) {
-    const tr = document.createElement("tr");
-    setInnerHTML(tr, `
-      <td>${m.name || ""}</td>
-      <td>${m.lineName || ""}</td>
-      <td>${m.phone || ""}</td>
-      <td>${m.region || ""}</td>
-      <td>${m.company || ""}</td>
-      <td>${m.jobTitle || ""}</td>
+  const tbody = document.getElementById('member-table-body');
+  if (!tbody) return;
+
+  if (members.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="7" class="text-center text-muted py-4">
+          尚無會員資料
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = members.map(m => `
+    <tr>
       <td>
-        <a href="#" class="edit-tags-link btn ${m.tags?.length ? 'btn-success' : 'btn-outline-secondary'} btn-sm rounded-pill" data-member-id="${m.memberId}">
-          ${m.tags?.length ? '⋯' : ''}
-        </a>
+        <input type="checkbox" class="member-checkbox" value="${m.memberId}">
       </td>
-      <td>${m.role || ""}</td>
-      <td>${m.temperature || ""}</td>
-      <td>${m.gender || ""}</td>
-      <td>${m.source || ""}</td>
-      <td>${m.createdAt ? new Date(m.createdAt).toLocaleString() : ""}</td>
-      <td><button class="btn btn-sm btn-outline-primary" onclick='editMember(${JSON.stringify(m)})'>編輯</button></td>
-    `);
-    tbody.appendChild(tr);
-  }
+      <td>
+        <div class="d-flex align-items-center">
+          ${m.pictureUrl ? `<img src="${m.pictureUrl}" class="rounded-circle me-2" width="32" height="32">` : ''}
+          <div>
+            <div class="fw-bold">${m.name || m.lineName || '未設定'}</div>
+            ${m.email ? `<small class="text-muted">${m.email}</small>` : ''}
+          </div>
+        </div>
+      </td>
+      <td>
+        <span class="badge" style="background-color: ${getTierColor(m.tier)}">
+          ${getTierIcon(m.tier)} ${getTierName(m.tier)}
+        </span>
+      </td>
+      <td>${m.phone || '-'}</td>
+      <td>
+        ${(m.tags || []).map(tag => `<span class="badge bg-secondary me-1">${tag}</span>`).join('') || '-'}
+      </td>
+      <td>
+        <span class="badge bg-${getTempColor(m.temperature)}">
+          ${getTempIcon(m.temperature)} ${m.temperature || 'warm'}
+        </span>
+      </td>
+      <td>
+        <span class="badge bg-${m.status === 'active' ? 'success' : 'secondary'}">
+          ${m.status || 'active'}
+        </span>
+      </td>
+      <td>
+        <button class="btn btn-sm btn-outline-primary" onclick="window.editMember('${m.memberId}')">
+          編輯
+        </button>
+        <button class="btn btn-sm btn-outline-danger" onclick="window.deleteMember('${m.memberId}')">
+          刪除
+        </button>
+      </td>
+    </tr>
+  `).join('');
 }
 
-// 渲染標籤多選
-function renderTagCheckboxes() {
-  const container = document.getElementById("tag-checkboxes");
-  setInnerHTML(container, "");
-  for (const tag of tags) {
-    const label = document.createElement("label");
-    label.className = "form-check form-check-inline";
-    setInnerHTML(label, `
-      <input class="form-check-input tag-checkbox" type="checkbox" value="${tag}">
-      <span class="form-check-label">${tag}</span>
-    `);
-    container.appendChild(label);
-  }
-}
-
-// 設定監聽器
+/**
+ * 設定事件監聽器
+ */
 function setupEventListeners() {
-  document.getElementById("search-button").addEventListener("click", () => {
-    const keyword = document.getElementById("search-input").value.trim().toLowerCase();
-    const filtered = members.filter(m =>
-      (m.name || "").toLowerCase().includes(keyword) ||
-      (m.phone || "").toLowerCase().includes(keyword) ||
-      (m.lineName || "").toLowerCase().includes(keyword) ||
-      (m.region || "").toLowerCase().includes(keyword) ||
-      (m.company || "").toLowerCase().includes(keyword) ||
-      (m.jobTitle || "").toLowerCase().includes(keyword) ||
-      (m.email || "").toLowerCase().includes(keyword) ||
-      (m.tags || []).some(tag => tag.toLowerCase().includes(keyword)) ||
-      (m.role || "").toLowerCase().includes(keyword) ||
-      (m.source || "").toLowerCase().includes(keyword)
-    );
-    renderFilteredTable(filtered);
-  });
+  // 新增會員
+  const addBtn = document.getElementById('add-member-btn');
+  if (addBtn) {
+    addBtn.addEventListener('click', openAddMemberModal);
+  }
 
-  document.getElementById("save-member").addEventListener("click", saveMember);
+  // 批次刪除
+  const batchDeleteBtn = document.getElementById('batch-delete-btn');
+  if (batchDeleteBtn) {
+    batchDeleteBtn.addEventListener('click', batchDeleteMembers);
+  }
 
-  document.addEventListener("click", (e) => {
-    if (e.target.classList.contains("edit-tags-link")) {
-      e.preventDefault();
-      const memberId = e.target.dataset.memberId;
-      openTagModal(memberId);
-    }
+  // 標籤管理
+  const manageTagsBtn = document.getElementById('manage-tags-btn');
+  if (manageTagsBtn) {
+    manageTagsBtn.addEventListener('click', openTagManagementModal);
+  }
+
+  // 新增標籤按鈕監聽 (取代 onclick)
+  const addTagBtn = document.getElementById('add-tag-confirm-btn');
+  if (addTagBtn) {
+    addTagBtn.addEventListener('click', window.addTag);
+  }
+
+  // 搜尋
+  const searchInput = document.getElementById('search-input');
+  if (searchInput) {
+    searchInput.addEventListener('input', filterMembers);
+  }
+
+  // Tag 篩選
+  const tagFilter = document.getElementById('tag-filter');
+  if (tagFilter) {
+    renderTagFilterSelector();
+    tagFilter.addEventListener('change', filterMembers);
+  }
+
+  // 溫度篩選
+  const tempFilter = document.getElementById('temp-filter');
+  if (tempFilter) {
+    tempFilter.addEventListener('change', filterMembers);
+  }
+
+  // 狀態篩選
+  const statusFilter = document.getElementById('status-filter');
+  if (statusFilter) {
+    statusFilter.addEventListener('change', filterMembers);
+  }
+
+  // 等級篩選
+  const tierFilter = document.getElementById('tier-filter');
+  if (tierFilter) {
+    tierFilter.addEventListener('change', filterMembers);
+  }
+
+  // 儲存會員按鈕
+  document.getElementById('save-member-btn')?.addEventListener('click', () => {
+    console.log('按钮被點擊');
+    window.saveMember();
   });
 }
 
-function renderFilteredTable(filteredList) {
-  const tbody = document.getElementById("member-table-body");
-  setInnerHTML(tbody, "");
-  for (const m of filteredList) {
-    const tr = document.createElement("tr");
-    setInnerHTML(tr, `
-      <td>${m.name || ""}</td>
-      <td>${m.lineName || ""}</td>
-      <td>${m.phone || ""}</td>
-      <td>${m.region || ""}</td>
-      <td>${m.company || ""}</td>
-      <td>${m.jobTitle || ""}</td>
-      <td><a href="#" class="edit-tags-link" data-member-id="${m.memberId}">${(m.tags || []).join(", ")}</a></td>
-      <td>${m.role || ""}</td>
-      <td>${m.temperature || ""}</td>
-      <td>${m.gender || ""}</td>
-      <td>${m.source || ""}</td>
-      <td>${m.createdAt ? new Date(m.createdAt).toLocaleString() : ""}</td>
-      <td><button class="btn btn-sm btn-outline-primary" onclick='editMember(${JSON.stringify(m)})'>編輯</button></td>
-    `);
-    tbody.appendChild(tr);
-  }
-}
+/**
+ * 開啟新增會員 Modal
+ */
+function openAddMemberModal() {
+  currentEditingMember = null;
 
-// 編輯會員
-window.editMember = function (m) {
-  const f = document.getElementById("member-form");
-  for (const el of f.elements) {
-    if (el.id && m[el.id] !== undefined) {
-      el.value = m[el.id];
-    }
-  }
+  // 清空表單
+  document.getElementById('edit-member-id').value = '';
+  document.getElementById('edit-name').value = '';
+  document.getElementById('edit-email').value = '';
+  document.getElementById('edit-line-name').value = '';
+  document.getElementById('edit-phone').value = '';
+  document.getElementById('edit-gender').value = '';
+  document.getElementById('edit-birthday').value = '';
+  document.getElementById('edit-note').value = '';
+  document.getElementById('edit-temperature').value = 'warm';
+  document.getElementById('edit-status').value = 'active';
+  document.getElementById('edit-tier').value = '0';
 
-  // 處理多選 tag
-  const checkboxes = document.querySelectorAll(".tag-checkbox");
-  for (const cb of checkboxes) {
-    cb.checked = (m.tags || []).includes(cb.value);
-  }
+  // 渲染 Tag 選擇器
+  renderTagCheckboxes([]);
 
-  const modal = new bootstrap.Modal(document.getElementById("member-modal"));
+  // 開啟 Modal
+  const modal = new bootstrap.Modal(document.getElementById('editMemberModal'));
   modal.show();
 }
 
-// 儲存會員
-async function saveMember() {
-  const f = document.getElementById("member-form");
-  // 若未指定 memberId，產生一個隨機 ID（新增時用）
-  if (!f["memberId"].value) {
-    f["memberId"].value = "mem_" + Date.now();
-  }
-  const member = {};
-  for (const el of f.elements) {
-    if (el.id && !["createdAt", "userId"].includes(el.id)) {
-      member[el.id] = el.value;
-    }
-  }
-
-  // tag 處理
-  member.tags = Array.from(document.querySelectorAll(".tag-checkbox:checked"))
-    .map(cb => cb.value);
-
-  member.createdAt = f["createdAt"].value || new Date().toISOString();
-
-  try {
-    const res = await fetch(`${apiBase}/member/save`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-User-Id": userId
-      },
-      body: JSON.stringify(member)
-    });
-    const data = await res.json();
-    if (data.success) {
-      bootstrap.Modal.getInstance(document.getElementById("member-modal")).hide();
-      await loadMembers();
-    } else {
-      alert("❌ 儲存失敗: " + data.error);
-    }
-  } catch (err) {
-    console.error("❌ 儲存錯誤", err);
-  }
-}
-
-// 頁面啟動
-
-function openTagModal(memberId) {
+/**
+ * 編輯會員
+ */
+window.editMember = function (memberId) {
   const member = members.find(m => m.memberId === memberId);
-  if (!member) {
-    alert("找不到會員資料");
+  if (!member) return;
+
+  currentEditingMember = member;
+
+  // 填充表單
+  document.getElementById('edit-member-id').value = member.memberId;
+  document.getElementById('edit-name').value = member.name || '';
+  document.getElementById('edit-email').value = member.email || '';
+  document.getElementById('edit-line-name').value = member.lineName || '';
+  document.getElementById('edit-phone').value = member.phone || '';
+  document.getElementById('edit-gender').value = member.gender || '';
+  document.getElementById('edit-birthday').value = member.birthday || '';
+  document.getElementById('edit-note').value = member.note || '';
+  document.getElementById('edit-temperature').value = member.temperature || 'warm';
+  document.getElementById('edit-status').value = member.status || 'active';
+  document.getElementById('edit-tier').value = member.tier !== undefined ? member.tier : '0';
+
+  // 渲染 Tag 選擇器
+  renderTagCheckboxes(member.tags || []);
+
+  // 開啟 Modal
+  const modal = new bootstrap.Modal(document.getElementById('editMemberModal'));
+  modal.show();
+};
+
+/**
+ * 儲存會員
+ */
+window.saveMember = async function () {
+  const memberId = document.getElementById('edit-member-id').value.trim();
+
+  if (!memberId) {
+    toast.error('請輸入 Member ID');
     return;
   }
 
-  // 建立 checkbox 清單
-  const container = document.getElementById("tag-edit-modal-body");
-  setInnerHTML(container, "");
-  for (const tag of tags) {
-    const label = document.createElement("label");
-    label.className = "form-check form-check-inline";
-    setInnerHTML(label, `
-      <input class="form-check-input tag-edit-checkbox" type="checkbox" value="${tag}" ${member.tags?.includes(tag) ? "checked" : ""}>
-      <span class="form-check-label">${tag}</span>
-    `);
-    container.appendChild(label);
-  }
+  // 收集選中的 tags
+  const selectedTags = Array.from(
+    document.querySelectorAll('.tag-checkbox:checked')
+  ).map(cb => cb.value);
 
-  // 綁定儲存按鈕
-  const saveBtn = document.getElementById("save-member-tags");
-  if (!saveBtn) {
-    console.error("❌ 找不到 #save-member-tags 按鈕");
-    return;
-  }
-  saveBtn.onclick = async () => {
-    const selectedTags = Array.from(document.querySelectorAll(".tag-toggle-btn"))
-      .filter(btn => btn.classList.contains("btn-success"))
-      .map(btn => btn.dataset.tag);
-    const extraInput = document.getElementById("extra-tag-input");
-    if (extraInput) {
-      const extraTags = extraInput.value.split(",").map(t => t.trim()).filter(t => t);
-      selectedTags.push(...extraTags);
-    }
-
-    const payload = {
-      ...member,
-      tags: selectedTags
-    };
-
-    try {
-      const res = await fetch(`${apiBase}/member/save`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-User-Id": userId
-        },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (data.success) {
-        const newTags = selectedTags.filter(tag => !tags.includes(tag));
-        for (const tag of newTags) {
-          await fetch(`${apiBase}/tag/save`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-User-Id": userId
-            },
-            body: JSON.stringify({ name: tag })
-          });
-        }
-        tags = Array.from(new Set([...tags, ...selectedTags]));
-        bootstrap.Modal.getInstance(document.getElementById("tag-edit-modal")).hide();
-        await loadMembers();
-      } else {
-        alert("❌ 儲存失敗: " + data.error);
-      }
-    } catch (err) {
-      console.error("❌ 儲存錯誤", err);
-    }
+  const memberData = {
+    memberId,
+    name: document.getElementById('edit-name').value.trim(),
+    email: document.getElementById('edit-email').value.trim(),
+    lineName: document.getElementById('edit-line-name').value.trim(),
+    phone: document.getElementById('edit-phone').value.trim(),
+    gender: document.getElementById('edit-gender').value,
+    birthday: document.getElementById('edit-birthday').value,
+    note: document.getElementById('edit-note').value.trim(),
+    temperature: document.getElementById('edit-temperature').value,
+    status: document.getElementById('edit-status').value, // 🆕 新增狀態欄位
+    tier: parseInt(document.getElementById('edit-tier').value),
+    tags: selectedTags
   };
 
-  const modal = new bootstrap.Modal(document.getElementById("tag-edit-modal"));
-  modal.show();
+  console.log('📤 準備儲存會員資料:', memberData);
 
-  // 補上渲染可編輯 checkbox 的方法
-  function renderTagEditCheckboxes(member) {
-    const container = document.getElementById("tag-edit-modal-body");
-    setInnerHTML(container, "");
+  try {
+    LoadingManager.show('save-member', '儲存中...');
 
-    const btnGroup = document.createElement("div");
-    btnGroup.className = "d-flex flex-wrap gap-2";
+    const result = await api.post('/member/save', memberData);
 
-    for (const tag of tags) {
-      const isChecked = member.tags?.includes(tag);
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = `btn ${isChecked ? "btn-success" : "btn-outline-secondary"} rounded-pill tag-toggle-btn`;
-      btn.dataset.tag = tag;
-      btn.innerText = tag;
+    if (result.success) {
+      toast.success('儲存成功');
+      await loadMembers();
+      renderMemberTable();
 
-      btn.onclick = () => {
-        btn.classList.toggle("btn-success");
-        btn.classList.toggle("btn-outline-secondary");
-        btn.classList.toggle("active");
-      };
-
-      btnGroup.appendChild(btn);
+      // 關閉 Modal
+      bootstrap.Modal.getInstance(document.getElementById('editMemberModal')).hide();
+    } else {
+      toast.error('儲存失敗：' + (result.error || '未知錯誤'));
     }
+  } catch (error) {
+    console.error('儲存失敗:', error);
+    toast.error('儲存失敗');
+  } finally {
+    LoadingManager.hide('save-member');
+  }
+};
 
-    container.appendChild(btnGroup);
+/**
+ * 刪除會員
+ */
+window.deleteMember = async function (memberId) {
+  const member = members.find(m => m.memberId === memberId);
+  if (!member) return;
 
-    const addButtonRow = document.createElement("div");
-    addButtonRow.className = "d-flex mt-2 justify-content-end";
-    setInnerHTML(addButtonRow, `
-      <input type="text" id="new-tag-name" class="form-control me-2" placeholder="新增標籤">
-      <button class="btn btn-outline-primary" id="add-tag-button">➕ 加入 Tag</button>
-    `);
-    container.appendChild(addButtonRow);
+  const confirmed = await confirmDanger(
+    `確定要刪除會員「${member.name || member.lineName}」嗎？`,
+    '刪除會員'
+  );
 
-    const addTagBtn = addButtonRow.querySelector("#add-tag-button");
-    const newTagInput = addButtonRow.querySelector("#new-tag-name");
-    addTagBtn.onclick = async () => {
-      const newTag = newTagInput.value.trim();
-      if (!newTag || tags.includes(newTag)) return;
-      console.log(newTag);
-      try {
-        const res = await fetch(`${apiBase}/tag/save`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-User-Id": userId
-          },
-          body: JSON.stringify({ name: newTag })
-        });
+  if (!confirmed) return;
 
-        console.log(res);
-        const data = await res.json();
-        if (data.success) {
-          tags.push(newTag); // 更新全域 tags 清單
-          member.tags.push(newTag); // 加到會員身上
-          renderTagEditCheckboxes(member); // 重繪按鈕
-        } else {
-          alert("❌ 新增標籤失敗: " + data.error);
-        }
-      } catch (err) {
-        console.error("❌ 新增標籤錯誤", err);
-      }
-    };
+  try {
+    const result = await api.post('/member/delete', { memberId });
+
+    if (result.success) {
+      toast.success('刪除成功');
+      await loadMembers();
+      renderMemberTable();
+    } else {
+      toast.error('刪除失敗');
+    }
+  } catch (error) {
+    console.error('刪除失敗:', error);
+    toast.error('刪除失敗');
+  }
+};
+
+/**
+ * 批次刪除會員
+ */
+async function batchDeleteMembers() {
+  // 取得所有勾選的 checkbox
+  const checkedBoxes = document.querySelectorAll('.member-checkbox:checked');
+
+  if (checkedBoxes.length === 0) {
+    toast.error('請先選擇要刪除的會員');
+    return;
   }
 
-  // 初次渲染 checkbox
-  renderTagEditCheckboxes(member);
+  const memberIds = Array.from(checkedBoxes).map(cb => cb.value);
+  const memberNames = memberIds.map(id => {
+    const m = members.find(member => member.memberId === id);
+    return m ? (m.name || m.lineName) : id;
+  });
+
+  // 確認刪除（使用 Modal）
+  const message = `確定要刪除 ${memberIds.length} 位會員嗎？\n\n${memberNames.slice(0, 5).join('\n')}${memberIds.length > 5 ? '\n...' : ''}`;
+  const confirmed = await confirmDanger(message, '批次刪除會員');
+
+  if (!confirmed) return;
+
+  try {
+    LoadingManager.show('batch-delete', '批次刪除中...');
+
+    let successCount = 0;
+    let failCount = 0;
+
+    // 逐一刪除
+    for (const memberId of memberIds) {
+      try {
+        const result = await api.post('/member/delete', { memberId });
+        if (result.success) {
+          successCount++;
+        } else {
+          failCount++;
+        }
+      } catch (error) {
+        failCount++;
+      }
+    }
+
+    LoadingManager.hide('batch-delete');
+
+    if (successCount > 0) {
+      toast.success(`成功刪除 ${successCount} 位會員${failCount > 0 ? `，${failCount} 位失敗` : ''}`);
+      await loadMembers();
+      renderMemberTable();
+    } else {
+      toast.error('批次刪除失敗');
+    }
+  } catch (error) {
+    console.error('批次刪除失敗:', error);
+    toast.error('批次刪除失敗');
+    LoadingManager.hide('batch-delete');
+  }
+}
+
+/**
+ * 渲染 Tag 選擇器
+ */
+function renderTagCheckboxes(selectedTags = []) {
+  const container = document.getElementById('tag-checkboxes');
+  if (!container) return;
+
+  if (tags.length === 0) {
+    setInnerHTML(container, '<p class="text-muted">尚無標籤</p>');
+    return;
+  }
+
+  setInnerHTML(container, tags.map(tagObj => {
+    const tagName = tagObj.name || tagObj;
+    return `
+      <div class="form-check">
+        <input class="form-check-input tag-checkbox" type="checkbox" 
+          value="${tagName}" id="tag-${tagName}" 
+          ${selectedTags.includes(tagName) ? 'checked' : ''}>
+        <label class="form-check-label" for="tag-${tagName}">
+          ${tagName}
+        </label>
+      </div>
+    `;
+  }).join(''));
+}
+
+/**
+ * 渲染 Tag 篩選選擇器
+ */
+function renderTagFilterSelector() {
+  const select = document.getElementById('tag-filter');
+  if (!select) return;
+
+  setInnerHTML(select, `
+    <option value="">所有標籤</option>
+    ${tags.map(t => {
+    const name = t.name || t;
+    return `<option value="${name}">${name}</option>`;
+  }).join('')}
+  `);
+}
+
+/**
+ * 開啟標籤管理 Modal
+ */
+function openTagManagementModal() {
+  renderTagManagementList();
+  const modal = new bootstrap.Modal(document.getElementById('tagManagementModal'));
+  modal.show();
+}
+
+/**
+ * 渲染標籤管理列表
+ */
+function renderTagManagementList() {
+  const container = document.getElementById('tag-list-container');
+  if (!container) return;
+
+  if (tags.length === 0) {
+    container.innerHTML = '<p class="text-center text-muted py-3">目前尚無標籤</p>';
+    return;
+  }
+
+  container.innerHTML = tags.map(tagObj => {
+    const name = tagObj.name || tagObj;
+    const count = tagObj.total || 0;
+    return `
+      <div class="list-group-item d-flex justify-content-between align-items-center">
+        <div>
+          <span class="fw-bold">${name}</span>
+          <span class="badge bg-light text-dark ms-2">${count} bits</span>
+        </div>
+        <button class="btn btn-sm btn-outline-danger" onclick="window.removeTag('${name}')">
+          🗑️
+        </button>
+      </div>
+    `;
+  }).join('');
+}
+
+/**
+ * 新增標籤
+ */
+window.addTag = async function () {
+  console.log('🚀 addTag called');
+  const input = document.getElementById('new-tag-input');
+  const name = input.value.trim();
+  console.log('🏷️ Tag name to add:', name);
+
+  if (!name) {
+    toast.error('請輸入標籤名稱');
+    return;
+  }
+
+  // 修正：tags 現在是物件陣列 [{name, ...}, ...]
+  const exists = tags.some(t => (t.name || t) === name);
+  if (exists) {
+    toast.error('標籤已存在');
+    return;
+  }
+
+  try {
+    const result = await api.post('/tag/save', { name });
+    if (result.success) {
+      toast.success('標籤新增成功');
+      input.value = '';
+      await loadTags();
+      renderTagManagementList();
+      renderTagFilterSelector();
+      // 如果正在編輯會員，也要更新 checkbox
+      if (currentEditingMember) {
+        renderTagCheckboxes(currentEditingMember.tags || []);
+      }
+    } else {
+      toast.error('新增失敗：' + (result.error || '未知錯誤'));
+    }
+  } catch (error) {
+    console.error('新增標籤失敗:', error);
+    toast.error('新增標籤失敗');
+  }
+};
+
+/**
+ * 刪除標籤 (單筆)
+ */
+window.removeTag = async function (tagName) {
+  const confirmed = await confirmDanger(`確定要刪除標籤「${tagName}」嗎？\n這不會移除會員已有的標籤資料，但標籤清單將不再顯示此選項。`, '刪除標籤');
+  if (!confirmed) return;
+
+  try {
+    const result = await api.post('/tag/delete', { name: tagName });
+    if (result.success) {
+      toast.success('標籤已刪除');
+      await loadTags();
+      renderTagManagementList();
+      renderTagFilterSelector();
+      // 如果正在編輯會員，也要更新 checkbox
+      if (currentEditingMember) {
+        renderTagCheckboxes(currentEditingMember.tags || []);
+      }
+    } else {
+      toast.error('刪除失敗');
+    }
+  } catch (error) {
+    console.error('刪除標籤失敗:', error);
+    toast.error('刪除標籤失敗');
+  }
+};
+
+/**
+ * 篩選會員
+ */
+function filterMembers() {
+  const searchText = document.getElementById('search-input')?.value.toLowerCase() || '';
+  const selectedTag = document.getElementById('tag-filter')?.value || '';
+  const selectedTemp = document.getElementById('temp-filter')?.value || '';
+  const selectedStatus = document.getElementById('status-filter')?.value || '';
+  const selectedTier = document.getElementById('tier-filter')?.value || '';
+
+  const filtered = members.filter(member => {
+    // 文字搜尋
+    const matchText = !searchText ||
+      member.name?.toLowerCase().includes(searchText) ||
+      member.email?.toLowerCase().includes(searchText) ||
+      member.lineName?.toLowerCase().includes(searchText) ||
+      member.phone?.includes(searchText);
+
+    // Tag 篩選
+    const matchTag = !selectedTag ||
+      (member.tags || []).includes(selectedTag);
+
+    // 溫度篩選
+    const matchTemp = !selectedTemp ||
+      member.temperature === selectedTemp;
+
+    // 狀態篩選
+    const matchStatus = !selectedStatus ||
+      member.status === selectedStatus;
+
+    // 等級篩選
+    const matchTier = !selectedTier ||
+      String(member.tier || 0) === selectedTier;
+
+    return matchText && matchTag && matchTemp && matchStatus && matchTier;
+  });
+
+  // 暫時更新顯示
+  const tbody = document.getElementById('member-table-body');
+  if (!tbody) return;
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="7" class="text-center text-muted py-4">
+          沒有符合條件的會員
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(m => `
+    <tr>
+      <td><input type="checkbox" class="member-checkbox" value="${m.memberId}"></td>
+      <td>
+        <div class="d-flex align-items-center">
+          ${m.pictureUrl ? `<img src="${m.pictureUrl}" class="rounded-circle me-2" width="32" height="32">` : ''}
+          <div>
+            <div class="fw-bold">${m.name || m.lineName || '未設定'}</div>
+            ${m.email ? `<small class="text-muted">${m.email}</small>` : ''}
+          </div>
+        </div>
+      </td>
+      <td>
+        <span class="badge" style="background-color: ${getTierColor(m.tier)}">
+          ${getTierIcon(m.tier)} ${getTierName(m.tier)}
+        </span>
+      </td>
+      <td>${m.phone || '-'}</td>
+      <td>
+        ${(m.tags || []).map(tag => `<span class="badge bg-secondary me-1">${tag}</span>`).join('') || '-'}
+      </td>
+      <td>
+        <span class="badge bg-${getTempColor(m.temperature)}">
+          ${getTempIcon(m.temperature)} ${m.temperature || 'warm'}
+        </span>
+      </td>
+      <td>
+        <span class="badge bg-${m.status === 'active' ? 'success' : 'secondary'}">
+          ${m.status}
+        </span>
+      </td>
+      <td>
+        <button class="btn btn-sm btn-outline-primary" onclick="window.editMember('${m.memberId}')">
+          編輯
+        </button>
+        <button class="btn btn-sm btn-outline-danger" onclick="window.deleteMember('${m.memberId}')">
+          刪除
+        </button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+/**
+ * 輔助函數
+ */
+function getTempColor(temp) {
+  if (temp === 'hot') return 'danger';
+  if (temp === 'warm') return 'warning';
+  if (temp === 'cold') return 'info';
+  return 'secondary';
+}
+
+function getTempIcon(temp) {
+  if (temp === 'hot') return '🔥';
+  if (temp === 'warm') return '🌤️';
+  if (temp === 'cold') return '❄️';
+  return '';
+}
+
+function getTierName(tier) {
+  const tiers = ["新手", "一般", "VIP", "SVIP"];
+  return tiers[tier] || tiers[0];
+}
+
+function getTierIcon(tier) {
+  const icons = ["🌱", "⭐", "💎", "👑"];
+  return icons[tier] || icons[0];
+}
+
+function getTierColor(tier) {
+  const colors = ["#4caf50", "#2196f3", "#ff9800", "#f44336"];
+  return colors[tier] || colors[0];
 }

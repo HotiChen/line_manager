@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>會員管理 Member</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- <link rel="stylesheet" href="../css/member.css"> -->
+</head>
+<body>
+  <div class="container mt-5">
+    <h2 class="mb-4">會員管理系統</h2>
+
+    <!-- 搜尋與功能列 -->
+    <div class="d-flex justify-content-between mb-3">
+      <div class="input-group w-50">
+        <input type="text" id="search-input" class="form-control" placeholder="搜尋名稱、電話、LINE 名稱...">
+        <button class="btn btn-outline-secondary" id="search-button">搜尋</button>
+      </div>
+      <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#member-modal">➕ 新增會員</button>
+    </div>
+
+    <!-- 會員清單表格 -->
+    <table class="table table-hover table-bordered">
+      <thead class="table-light">
+        <tr>
+          <th>姓名</th>
+          <th>LINE 名稱</th>
+          <th>電話</th>
+          <th>區域</th>
+          <th>公司</th>
+          <th>職稱</th>
+          <th>標籤</th>
+          <th>等級</th>
+          <th>溫度</th>
+          <th>性別</th>
+          <th>來源</th>
+          <th>加入時間</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="member-table-body">
+        <!-- JS 載入會員資料（請記得同步增加性別 / 來源 / 加入時間） -->
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 會員新增/編輯 Modal -->
+  <div class="modal fade" id="member-modal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">會員資料</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <form id="member-form">
+            <div class="row g-3">
+
+              <h6 class="mt-4">個人資訊</h6>
+              <div class="col-md-6">
+                <label class="form-label">姓名</label>
+                <input type="text" class="form-control" id="name">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">電話</label>
+                <input type="text" class="form-control" id="phone">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">生日</label>
+                <input type="date" class="form-control" id="birthday">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">性別</label>
+                <select class="form-select" id="gender">
+                  <option value="">請選擇</option>
+                  <option value="male">男</option>
+                  <option value="female">女</option>
+                  <option value="other">其他</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">區域</label>
+                <select class="form-select" id="region">
+                  <option value="">請選擇</option>
+                  <option value="北部">北部</option>
+                  <option value="中部">中部</option>
+                  <option value="南部">南部</option>
+                  <option value="東部">東部</option>
+                  <option value="海外">海外</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">城市（可選）</label>
+                <input type="text" class="form-control" id="city">
+              </div>
+
+              <h6 class="mt-4">社群資訊</h6>
+              <div class="col-md-6">
+                <label class="form-label">是否已連動 LINE</label>
+                <select class="form-select" id="linkedLine">
+                  <option value="true">已連動</option>
+                  <option value="false">未連動</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">LINE User ID</label>
+                <input type="text" class="form-control" id="lineUserId">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">LINE 名稱</label>
+                <input type="text" class="form-control" id="lineName">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">LINE ID</label>
+                <input type="text" class="form-control" id="social-lineid">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Facebook</label>
+                <input type="text" class="form-control" id="social-fb">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Instagram</label>
+                <input type="text" class="form-control" id="social-ig">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Threads</label>
+                <input type="text" class="form-control" id="social-threads">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">個人網站</label>
+                <input type="text" class="form-control" id="social-website">
+              </div>
+
+              <h6 class="mt-4">公司與職業資訊</h6>
+              <div class="col-md-6">
+                <label class="form-label">公司名稱</label>
+                <input type="text" class="form-control" id="company">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">職稱</label>
+                <input type="text" class="form-control" id="jobTitle">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">職務類型</label>
+                <select class="form-select" id="jobCategory">
+                  <option value="">請選擇</option>
+                  <option value="行政">行政</option>
+                  <option value="技術">技術</option>
+                  <option value="行銷">行銷</option>
+                  <option value="創意">創意</option>
+                  <option value="其他">其他</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">會員等級</label>
+                <select class="form-select" id="role">
+                  <option value="user">一般用戶</option>
+                  <option value="admin">管理員</option>
+                </select>
+              </div>
+
+              <h6 class="mt-4">其他資訊</h6>
+              <div class="col-md-6">
+                <label class="form-label">客戶溫度</label>
+                <select class="form-select" id="temperature">
+                  <option value="cold">冷</option>
+                  <option value="warm">溫</option>
+                  <option value="hot">高溫</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">會員來源</label>
+                <select class="form-select" id="source">
+                  <option value="">請選擇</option>
+                  <option value="line">LINE 加入</option>
+                  <option value="form">表單填寫</option>
+                  <option value="manual">手動輸入</option>
+                </select>
+              </div>
+              <div class="col-md-12">
+                <label class="form-label">標籤（可多選）</label>
+                <div id="tag-checkboxes" class="d-flex flex-wrap gap-2">
+                  <!-- JS 動態載入 tag checkbox -->
+                </div>
+              </div>
+              <div class="col-md-12">
+                <label class="form-label">備註</label>
+                <textarea class="form-control" id="notes" rows="2"></textarea>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">推薦人（Referrer）</label>
+                <input type="text" class="form-control" id="referral">
+              </div>
+
+            </div>
+            <input type="hidden" id="userId">
+            <input type="hidden" id="createdAt">
+            <input type="hidden" id="memberId">
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-success" id="save-member">儲存</button>
+          <button class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tag 編輯 Modal -->
+  <div class="modal fade" id="tag-edit-modal" tabindex="-1">
+    <div class="modal-dialog modal-md">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">編輯標籤</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body" id="tag-edit-modal-body">
+          <div class="mb-3">
+            <label class="form-label">已勾選標籤</label>
+            <div id="edit-tag-checkboxes" class="d-flex flex-wrap gap-2">
+              <!-- JS 載入所有 tag 並勾選屬於該會員的 -->
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">自訂標籤（用逗號分隔）</label>
+            <div class="text-end mt-2">
+              <button class="btn btn-outline-primary btn-sm" id="add-new-tag">➕ 加入 Tag</button>
+            </div>
+          </div>
+          <div id="new-tag-feedback" class="form-text text-success d-none">✅ 已新增標籤</div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-success" id="save-member-tags">儲存</button>
+          <button class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="js/member_builder.js"></script>
+</body>
+</html>

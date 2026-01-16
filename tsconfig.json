@@ -20,6 +20,6 @@
         "skipLibCheck": true
     },
     "include": [
-        "src/**/*"
+        "worker_src/**/*"
     ]
 }

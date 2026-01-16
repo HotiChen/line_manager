@@ -1,6 +1,7 @@
 // js/tag.js
 
 import { apiBase, getUserId, setUserId } from "../helper/state.js";
+import { api } from "../helper/api.client.js";
 import { setInnerHTML } from "../helper/security.js";
 
 // let userId = null; // Module-level userId removed
@@ -9,7 +10,7 @@ import { setInnerHTML } from "../helper/security.js";
  * 從 API 獲取指定使用者的標籤列表。
  * 這個函式被匯出以供其他模組重複使用。
  * @param {string} passedUserId The user's ID.
- * @returns {Promise<string[]>} 一個解析為標籤字串陣列的 Promise。
+ * @returns {Promise<Object[]>} 一個解析為標籤物件陣列的 Promise (每個物件包含 name, total, stats)。
  */
 export async function getTagList(passedUserId) {
   const idToUse = passedUserId || getUserId();
@@ -19,14 +20,7 @@ export async function getTagList(passedUserId) {
   }
 
   try {
-    const res = await fetch(`${apiBase}/tag/list`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        "X-User-Id": idToUse,
-      },
-    });
-    const data = await res.json();
+    const data = await api.get('/tag/list');
     if (data.success && Array.isArray(data.data)) {
       return data.data;
     }
@@ -53,15 +47,25 @@ function renderTags() {
   const tagList = document.getElementById("tag-list");
   if (!tagList) return; // 如果不在 tag.html 頁面，則不執行
 
-  setInnerHTML(tagList, "");
+  tagList.innerHTML = ""; // 清空舊內容
   tags.forEach((tag, index) => {
-    const row = document.createElement("tr");
-    setInnerHTML(row, `
-      <td><input type="checkbox" class="tag-checkbox" data-index="${index}" /></td>
-      <td>${tag}</td>
-      <td>0</td>
-    `);
-    tagList.appendChild(row);
+    const row = tagList.insertRow();
+
+    // Checkbox 欄位
+    const cellCheckbox = row.insertCell();
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "tag-checkbox";
+    checkbox.dataset.index = index;
+    cellCheckbox.appendChild(checkbox);
+
+    // 標籤名稱 欄位
+    const cellName = row.insertCell();
+    cellName.textContent = tag.name;
+
+    // 關聯數量 欄位
+    const cellCount = row.insertCell();
+    cellCount.textContent = tag.total || 0;
   });
 }
 
@@ -69,15 +73,10 @@ function renderTags() {
 async function addNewTag() {
   const tagInput = document.getElementById("tag-input");
   const name = tagInput.value.trim();
-  if (!name || tags.includes(name)) return;
+  if (!name || tags.some(t => t.name === name)) return;
 
   try {
-    const res = await fetch(`${apiBase}/tag/save`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-User-Id": getUserId() },
-      body: JSON.stringify({ name }),
-    });
-    const result = await res.json();
+    const result = await api.post('/tag/save', { name });
     if (result.success) {
       tagInput.value = "";
       await loadTags();
@@ -90,16 +89,11 @@ async function addNewTag() {
 // 刪除選定的標籤
 async function deleteSelectedTags() {
   const checkboxes = document.querySelectorAll(".tag-checkbox:checked");
-  const names = Array.from(checkboxes).map(cb => tags[parseInt(cb.dataset.index)]);
+  const names = Array.from(checkboxes).map(cb => tags[parseInt(cb.dataset.index)].name);
   if (!names.length) return;
 
   try {
-    const res = await fetch(`${apiBase}/tag/delete`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-User-Id": getUserId() },
-      body: JSON.stringify({ names }),
-    });
-    const result = await res.json();
+    const result = await api.post('/tag/delete', { names });
     if (result.success) {
       await loadTags();
     }
@@ -111,7 +105,6 @@ async function deleteSelectedTags() {
 // tag.html 頁面的主進入點
 export async function pageInit(pageData) {
   setUserId(pageData.userId);
-  console.log(`[tag.js] page loaded, userId: ${getUserId()}`);
 
   const addTagBtn = document.getElementById("add-tag-btn");
   const deleteSelectedBtn = document.getElementById("delete-selected-tags");

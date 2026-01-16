@@ -1,11 +1,54 @@
 {
   "name": "pinti-line",
   "compatibility_date": "2025-04-13",
-  "main": "src/index.js",
+  "main": "worker_src/index.js",
   "kv_namespaces": [
     {
       "id": "7cbba24c35ad464d875ef1fc5107604e",
       "binding": "KV_LINE_STORAGE"
     }
-  ]
+  ],
+  "vars": {
+    "LIFF_ID": "1653928585-8Kkz0jnz"
+  },
+  "env": {
+    "dev": {
+      "name": "pinti-line-dev",
+      "kv_namespaces": [
+        {
+          "id": "7cbba24c35ad464d875ef1fc5107604e",
+          "preview_id": "7cbba24c35ad464d875ef1fc5107604e",
+          "binding": "KV_LINE_STORAGE"
+        }
+      ],
+      "vars": {
+        "LIFF_ID": "1653928585-8Kkz0jnz",
+        "BASE_URL": "http://127.0.0.1:5500"
+      }
+      // Queue configuration (需付費方案)
+      // "queues": {
+      //   "producers": [...],
+      //   "consumers": [...]
+      // }
+    }
+  },
+  "site": {
+    "bucket": "./",
+    "include": [
+      "css/**/*",
+      "js/**/*",
+      "pages/**/*",
+      "index.html",
+      "helper/**/*",
+      "env/**/*"
+    ],
+    "exclude": [
+      "node_modules",
+      "worker_src",
+      "wrangler.jsonc",
+      "package.json",
+      "package-lock.json",
+      ".*"
+    ]
+  }
 }

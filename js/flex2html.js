@@ -102,7 +102,6 @@ export function box_recursive(parent_box, layout, json) {
       console.warn("❗ 忽略空 box", parent_box);
       return parent_box;
    }
-   console.log("🔁 box_recursive 被呼叫了", layout, json);
 
    let result = []
    let layout2;
@@ -133,7 +132,6 @@ export function box_recursive(parent_box, layout, json) {
       }
    });
 
-   console.log("🧱 渲染 box：", parent_box.outerHTML);
    return parent_box
 }
 

@@ -1,6 +1,65 @@
 /* css/loader.css */
 
-/* --- Loader Overlay --- */
+/* --- Loading Overlay (支援多重實例) --- */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(3px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  z-index: 9999;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.loading-overlay.active {
+  opacity: 1;
+  pointer-events: all;
+}
+
+/* 如果有多個 loading，確保後面的會覆蓋前面的 */
+.loading-overlay:last-of-type {
+  z-index: 10000;
+}
+
+/* --- Spinner Animation --- */
+.loading-spinner {
+  border: 4px solid rgba(255, 255, 255, 0.3);
+  border-top: 4px solid #fff;
+  border-radius: 50%;
+  width: 50px;
+  height: 50px;
+  animation: spin 1s linear infinite;
+}
+
+.loading-message {
+  margin-top: 20px;
+  font-size: 1.1em;
+  color: #fff;
+  font-weight: 500;
+  text-align: center;
+  max-width: 80%;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+/* 向後相容：保留舊的 #loader-overlay 選擇器 */
 #loader-overlay {
   position: fixed;
   top: 0;
@@ -21,10 +80,9 @@
   pointer-events: none;
 }
 
-/* --- Spinner Animation --- */
 .loader-spinner {
-  border: 5px solid #f3f3f3; /* Light grey */
-  border-top: 5px solid #4A90E2; /* Blue */
+  border: 5px solid #f3f3f3;
+  border-top: 5px solid #4A90E2;
   border-radius: 50%;
   width: 50px;
   height: 50px;
@@ -37,7 +95,76 @@
   color: #333;
 }
 
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+/* --- Toast Scaling Animations --- */
+/* 最新的 Toast - 原始大小，彈出動畫 */
+.toast-new {
+  transform: scale(1);
+  opacity: 1;
+  transition: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  animation: toast-slide-in 0.3s ease-out;
+}
+
+/* 舊的 Toast - 縮小 25% (變成 75%)，向上移動重疊 */
+.toast-old {
+  transform: scale(0.75);
+  opacity: 0.85;
+  margin-bottom: -70px;
+  /* ✅ 向上移動，重疊約 25% */
+  transition: all 0.3s ease;
+}
+
+/* Toast 滑入動畫 */
+@keyframes toast-slide-in {
+  from {
+    transform: translateX(100%) scale(0.8);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateX(0) scale(1);
+    opacity: 1;
+  }
+}
+
+/* Toast 容器確保有足夠空間 */
+#toast-container {
+  display: flex;
+  flex-direction: column;
+  gap: -20px;
+  /* ✅ 負值讓 Toast 重疊約 25% */
+  align-items: flex-end;
+}
+
+/* ✅ 舊的 Toast 往上移，製造重疊效果 */
+.toast-old {
+  transform: scale(0.75);
+  opacity: 0.85;
+  margin-bottom: -70px;
+  /* 向上移動 20px，重疊約 25% */
+  transition: all 0.3s ease;
+}
+
+/* ✅ Toast 堆疊展開狀態 */
+.toast-stack-expanded .toast-old {
+  margin-bottom: 0 !important;
+  /* 展開時移除重疊 */
+  transform: scale(1) !important;
+  /* 恢復原始大小 */
+  opacity: 1 !important;
+  /* 完全不透明 */
+}
+
+/* 為展開狀態的 Toast 添加間距 */
+.toast-stack-expanded {
+  gap: 10px !important;
+}
+
+/* 展開時的游標提示 */
+#toast-container {
+  cursor: pointer;
+  user-select: none;
+}
+
+#toast-container:active {
+  cursor: grabbing;
 }

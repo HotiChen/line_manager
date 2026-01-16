@@ -59,7 +59,6 @@ function compressImage(img, targetWidth, targetHeight, maxSize) {
         // Estimate byte size from base64 length
         const sizeInBytes = dataUrl.length * (3 / 4);
         if (sizeInBytes <= maxSize) {
-            console.log(`[compressImage] Compressed to JPEG with quality ${quality.toFixed(1)}. New size: ${Math.round(sizeInBytes / 1024)}KB`);
             return dataUrl;
         }
     }
@@ -103,7 +102,6 @@ export async function processImageFor(file, type) {
 
   // 3. Validate file size and attempt compression
   if (file.size > spec.maxSize) {
-    console.log(`[processImageFor] Image is too large (${(file.size / 1024).toFixed(0)}KB). Attempting compression...`);
     const compressedDataUrl = compressImage(img, width, height, spec.maxSize);
     if (compressedDataUrl) {
       return compressedDataUrl;

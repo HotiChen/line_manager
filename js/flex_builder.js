@@ -34,7 +34,7 @@ function renderSavedFlexList() {
     const titleContainer = document.createElement('div');
     const title = document.createElement('span');
     title.className = 'fw-bold';
-    title.textContent = `${index + 1}. ${item.title || item.name || '未命名'}`;
+    title.textContent = `${index + 1}. ${item.title || item.name || '未命名'} `;
     titleContainer.appendChild(title);
 
     if (item.isDeleted) {
@@ -57,25 +57,75 @@ function renderSavedFlexList() {
     row.appendChild(titleContainer);
     card.appendChild(row);
 
+    // 生成縮圖預覽
     if (item.contents) {
       const previewWrapper = document.createElement('div');
-      previewWrapper.style.cssText = "transform: scale(0.25); transform-origin: top left; height: 120px; pointer-events: none; margin-top: 5px; overflow: hidden;";
+      // 修改樣式：設定固定寬度和改善顯示
+      previewWrapper.style.cssText = "width: 1520px; transform: scale(0.25); transform-origin: top left; height: 120px; pointer-events: none; margin-top: 5px; overflow: hidden; background: rgba(248, 249, 250, 0.5); border: 1px solid #dee2e6; border-radius: 4px;";
 
       try {
         const previewContents = item.contents.type === 'carousel' ? item.contents.contents[0] : item.contents;
+
         if (previewContents) {
           const previewElement = createNameCardComponent(previewContents, false, false, null);
-          previewWrapper.appendChild(previewElement);
+
+          if (previewElement) {
+            previewWrapper.appendChild(previewElement);
+          } else {
+            console.warn(`[renderSavedFlexList] ⚠️ createNameCardComponent returned null for ${item.title}`);
+            setInnerHTML(previewWrapper, '<div class="text-warning small">預覽元素為空</div>');
+          }
+        } else {
+          console.warn(`[renderSavedFlexList] ⚠️ No preview contents for ${item.title}`);
+          setInnerHTML(previewWrapper, '<div class="text-warning small">無預覽內容</div>');
         }
       } catch (e) {
-        console.error(`Could not generate preview for item ${item.title}`, e);
+        console.error(`[renderSavedFlexList] ❌ Could not generate preview for ${item.title}:`, e);
         setInnerHTML(previewWrapper, '<div class="text-danger small">無法產生預覽</div>');
       }
       card.appendChild(previewWrapper);
+    } else {
+      console.warn(`[renderSavedFlexList] ⚠️ Item ${item.title} has no contents`);
     }
 
     container.appendChild(card);
   });
+}
+
+// 搜尋篩選 Flex 列表
+function filterFlexList(searchTerm) {
+  const cards = document.querySelectorAll("#saved-flex-list .card");
+  const term = searchTerm.toLowerCase().trim();
+  let visibleCount = 0;
+
+  if (!term) {
+    // 如果搜尋欄位為空，顯示所有
+    cards.forEach(card => {
+      card.style.display = "";
+      visibleCount++;
+    });
+  } else {
+    cards.forEach(card => {
+      const title = card.querySelector("span.fw-bold")?.textContent.toLowerCase() || "";
+
+      if (title.includes(term)) {
+        card.style.display = "";
+        visibleCount++;
+      } else {
+        card.style.display = "none";
+      }
+    });
+  }
+
+  // 更新搜尋結果計數
+  const resultCount = document.getElementById("flex-search-result-count");
+  if (resultCount) {
+    if (term) {
+      resultCount.textContent = `找到 ${visibleCount} 個符合的 Flex`;
+    } else {
+      resultCount.textContent = "";
+    }
+  }
 }
 
 // (NEW) Fetches the initial list from the backend and renders it.
@@ -86,22 +136,23 @@ async function loadAndRenderInitialList(userId) {
   }
 
   try {
-    showLoader('正在從後端讀取列表...');
+    LoadingManager.show('flex-fetch', '正在從後端讀取列表...');
     const messages = await fetchMessageListByType("flex", userId);
     allFlexMessages = messages.map(m => ({ ...m, isNew: false, isUpdated: false, isDeleted: false }));
-    console.log("✅ [Load] Initial list loaded from backend:", JSON.parse(JSON.stringify(allFlexMessages)));
     renderSavedFlexList();
   } catch (e) {
     console.error("❌ 載入 Flex 列表失敗:", e);
     const container = document.getElementById('saved-flex-list');
     if (container) setInnerHTML(container, "<div class='text-danger'>無法載入列表，請稍後再試。</div>");
   } finally {
-    hideLoader();
+    LoadingManager.hide('flex-fetch');
     updateButtonStates();
   }
 }
 
 import { getTagList } from './tag.js';
+import { showConfirm } from '../helper/modal.helper.js';
+import { toast, withButtonLoading } from "../helper/toast.js";
 import { setInnerHTML } from "../helper/security.js";
 import { createNameCardComponent } from "../js/flexcards.js";
 import { apiBase, debug, getUserId, setUserId } from "../helper/state.js";
@@ -118,29 +169,16 @@ import {
   refreshMessageType,
   searchMessages,
   uploadImage
-} from "../helper/message.helper.js?v=1763312843";
+} from "../helper/message.helper.js";
 import { systemTemplates } from "./shared/flex_templates.js";
 
 // 顯示通知
 function showNotification(message, type = "info") {
-  // 創建通知元素
-  const notification = document.createElement("div");
-  notification.className = `alert alert-${type === "error" ? "danger" : type === "success" ? "success" : "info"} alert-dismissible fade show position-fixed`;
-  notification.style.cssText = "top: 20px; right: 20px; z-index: 9999; min-width: 300px;";
-  setInnerHTML(notification, `
-    ${message}
-    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-  `);
-
-  // 添加到頁面
-  document.body.appendChild(notification);
-
-  // 自動移除
-  setTimeout(() => {
-    if (notification.parentNode) {
-      notification.remove();
-    }
-  }, 5000);
+  if (toast[type]) {
+    toast[type](message);
+  } else {
+    toast.info(message);
+  }
 }
 
 function renderPreview(swiper) {
@@ -156,10 +194,8 @@ function renderPreview(swiper) {
   }
 
   // 原有程式碼繼續...
-  console.log("renderPreview(): ", flexJson);
 
   if (swiper && Array.isArray(swiper.slides)) {
-    console.log("✅ Swiper slides 長度：", window.mainSwiper.slides.length);
   } else {
     console.warn("⚠️ mainSwiper.slides 尚未準備好");
   }
@@ -169,7 +205,6 @@ function renderPreview(swiper) {
     if (!swiperContainer || !swiperWrapper) return;
 
     const slides = [];
-    console.log("new flexJson: ", flexJson)
     if (!Array.isArray(flexJson.contents)) {
       console.warn("⚠️ flexJson.contents 不是 array，無法 render carousel");
       return;
@@ -179,10 +214,9 @@ function renderPreview(swiper) {
       const vDiv = document.createElement("div");
       vDiv.className = "swiper-slide";
       vDiv.style.backgroundColor = "white";
-      vDiv.id = `bubble-${index}`;
-
-      vDiv.style.width = "360px";      // ✅ 固定寬度
-      vDiv.style.margin = "0 auto";    // ✅ 讓 slide 置中
+      vDiv.id = `bubble - ${index} `;
+      // ✅ 固定寬度與 CSS max-width 一致
+      vDiv.style.width = "380px";
 
       try {
         const component = createNameCardComponent(bubble, false, true, swiper);
@@ -211,10 +245,10 @@ function renderPreview(swiper) {
     swiper = new Swiper(".swiper-container", {
       effect: "coverflow",
       grabCursor: true,
-      initialSlide: 4,
+      initialSlide: 0, // ✅ 從第一張開始
       centeredSlides: true,
       slidesPerView: "auto",
-      overflow: 'hidden',
+      spaceBetween: 20, // ✅ 設定 slide 之間的間距
       coverflowEffect: {
         rotate: 30,
         stretch: 0,
@@ -273,6 +307,7 @@ function renderPreview(swiper) {
         grabCursor: true,
         centeredSlides: true,
         slidesPerView: "auto",
+        spaceBetween: 20, // ✅ 設定 slide 之間的間距
         coverflowEffect: {
           rotate: 30,
           stretch: 0,
@@ -288,8 +323,7 @@ function renderPreview(swiper) {
 
     const slide = document.createElement("div");
     slide.className = "swiper-slide";
-    slide.style.padding = "0 12px";
-    slide.style.margin = "0 auto";
+    slide.style.width = "380px"; // ✅ 統一寬度
     slide.appendChild(result);
     window.mainSwiper.appendSlide(slide);
     printAllActions();
@@ -313,14 +347,15 @@ function updateBubbleCount() {
   const bubbleCount = (flexJson.type === "carousel" && Array.isArray(flexJson.contents)) ? flexJson.contents.length : 1;
   let bubbleCountEl = document.getElementById("bubble-count");
   if (!bubbleCountEl) return;
-  bubbleCountEl.textContent = `${bubbleCount}`;
+  bubbleCountEl.textContent = `${bubbleCount} `;
 }
 
-// 在 renderPreview 之後呼叫 updateBubbleCount
+// 在 renderPreview 之後呼叫 updateBubbleCount 和 checkUnsavedChanges
 const _oldRenderPreview = renderPreview;
 renderPreview = function (swiper) {
   _oldRenderPreview(swiper);
   updateBubbleCount();
+  checkUnsavedChanges();
 };
 
 // 綁定所有動作連結，並列印
@@ -340,19 +375,15 @@ function bindAllActions(root) {
 
         switch (type) {
           case "uri":
-            console.log("[ACTION] uri", { label, uri });
             if (uri) window.open(uri, "_blank");
             break;
           case "message":
-            console.log("[ACTION] message", { label, text });
-            if (text) alert(text);
+            if (text) toast.info(text);
             break;
           case "postback":
-            console.log("[ACTION] postback", { label, data });
-            if (data) alert(data);
+            if (data) toast.info(data);
             break;
           default:
-            console.log("[ACTION] none", { label });
         }
 
         printAllActions();
@@ -383,7 +414,7 @@ function printAllActions() {
 }
 
 
-import { showLoader, hideLoader } from './shared/loader.js';
+import { showLoader, hideLoader, LoadingManager } from './shared/loader.js';
 
 // NEW: Centralized function to update button states based on selection
 function updateButtonStates() {
@@ -400,6 +431,49 @@ function updateButtonStates() {
     deleteBtn.disabled = !isItemSelected;
   }
 }
+
+// 檢查未儲存變更並顯示狀態
+function checkUnsavedChanges() {
+  const flexNameInput = document.getElementById("flex-name");
+  const statusEl = document.getElementById("save-status");
+
+  if (!flexNameInput || !statusEl) return;
+
+  const flexName = flexNameInput.value.trim();
+  const hasName = flexName.length > 0;
+  const hasChanges = JSON.stringify(flexJson) !== JSON.stringify(originalFlexJson);
+
+  if (hasChanges && hasName) {
+    setInnerHTML(statusEl, '<span class="badge bg-warning text-dark">⚠️ 有未儲存的修改</span>');
+    statusEl.classList.remove('d-none');
+  } else if (currentFlex && !hasChanges) {
+    setInnerHTML(statusEl, '<span class="badge bg-success">✅ 已儲存</span>');
+    statusEl.classList.remove('d-none');
+  } else {
+    statusEl.classList.add('d-none');
+  }
+}
+
+// 更新同步按鈕狀態（顯示待同步數量）
+function updateSyncButtonState() {
+  const syncBtn = document.getElementById("sync-flex-btn");
+  if (!syncBtn) return;
+
+  const changedCount = allFlexMessages.filter(item =>
+    item.isNew || item.isUpdated || item.isDeleted
+  ).length;
+
+  if (changedCount > 0) {
+    setInnerHTML(syncBtn, `☁️ 同步到 LINE <span class="badge bg-light text-dark ms-1">${changedCount}</span>`);
+    syncBtn.classList.remove('btn-outline-success');
+    syncBtn.classList.add('btn-warning');
+  } else {
+    setInnerHTML(syncBtn, '☁️ 同步到 LINE');
+    syncBtn.classList.remove('btn-warning');
+    syncBtn.classList.add('btn-outline-success');
+  }
+}
+
 let templateSwiper = null;
 
 // NEW STATE MANAGEMENT
@@ -416,9 +490,18 @@ let currentEditingNodeIndex = 0;
 let currentComponentTags = []; // 用於暫存當前編輯元件的標籤
 
 export async function pageInit(pageData) {
+  // 防止重複執行事件綁定
+  if (window._flexEventListenersSetup) {
+    // 仍然需要載入資料和更新 UI
+    setUserId(pageData.userId);
+    const userId = getUserId();
+    loadAndRenderInitialList(userId);
+    return;
+  }
+  window._flexEventListenersSetup = true;
+
   setUserId(pageData.userId);
   const userId = getUserId();
-  console.log(`[flex_builder] ✅ pageInit 被執行, userId: ${userId}`);
   window.openFlexElementModal = openEditModal;
   // ... (existing pageInit code)
 
@@ -454,7 +537,7 @@ export async function pageInit(pageData) {
   // Add a single delegated event listener for the entire list
   const listContainer = document.getElementById('saved-flex-list');
   if (listContainer) {
-    listContainer.addEventListener('click', (e) => {
+    listContainer.addEventListener('click', async (e) => {
       const card = e.target.closest('.card');
       if (!card || !card.dataset.id) return;
 
@@ -473,7 +556,11 @@ export async function pageInit(pageData) {
 
       const isDirty = JSON.stringify(flexJson) !== JSON.stringify(originalFlexJson);
       if (isDirty && currentFlex) {
-        const confirmed = confirm("您有未儲存的變更，確定要載入嗎？這將會捨棄目前的變更。");
+        const confirmed = await showConfirm({
+          title: '捨棄變更',
+          message: '您有未儲存的變更，確定要載入嗎？這將會捨棄目前的變更。',
+          type: 'warning'
+        });
         if (!confirmed) return;
       }
 
@@ -485,18 +572,15 @@ export async function pageInit(pageData) {
       renderPreview(window.mainSwiper);
       renderSavedFlexList(); // Re-render the list to apply highlight
       updateButtonStates();
-      showNotification(`已載入 ${item.title || item.name}`, "success");
+      showNotification(`已載入 ${item.title || item.name} `, "success");
     });
   }
 
-  if (debug) console.log(`[flex_builder.js] ✅ pageInit 被執行, userId: ${userId}`);
 
   // 偵測 builder 類型
   const builder = "flex";
-  console.log("[flex_builder] 偵測到 builder:", builder);
 
   // 🚀 載入已儲存的 Flex Message 清單
-  console.log("🔧 載入已儲存的 Flex Message 清單");
 
   // === (REWORKED) Button Event Listeners for local-first workflow ===
 
@@ -521,7 +605,7 @@ export async function pageInit(pageData) {
       } else {
         // Add new item
         const newFlex = {
-          id: `local_${Date.now()}`,
+          id: `local_${Date.now()} `,
           name: name,
           title: name,
           contents: JSON.parse(JSON.stringify(flexJson)),
@@ -534,22 +618,27 @@ export async function pageInit(pageData) {
       }
 
       originalFlexJson = JSON.parse(JSON.stringify(flexJson)); // Update clean state
-      showNotification("✅ 已更新至本地列表", "success");
-      console.log("📝 [Update] List updated locally:", JSON.parse(JSON.stringify(allFlexMessages)));
+      showNotification("✅ 已儲存修改", "success");
       renderSavedFlexList();
+      checkUnsavedChanges(); // 更新狀態顯示
+      updateSyncButtonState(); // 更新同步按鈕
     });
   }
 
   // "Delete from List" button
   const deleteFlexBtn = document.getElementById("delete-flex-btn");
   if (deleteFlexBtn) {
-    deleteFlexBtn.addEventListener("click", () => {
+    deleteFlexBtn.addEventListener("click", async () => {
       if (!currentFlex) {
         showNotification("請先從左側列表載入一個訊息", "warning");
         return;
       }
 
-      const confirmed = confirm(`確定要將「${currentFlex.title}」標記為刪除嗎？\n變更將在點擊「上傳」後生效。`);
+      const confirmed = await showConfirm({
+        title: '標記刪除',
+        message: `確定要將「${currentFlex.title}」標記為刪除嗎？\n變更將在點擊「上傳」後生效。`,
+        type: 'danger'
+      });
       if (!confirmed) return;
 
       currentFlex.isDeleted = true;
@@ -576,7 +665,12 @@ export async function pageInit(pageData) {
         return;
       }
 
-      const confirmed = confirm("確定要將目前的變更上傳到後台嗎？這將會覆寫後台的資料。");
+      const confirmed = await showConfirm({
+        title: '確認上傳',
+        message: '確定要將目前的變更上傳到後台嗎？這將會覆寫後台的資料。',
+        type: 'warning',
+        confirmText: '上傳'
+      });
       if (!confirmed) return;
 
       // 1. Filter out deleted items
@@ -589,35 +683,34 @@ export async function pageInit(pageData) {
         return itemToSend;
       });
 
-      console.log("☁️ [Sync] Sending payload to backend:", payload);
 
-      try {
-        showLoader('正在同步變更...');
-        const response = await fetch(`${apiBase}/flex/sync`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-User-Id": getUserId() },
-          body: JSON.stringify({ flexs: payload })
-        });
+      await withButtonLoading(syncFlexBtn, async () => {
+        try {
+          const response = await fetch(`${apiBase}/flex/sync`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-User-Id": getUserId() },
+            body: JSON.stringify({ flexs: payload })
+          });
 
-        const result = await response.json();
-        if (!response.ok) {
-          throw new Error(result.error || "同步失敗");
+          const result = await response.json();
+          if (!response.ok) {
+            throw new Error(result.error || "同步失敗");
+          }
+
+          showNotification("✅ 成功同步變更到後台！", "success");
+
+          // CRITICAL FIX: Clear the cache before reloading the list
+          clearMessageCache();
+
+          // Reload everything from the server to get a fresh, clean state
+          await loadAndRenderInitialList(getUserId());
+          updateSyncButtonState(); // 更新同步按鈕狀態
+
+        } catch (err) {
+          console.error("❌ 同步失敗:", err);
+          showNotification(`❌ 同步失敗: ${err.message} `, "error");
         }
-
-        showNotification("✅ 成功同步變更到後台！", "success");
-
-        // CRITICAL FIX: Clear the cache before reloading the list
-        clearMessageCache();
-
-        // Reload everything from the server to get a fresh, clean state
-        await loadAndRenderInitialList(getUserId());
-
-      } catch (err) {
-        console.error("❌ 同步失敗:", err);
-        showNotification(`❌ 同步失敗: ${err.message}`, "error");
-      } finally {
-        hideLoader();
-      }
+      }, '同步中...');
     });
   }
 
@@ -634,7 +727,7 @@ export async function pageInit(pageData) {
       const clone = JSON.parse(JSON.stringify(currentFlex));
 
       // Modify properties for the new clone
-      clone.id = `local_${Date.now()}`;
+      clone.id = `local_${Date.now()} `;
       clone.title = `${currentFlex.title} (複製)`;
       clone.name = clone.title;
       clone.isNew = true;
@@ -697,7 +790,6 @@ export async function pageInit(pageData) {
 
   // 綁定複製目前 Bubble 按鈕（簡單複製 activeIndex 的 bubble）
   const cloneFlexBtn = document.getElementById("clone-flex-btn");
-  console.log("cloneFlexBtn", cloneFlexBtn);
   if (cloneFlexBtn) {
     cloneFlexBtn.addEventListener("click", () => {
       try {
@@ -795,8 +887,7 @@ export async function pageInit(pageData) {
   // 新增：建立 start-create-flex-btn 的事件邏輯
   const startCreateFlexBtn = document.getElementById("start-create-flex-btn");
   if (startCreateFlexBtn) {
-    startCreateFlexBtn.addEventListener("click", () => {
-      console.log("start-create-flex-btn");
+    startCreateFlexBtn.addEventListener("click", async () => {
       const defaultEmptyBubble = {
         type: "bubble",
         body: { type: "box", layout: "vertical", contents: [] }
@@ -805,10 +896,15 @@ export async function pageInit(pageData) {
       const isEditing = JSON.stringify(flexJson) !== JSON.stringify(defaultEmptyBubble);
 
       if (isEditing) {
-        const decision = confirm("目前有正在編輯的 Flex Message，要儲存嗎？\n按確定：儲存\n按取消：捨棄變更\n按 ESC：取消建立新訊息");
+        const decision = await showConfirm({
+          title: '儲存變更',
+          message: '目前有正在編輯的 Flex Message，要儲存嗎？',
+          confirmText: '儲存',
+          cancelText: '捨棄變更',
+          type: 'info'
+        });
         if (decision) {
-          console.log("🔐 儲存 Flex Message：", flexJson);
-          alert("✅ Flex Message 已儲存（此處可串接儲存到 Cloudflare Worker）");
+          toast.success("✅ Flex Message 已儲存");
         }
       }
 
@@ -880,7 +976,7 @@ export async function pageInit(pageData) {
   }
   const nameCardContainer = document.getElementById("nameCardContainer");
   if (nameCardContainer) {
-    nameCardContainer.innerHTML = "";
+    setInnerHTML(nameCardContainer, "");
 
     window.mainSwiper = new Swiper(".swiper-container", {
       initialSlide: 0,
@@ -888,7 +984,7 @@ export async function pageInit(pageData) {
       grabCursor: true,
       centeredSlides: true,
       slidesPerView: 'auto',
-      overflow: 'hidden',
+      spaceBetween: 20, // ✅ 設定 slide 之間的間距
       coverflowEffect: {
         depth: 100,
         rotate: 20,
@@ -909,7 +1005,6 @@ export async function pageInit(pageData) {
     renderPreview(window.mainSwiper);
   }
 
-  console.log("addCarouselBubbleBtn: ");
   const addCarouselBubbleBtn = document.getElementById("add-carousel-bubble");
   if (addCarouselBubbleBtn) {
     addCarouselBubbleBtn.addEventListener("click", () => {
@@ -917,7 +1012,6 @@ export async function pageInit(pageData) {
 
 
       const bubble = systemTemplates.hello; // 使用完整樣板
-      console.log("flexJson, ", flexJson)
       try {
         if (flexJson.contents.length >= 12) {
           showNotification("最多只能加入 12 個 Bubble！", "warning");
@@ -933,7 +1027,6 @@ export async function pageInit(pageData) {
         } else {
           flexJson.contents.push(bubble);
         }
-        console.log("new new flexJson, ", flexJson)
         renderPreview(window.mainSwiper);
         updateBubbleCount();
       } catch (err) {
@@ -944,12 +1037,20 @@ export async function pageInit(pageData) {
   }
 
   // Removed hover blue border style block
-  console.log("cancelModalBtn: ");
   const cancelModalBtn = document.getElementById("cancel-modal");
   if (cancelModalBtn) {
     cancelModalBtn.addEventListener("click", () => {
       const modal = bootstrap.Modal.getInstance(document.getElementById("editModal"));
-      if (modal) modal.hide();
+      if (modal) {
+        modal.hide();
+        // 清理 backdrop
+        setTimeout(() => {
+          document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+          document.body.classList.remove('modal-open');
+          document.body.style.removeProperty('overflow');
+          document.body.style.removeProperty('padding-right');
+        }, 300);
+      }
       document.querySelector(".modal-backdrop")?.remove();
       document.body.classList.remove("modal-open");
       document.body.style = "";
@@ -966,7 +1067,6 @@ export async function pageInit(pageData) {
   }
 
 
-  console.log("currentEditingElement: ");
   const modalEl = document.getElementById("editModal");
   modalEl?.addEventListener("hidden.bs.modal", () => {
     document.querySelector(".modal-backdrop")?.remove();
@@ -1020,7 +1120,7 @@ export async function pageInit(pageData) {
 
         const target = collected[currentEditingNodeIndex];
         if (!target) {
-          console.error(`Could not find target element of type '${type}' at index ${currentEditingNodeIndex}`);
+          console.error(`Could not find target element of type '${type}' at index ${currentEditingNodeIndex} `);
           showNotification("儲存失敗：找不到目標元件。", "error");
           return;
         }
@@ -1115,47 +1215,29 @@ export async function pageInit(pageData) {
         return;
       }
 
-      // 顯示上傳中的提示
-      const originalBtnText = uploadImageBtn.textContent;
-      uploadImageBtn.textContent = '上傳中...';
-      uploadImageBtn.disabled = true;
+      await withButtonLoading(uploadImageBtn, async () => {
+        try {
+          const base64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target.result);
+            reader.onerror = (e) => reject(new Error('讀取檔案失敗'));
+            reader.readAsDataURL(file);
+          });
 
-      try {
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-          try {
-            const base64 = e.target.result;
-            const newUrl = await uploadImage(base64, file.name);
+          const newUrl = await uploadImage(base64, file.name);
 
-            // 將返回的 URL 填入輸入框
-            const imageUrlInput = document.getElementById('image-url');
-            if (imageUrlInput) {
-              imageUrlInput.value = newUrl;
-            }
-            showNotification('✅ 圖片上傳成功！', 'success');
-
-          } catch (uploadError) {
-            console.error('Upload failed:', uploadError);
-            showNotification(`❌ 上傳失敗: ${uploadError.message}`, 'error');
-          } finally {
-            // 恢復按鈕狀態
-            uploadImageBtn.textContent = '上傳';
-            uploadImageBtn.disabled = false;
+          // 將返回的 URL 填入輸入框
+          const imageUrlInput = document.getElementById('image-url');
+          if (imageUrlInput) {
+            imageUrlInput.value = newUrl;
           }
-        };
-        reader.onerror = () => {
-          showNotification('❌ 讀取檔案失敗', 'error');
-          uploadImageBtn.textContent = '上傳';
-          uploadImageBtn.disabled = false;
-        };
-        reader.readAsDataURL(file);
+          showNotification('✅ 圖片上傳成功！', 'success');
 
-      } catch (err) {
-        console.error('Error setting up file reader:', err);
-        showNotification('❌ 處理檔案時發生錯誤', 'error');
-        uploadImageBtn.textContent = '上傳';
-        uploadImageBtn.disabled = false;
-      }
+        } catch (err) {
+          console.error('Upload failed:', err);
+          showNotification(`❌ 上傳失敗: ${err.message} `, 'error');
+        }
+      }, '上傳中...');
     });
   }
 
@@ -1170,7 +1252,6 @@ export async function pageInit(pageData) {
   }
 
   const addButtonBtn = document.getElementById("add-button");
-  console.log("addButtonBtn: ");
   if (addButtonBtn) {
     addButtonBtn.addEventListener("click", () => {
       const button = {
@@ -1187,7 +1268,7 @@ export async function pageInit(pageData) {
         target.push(button);
         renderPreview(window.mainSwiper);
       } else {
-        alert("❌ 無法加入按鈕，找不到可用的 body");
+        toast.error("❌ 無法加入按鈕，找不到可用的 body");
       }
     });
   }
@@ -1196,7 +1277,6 @@ export async function pageInit(pageData) {
   if (openTemplateModalBtn) {
     openTemplateModalBtn.addEventListener("click", () => {
       // 移除舊的 swiper
-      console.log("open-template-modal clicked");
       const templateModalEl = document.getElementById("templateModal");
       if (templateModalEl) {
         const templateModal = new bootstrap.Modal(templateModalEl);
@@ -1204,7 +1284,7 @@ export async function pageInit(pageData) {
       }
       const wrapper = document.getElementById("template-swiper-wrapper");
       if (wrapper) {
-        wrapper.innerHTML = ""; // 清空原本內容
+        setInnerHTML(wrapper, ""); // 清空原本內容
         if (Array.isArray(systemTemplates.sampleTemplate.contents)) {
           systemTemplates.sampleTemplate.contents.forEach((bubble, index) => {
             const div = document.createElement("div");
@@ -1224,7 +1304,6 @@ export async function pageInit(pageData) {
   const insertTemplateBtn = document.getElementById("insert-template-btn");
   if (insertTemplateBtn) {
     insertTemplateBtn.addEventListener("click", () => {
-      console.log("insert-template-btn");
       try {
         if (!templateSwiper) {
           showNotification("樣板選擇器尚未初始化", "error");
@@ -1267,11 +1346,11 @@ export async function pageInit(pageData) {
   // 工具函式：更新 selector
   function updateBubbleSelector(contents) {
     const selector = document.getElementById("bubble-selector");
-    selector.innerHTML = "";
+    setInnerHTML(selector, "");
     contents.forEach((_, i) => {
       const option = document.createElement("option");
       option.value = i;
-      option.textContent = `Bubble ${i + 1}`;
+      option.textContent = `Bubble ${i + 1} `;
       selector.appendChild(option);
     });
   }
@@ -1280,7 +1359,7 @@ export async function pageInit(pageData) {
   modalElTemplate?.addEventListener("shown.bs.modal", () => {
     const wrapper = document.getElementById("template-swiper-wrapper");
     if (wrapper) {
-      wrapper.innerHTML = ""; // Clear previous slides
+      setInnerHTML(wrapper, ""); // Clear previous slides
 
       Object.values(systemTemplates).forEach(template => {
         let bubbles = [];
@@ -1364,15 +1443,15 @@ export async function pageInit(pageData) {
   }
   function renderTagPills(container, tags) {
     if (!container) return;
-    container.innerHTML = '';
+    setInnerHTML(container, '');
     tags.forEach(tag => {
       const pill = document.createElement('span');
       pill.className = 'badge rounded-pill bg-primary d-flex align-items-center';
       pill.style.paddingRight = '0.5rem';
-      pill.innerHTML = `
+      setInnerHTML(pill, `
       ${tag}
       <button type="button" class="btn-close btn-close-white ms-2" data-tag-name="${tag}" aria-label="Remove"></button>
-    `;
+    `);
       container.appendChild(pill);
     });
   }
@@ -1380,30 +1459,26 @@ export async function pageInit(pageData) {
   async function populateTagSelect(selectElement) {
     if (!selectElement) return;
 
-    const tags = await getTagList(userId);
-    selectElement.innerHTML = '<option value="">-- 請選擇要加入的標籤 --</option>';
+    const tags = await getTagList(getUserId());
+    setInnerHTML(selectElement, '<option value="">-- 請選擇要加入的標籤 --</option>');
 
     tags.forEach(tag => {
       const option = document.createElement('option');
-      option.value = tag;
-      option.textContent = tag;
+      option.value = tag.name;
+      option.textContent = tag.name;
       selectElement.appendChild(option);
     });
   }
 
   async function openEditModal(clicked) {
-    console.log("--- openEditModal called ---");
-    console.log("Element passed to openEditModal:", clicked);
     if (!clicked) {
       console.error("openEditModal was called with a null or undefined element.");
       return;
     }
     const flexType = clicked.getAttribute("data-flex-type");
-    console.log("flexType from the element:", flexType);
 
     if (document.querySelector('.modal-backdrop')) return;
 
-    console.log("[點擊元素類型]", flexType);
 
     currentEditingElement = clicked;
     if (window.mainSwiper && typeof window.mainSwiper.activeIndex === 'number') {
@@ -1495,30 +1570,11 @@ export async function pageInit(pageData) {
   // --- Old, unused API and helper functions have been removed. ---
 
   // 顯示通知
-  function showNotification(message, type = "info") {
-    // 創建通知元素
-    const notification = document.createElement("div");
-    notification.className = `alert alert-${type === "error" ? "danger" : type === "success" ? "success" : "info"} alert-dismissible fade show position-fixed`;
-    notification.style.cssText = "top: 20px; right: 20px; z-index: 9999; min-width: 300px;";
-    notification.innerHTML = `
-    ${message}
-    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-  `;
 
-    // 添加到頁面
-    document.body.appendChild(notification);
-
-    // 自動移除
-    setTimeout(() => {
-      if (notification.parentNode) {
-        notification.remove();
-      }
-    }, 5000);
-  }
 
   // ---------- Function moved to top of file to fix ReferenceError ----------
 
-  function deleteCurrentBubble() {
+  async function deleteCurrentBubble() {
     try {
       if (!flexJson) return;
 
@@ -1531,7 +1587,11 @@ export async function pageInit(pageData) {
           return;
         }
 
-        const confirmed = confirm(`將刪除第 ${activeIndex + 1} 個 Bubble（總數 ${count}）。確定嗎？`);
+        const confirmed = await showConfirm({
+          title: '刪除 Bubble',
+          message: `將刪除第 ${activeIndex + 1} 個 Bubble（總數 ${count}）。確定嗎？`,
+          type: 'warning'
+        });
         if (!confirmed) return;
 
         flexJson.contents.splice(activeIndex, 1);
@@ -1551,7 +1611,11 @@ export async function pageInit(pageData) {
         return;
       }
 
-      const confirmedSingle = confirm("目前只有一個 Bubble，刪除會清空內容（會保留一個空白 bubble）。確定嗎？");
+      const confirmedSingle = await showConfirm({
+        title: '清空內容',
+        message: '目前只有一個 Bubble，刪除會清空內容（會保留一個空白 bubble）。確定嗎？',
+        type: 'warning'
+      });
       if (!confirmedSingle) return;
 
       flexJson = {
@@ -1608,11 +1672,32 @@ export async function pageInit(pageData) {
           showNotification('✅ Flex 預覽已更新', 'success');
 
         } catch (err) {
-          alert('JSON 格式錯誤，請檢查後再試一次。\n\n' + err.message);
+          toast.error('JSON 格式錯誤，請檢查後再試一次。\\n\\n' + err.message);
           console.error("Invalid JSON:", err);
         }
       });
     }
+  }
+
+  // ✅ 綁定 Flex 搜尋功能
+  const flexSearchInput = document.getElementById("flex-search");
+  const clearFlexSearchBtn = document.getElementById("clear-flex-search");
+
+  flexSearchInput?.addEventListener("input", (e) => {
+    filterFlexList(e.target.value);
+  });
+
+  clearFlexSearchBtn?.addEventListener("click", () => {
+    if (flexSearchInput) {
+      flexSearchInput.value = "";
+      filterFlexList("");
+    }
+  });
+
+  // ✅ 監聽 Flex 名稱輸入，檢查未儲存變更
+  const flexNameInput = document.getElementById("flex-name");
+  if (flexNameInput) {
+    flexNameInput.addEventListener("input", checkUnsavedChanges);
   }
 
 }
