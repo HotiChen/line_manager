@@ -54,7 +54,6 @@ export async function incrementMessageCount(env, userId, type = 'reply') {
         }
 
         await kv.put(statsKey, JSON.stringify(stats));
-        console.log(`[STATS] ${type} count incremented for user ${userId}. Total: ${stats.total}`);
     } catch (error) {
         console.error('[STATS] Failed to increment message count:', error);
     }

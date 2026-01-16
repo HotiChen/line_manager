@@ -185,7 +185,6 @@ export class FlowDesigner {
      * 初始化設計器
      */
     init() {
-        console.log('🎨 初始化流程設計器...');
         this.createSvgLayer();
         this.setupEventListeners();
         this.loadFromLocalStorage();
@@ -387,7 +386,6 @@ export class FlowDesigner {
             });
 
             if (this.selectedNodes.length > 0) {
-                console.log(`已選取 ${this.selectedNodes.length} 個節點`);
             }
         };
 
@@ -829,7 +827,6 @@ export class FlowDesigner {
             toast.success(`已新增 ${config.label} 節點`);
         }
 
-        console.log(`[addNode] 創建節點: ${nodeId}, type: ${type}, position:`, position);
 
         return node;
     }
@@ -1077,12 +1074,10 @@ export class FlowDesigner {
         // 雙擊編輯節點
         nodeElement.ondblclick = (e) => {
             e.stopPropagation();
-            console.log('[FlowDesigner] 雙擊編輯節點:', node.type);
 
             // 使用 FlowNodeAdapter 開啟編輯器
             FlowNodeAdapter.editNode(node, (updatedNode) => {
                 // 更新節點資料
-                console.log('[FlowDesigner] 節點資料已更新:', updatedNode);
 
                 // 重新渲染節點
                 const oldElement = document.getElementById(node.id);
@@ -1174,7 +1169,6 @@ export class FlowDesigner {
             // 延遲一下確保 DOM 已經插入
             setTimeout(async () => {
                 try {
-                    console.log('[Flex Render] 開始渲染 Flex Message:', node.id);
 
                     // 使用全域的 createNameCardComponent
                     if (typeof window.createNameCardComponent !== 'function') {
@@ -1193,7 +1187,6 @@ export class FlowDesigner {
                     }
 
                     const createNameCardComponent = window.createNameCardComponent;
-                    console.log('[Flex Render] createNameCardComponent 已準備好');
 
                     const container = document.getElementById(flexContainerId);
                     if (!container) {
@@ -1206,7 +1199,6 @@ export class FlowDesigner {
 
                     // 如果是 carousel，使用正確的 Carousel 結構
                     if (node.data.contents.type === 'carousel' && Array.isArray(node.data.contents.contents)) {
-                        console.log('[Flex Render] 渲染 Carousel，共', node.data.contents.contents.length, '個 bubble');
 
                         // 創建 chatbox wrapper
                         const chatbox = document.createElement('div');
@@ -1221,12 +1213,10 @@ export class FlowDesigner {
 
                         node.data.contents.contents.forEach((bubble, index) => {
                             try {
-                                console.log(`[Flex Render] 渲染 bubble ${index}: `, bubble);
 
                                 const component = createNameCardComponent(bubble, false, false, null);
                                 if (component) {
                                     lyInner.appendChild(component);
-                                    console.log(`[Flex Render] Bubble ${index} 渲染成功`);
                                 } else {
                                     console.warn(`[Flex Render] Bubble ${index} 返回 null`);
                                 }
@@ -1238,11 +1228,9 @@ export class FlowDesigner {
                         lySlider.appendChild(lyInner);
                         chatbox.appendChild(lySlider);
                         container.appendChild(chatbox);
-                        console.log('[Flex Render] Carousel 渲染完成');
                     }
                     // 如果是 bubble
                     else if (node.data.contents.type === 'bubble') {
-                        console.log('[Flex Render] 渲染 Bubble:', node.data.contents);
 
                         // 創建 chatbox wrapper
                         const chatbox = document.createElement('div');
@@ -1252,7 +1240,6 @@ export class FlowDesigner {
                         if (component) {
                             chatbox.appendChild(component);
                             container.appendChild(chatbox);
-                            console.log('[Flex Render] Bubble 渲染成功');
                         } else {
                             console.warn('[Flex Render] createNameCardComponent 返回 null');
                         }
@@ -1321,7 +1308,6 @@ export class FlowDesigner {
      * 開始連接
      */
     startConnection(sourceNodeId, outputHandle) {
-        console.log(`🔗 開始連接: 從節點 ${sourceNodeId} 的輸出點 ${outputHandle} `);
 
         const sourceNode = this.nodes.find(n => n.id === sourceNodeId);
         if (!sourceNode) return;
@@ -1401,7 +1387,6 @@ export class FlowDesigner {
                 toast.success(`✅ 已連接: ${this.connectionStart.node.config.label} → ${targetNode.config.label} `);
             }
         } else {
-            console.log('❌ 未連接到有效節點');
         }
 
         this.cancelConnection();
@@ -1425,7 +1410,6 @@ export class FlowDesigner {
      * 創建連線
      */
     createEdge(sourceId, sourceHandle, targetId, targetHandle) {
-        console.log(`[createEdge] 開始創建連接: ${sourceId} (${sourceHandle}) -> ${targetId} `);
 
         // 檢查是否已存在相同連線
         const exists = this.edges.some(e =>
@@ -1457,21 +1441,17 @@ export class FlowDesigner {
         };
 
         this.edges.push(edge);
-        console.log(`[createEdge] 連線已加入 edges 陣列: `, edge);
 
         this.renderEdge(edge);
-        console.log(`[createEdge] renderEdge 完成`);
 
         this.saveToLocalStorage();
 
-        console.log('✅ 連線已創建:', edge);
     }
 
     /**
      * 渲染連線
      */
     renderEdge(edge) {
-        console.log(`[renderEdge v2.0 - getBoundingClientRect]開始渲染連接: `, edge);
 
         const sourceNode = this.nodes.find(n => n.id === edge.source);
         const targetNode = this.nodes.find(n => n.id === edge.target);
@@ -1508,18 +1488,6 @@ export class FlowDesigner {
         const endX = targetNode.position?.x ?? 0;  // 左側
         const endY = (targetNode.position?.y ?? 0) + targetHeight / 2;  // 中央
 
-        console.log(`[renderEdge] 坐標計算: `);
-        console.log(`  源節點(${edge.source}): `, {
-            position: { x: sourceNode.position?.x, y: sourceNode.position?.y },
-            size: { width: sourceWidth, height: sourceHeight },
-            computed: { startX, startY }
-        });
-        console.log(`  目標節點(${edge.target}): `, {
-            position: { x: targetNode.position?.x, y: targetNode.position?.y },
-            size: { width: targetWidth, height: targetHeight },
-            computed: { endX, endY }
-        });
-        console.log(`  路徑: (${startX.toFixed(1)}, ${startY.toFixed(1)}) -> (${endX.toFixed(1)}, ${endY.toFixed(1)})`);
 
         // 根據目標節點類型決定連接線顏色
         let strokeColor = sourceNode.config.color;
@@ -1553,7 +1521,6 @@ export class FlowDesigner {
         path.style.cursor = 'pointer';
         path.style.filter = 'drop-shadow(0 1px 2px rgba(0,0,0,0.15))';
 
-        console.log(`[renderEdge] SVG 路徑創建完成，顏色: ${strokeColor} (${targetNode.type})`);
 
         // 雙擊刪除連線（避免誤刪）
         path.ondblclick = () => {
@@ -1627,7 +1594,6 @@ export class FlowDesigner {
             }
         };
 
-        console.log(`[renderEdge] 路徑已添加到 SVG 層`);
     }
 
     /**
@@ -1724,7 +1690,6 @@ export class FlowDesigner {
      * 開始連接拖拉 (n8n 風格)
      */
     startConnectionDrag(nodeId, type, event) {
-        console.log(`[連接拖拉] 開始:`, nodeId, type);
 
         this.connectionDragState.isDragging = true;
         this.connectionDragState.sourceNodeId = nodeId;
@@ -1792,7 +1757,6 @@ export class FlowDesigner {
     endConnectionDrag(event) {
         if (!this.connectionDragState.isDragging) return;
 
-        console.log(`[連接拖拉] 結束`);
 
         // 檢查是否釋放在輸入點上
         const target = event.target;
@@ -1802,7 +1766,6 @@ export class FlowDesigner {
             const targetNodeId = target.dataset.nodeId;
             const sourceNodeId = this.connectionDragState.sourceNodeId;
 
-            console.log(`[連接拖拉] 創建連接: ${sourceNodeId} -> ${targetNodeId}`);
 
             // 創建連接
             this.createEdge(sourceNodeId, null, targetNodeId, null);
@@ -2278,14 +2241,12 @@ export class FlowDesigner {
      * 更新與節點相關的所有連線
      */
     updateConnectedEdges(nodeId) {
-        // console.log(`[updateConnectedEdges] 更新節點 ${nodeId} 的連接`);
 
         // 找到所有與此節點相關的連線
         const relatedEdges = this.edges.filter(edge =>
             edge.source === nodeId || edge.target === nodeId
         );
 
-        // console.log(`[updateConnectedEdges] 找到 ${relatedEdges.length} 條相關連接`);
 
         // 重新繪製每條連線
         relatedEdges.forEach(edge => {
@@ -2296,7 +2257,6 @@ export class FlowDesigner {
                 const newPath = this.calculateEdgePath(edge);
                 if (newPath) {
                     pathElement.setAttribute('d', newPath);
-                    // console.log(`[updateConnectedEdges] ✅ 已更新連接 ${edge.id}`);
                 } else {
                     console.warn(`[updateConnectedEdges] 無法計算路徑:`, edge);
                 }
@@ -2502,9 +2462,6 @@ export class FlowDesigner {
      * Imagemap 屬性編輯器
      */
     renderImagemapProperties(node) {
-        console.log('[renderImagemapProperties] node.data:', node.data);
-        console.log('[renderImagemapProperties] node.data.actions:', node.data.actions);
-        console.log('[renderImagemapProperties] actions.length:', node.data.actions?.length);
 
         // ✅ 判斷是否已載入（有 actions）
         const isLoaded = node.data.actions && node.data.actions.length > 0;
@@ -2709,7 +2666,6 @@ export class FlowDesigner {
             this.keywordList = data.data || [];
             this.keywordListLoadTime = now;
 
-            console.log(`[Keyword] 已載入 ${this.keywordList.length} 個關鍵字`);
             return this.keywordList;
         } catch (error) {
             console.error('[Keyword] 載入失敗:', error);
@@ -2803,7 +2759,6 @@ export class FlowDesigner {
         // ✅ 檢查是否已展開（避免重複展開）
         if (richmenuNode.data.isExpanded) {
             toast.warning('此 Richmenu 已展開，請勿重複展開');
-            console.log('[自動展開] Richmenu 已展開，跳過');
             return;
         }
 
@@ -2812,7 +2767,6 @@ export class FlowDesigner {
             // 標記此 Richmenu 已處理（避免循環）
             processedRichmenus.add(richmenuNode.data.richmenuId);
 
-            console.log(`[自動展開] Richmenu 位置:`, richmenuNode.position);
 
             // 改進的佈局算法：根據按鈕類型分組排列
             const baseX = richmenuNode.position.x + 400; // 按鈕節點在右側，增加間距
@@ -2837,21 +2791,13 @@ export class FlowDesigner {
 
             let currentY = startY;
 
-            console.log(`[自動展開] 按鈕分組:`, {
-                uri: buttonsByType.uri?.length || 0,
-                richmenuswitch: buttonsByType.richmenuswitch?.length || 0,
-                postback: buttonsByType.postback?.length || 0,
-                message: buttonsByType.message?.length || 0
-            });
 
             for (let i = 0; i < richmenuNode.data.buttons.length; i++) {
                 const button = richmenuNode.data.buttons[i];
                 const action = button.action;
 
-                console.log(`[自動展開] 按鈕 ${i + 1}:`, button);
 
                 if (!action || action.type === 'none') {
-                    console.log(`[自動展開] 跳過按鈕 ${i + 1}:`, action?.type || 'no action');
                     // 重要：即使跳過按鈕，也要增加 Y 位置，避免後續節點重疊
                     currentY += verticalGap;
                     continue;
@@ -2860,7 +2806,6 @@ export class FlowDesigner {
                 const position = { x: baseX, y: currentY };
                 let newNode = null;
 
-                console.log(`[自動展開] 按鈕 ${i + 1} 位置:`, position);
 
                 try {
                     // 添加微小延遲避免 Date.now() ID 衝突
@@ -2868,7 +2813,6 @@ export class FlowDesigner {
 
                     switch (action.type) {
                         case 'uri':
-                            console.log(`[自動展開] 創建 URL 節點:`, action.uri);
                             newNode = this.addNode(NodeTypes.URL, position, true); // silent mode
                             if (newNode && newNode.data) {
                                 newNode.data.url = action.uri || '';
@@ -2883,14 +2827,12 @@ export class FlowDesigner {
                             break;
 
                         case 'message':
-                            console.log(`[自動展開] 處理 Message action:`, action.text);
 
                             // ✅ 檢查是否匹配 keyword
                             const matchedKeyword = await this.matchKeyword(action.text);
 
                             if (matchedKeyword) {
                                 // 匹配到 keyword，創建 KEYWORD 節點
-                                console.log(`[自動展開] 匹配到關鍵字: "${matchedKeyword.keyword}"，創建 Keyword 節點`);
                                 newNode = this.addNode(NodeTypes.KEYWORD, position, true);
                                 if (newNode && newNode.data) {
                                     newNode.data.keyword = matchedKeyword.keyword;
@@ -2908,7 +2850,6 @@ export class FlowDesigner {
                                 }
                             } else {
                                 // 沒有匹配，創建普通 Text 節點
-                                console.log(`[自動展開] 未匹配關鍵字，創建 Text 節點:`, action.text);
                                 newNode = this.addNode(NodeTypes.MESSAGE_TEXT, position, true);
                                 if (newNode && newNode.data) {
                                     newNode.data.text = action.text || '';
@@ -2924,7 +2865,6 @@ export class FlowDesigner {
                             break;
 
                         case 'postback':
-                            console.log(`[自動展開] 創建 Postback 節點:`, action.data);
                             newNode = this.addNode(NodeTypes.POSTBACK, position, true); // silent mode
                             if (newNode && newNode.data) {
                                 newNode.data.data = action.data || '';
@@ -2941,7 +2881,6 @@ export class FlowDesigner {
 
                         case 'richmenuswitch':
                             const targetAliasOrId = action.richMenuAliasId;
-                            console.log(`[自動展開] 處理 Richmenuswitch: ${targetAliasOrId}`);
 
                             // 第一步：創建 Menu Switch 中間節點
                             const switchNode = this.addNode(NodeTypes.POSTBACK, position, true);
@@ -2961,7 +2900,6 @@ export class FlowDesigner {
                                     this.renderNode(switchNode);
                                 }
 
-                                console.log(`✅ [自動展開] 創建 Menu Switch 節點: ${switchNode.id}`);
                             }
 
                             // 第二步：解析目標 Richmenu 並創建/連接
@@ -2973,7 +2911,6 @@ export class FlowDesigner {
                                 break;
                             }
 
-                            console.log(`[自動展開] 解析後的 Richmenu ID: ${actualRichmenuId}`);
 
                             // 第三步：查找或創建目標 Richmenu
                             const targetRichmenuPosition = {
@@ -2987,13 +2924,10 @@ export class FlowDesigner {
                             );
 
                             if (targetNode) {
-                                console.log(`✅ [自動展開] 找到已存在的 Richmenu 節點: ${targetNode.id} (${targetNode.data.name})`);
                             } else {
-                                console.log(`[自動展開] 未找到現有節點，創建新的 Richmenu 節點`);
                                 targetNode = this.addNode(NodeTypes.RICHMENU, targetRichmenuPosition, true);
                                 if (targetNode) {
                                     try {
-                                        console.log(`[自動展開] 開始載入 Richmenu 詳情: ${actualRichmenuId}`);
                                         const details = await dataLoader.loadRichmenuDetails(actualRichmenuId);
 
                                         if (details) {
@@ -3012,7 +2946,6 @@ export class FlowDesigner {
 
                                             // 只有新創建的節點才需要繼續展開
                                             if (!processedRichmenus.has(actualRichmenuId)) {
-                                                console.log(`[自動展開] 繼續展開 Richmenu: ${actualRichmenuId}`);
                                                 await this.expandRichmenuButtons(targetNode, processedRichmenus);
                                             }
                                         }
@@ -3024,7 +2957,6 @@ export class FlowDesigner {
 
                             // 第四步：創建 Menu Switch -> 目標 Richmenu 的連接
                             if (switchNode && targetNode) {
-                                console.log(`[自動展開] 創建連接: ${switchNode.id} -> ${targetNode.id}`);
                                 this.createEdge(switchNode.id, null, targetNode.id, null);
                             }
 
@@ -3037,8 +2969,6 @@ export class FlowDesigner {
                     }
 
                     if (newNode) {
-                        console.log(`[自動展開] newNode.id = ${newNode.id}, richmenuNode.id = ${richmenuNode.id}`);
-                        console.log(`[自動展開] 創建連接: ${richmenuNode.id} -> ${newNode.id} (button_${i})`);
                         this.createEdge(richmenuNode.id, `button_${i}`, newNode.id, null);
                     } else {
                         console.error(`[自動展開] 節點創建失敗，按鈕 ${i + 1}`);
@@ -3054,7 +2984,6 @@ export class FlowDesigner {
             }
 
             // 不需要 renderAll，因為每個節點和連接都已經在創建時渲染了
-            console.log(`[自動展開] 完成！共創建 ${this.edges.length} 條連接`);
 
             // ✅ 標記為已展開
             richmenuNode.data.isExpanded = true;
@@ -3171,7 +3100,6 @@ export class FlowDesigner {
 
         showLoader(`展開 ${imagemapNode.data.actions.length} 個可點擊區域...`);
         try {
-            console.log(`[展開 Imagemap] 開始展開`, imagemapNode);
 
             // 佈局設定
             const baseX = imagemapNode.position.x + 400; // 按鈕節點在右側
@@ -3182,10 +3110,8 @@ export class FlowDesigner {
             for (let i = 0; i < imagemapNode.data.actions.length; i++) {
                 const action = imagemapNode.data.actions[i];
 
-                console.log(`[展開 Imagemap] 區域 ${i + 1}:`, action);
 
                 if (!action || action.type === 'none') {
-                    console.log(`[展開 Imagemap] 跳過區域 ${i + 1}`);
                     currentY += verticalGap;
                     continue;
                 }
@@ -3198,7 +3124,6 @@ export class FlowDesigner {
 
                 switch (action.type) {
                     case 'uri':
-                        console.log(`[展開 Imagemap] 創建 URL 節點:`, action.linkUri);
                         newNode = this.addNode(NodeTypes.URL, position, true);
                         if (newNode && newNode.data) {
                             newNode.data.url = action.linkUri || '';
@@ -3209,13 +3134,11 @@ export class FlowDesigner {
                         break;
 
                     case 'message':
-                        console.log(`[展開 Imagemap] 處理 Message action:`, action.text);
 
                         // 檢查是否匹配 keyword
                         const matchedKeyword = await this.matchKeyword(action.text);
 
                         if (matchedKeyword) {
-                            console.log(`[展開 Imagemap] 匹配到關鍵字: "${matchedKeyword.keyword}"`);
                             newNode = this.addNode(NodeTypes.KEYWORD, position, true);
                             if (newNode && newNode.data) {
                                 newNode.data.keyword = matchedKeyword.keyword;
@@ -3225,7 +3148,6 @@ export class FlowDesigner {
                                 if (el) { el.remove(); this.renderNode(newNode); }
                             }
                         } else {
-                            console.log(`[展開 Imagemap] 創建 Text 節點`);
                             newNode = this.addNode(NodeTypes.MESSAGE_TEXT, position, true);
                             if (newNode && newNode.data) {
                                 newNode.data.text = action.text || '';
@@ -3237,7 +3159,6 @@ export class FlowDesigner {
                         break;
 
                     case 'postback':
-                        console.log(`[展開 Imagemap] 創建 Postback 節點:`, action.data);
                         newNode = this.addNode(NodeTypes.POSTBACK, position, true);
                         if (newNode) {
                             newNode.data.data = action.data || '';
@@ -3248,7 +3169,6 @@ export class FlowDesigner {
                         break;
 
                     default:
-                        console.log(`[展開 Imagemap] 未知的 action 類型: ${action.type}`);
                 }
 
                 // 創建連線
@@ -3295,7 +3215,6 @@ export class FlowDesigner {
 
                     // ✅ 提取按鈕資料
                     node.data.buttons = this.extractFlexButtons(details.contents);
-                    console.log(`[載入 Flex] 找到 ${node.data.buttons.length} 個按鈕`);
 
                     // 重新渲染節點以顯示預覽
                     const nodeElement = document.getElementById(nodeId);
@@ -3344,7 +3263,6 @@ export class FlowDesigner {
 
                     // ✅ 載入並創建回覆節點
                     if (keywordData.replies && keywordData.replies.length > 0) {
-                        console.log(`[載入 Keyword] 找到 ${keywordData.replies.length} 個回覆`);
 
                         const baseX = node.position.x + 400;
                         const startY = node.position.y - 50;
@@ -3356,13 +3274,9 @@ export class FlowDesigner {
                             const position = { x: baseX, y: currentY };
                             let replyNode = null;
 
-                            console.log(`[載入 Keyword] 處理回覆 ${i + 1}:`, reply);
 
                             // 根據回覆類型創建對應節點
                             if (reply.type === 'imagemap') {
-                                console.log('[載入 Keyword] 創建 Imagemap 節點');
-                                console.log('[載入 Keyword] reply.baseUrl:', reply.baseUrl);
-                                console.log('[載入 Keyword] reply.altText:', reply.altText);
 
                                 replyNode = this.addNode(NodeTypes.MESSAGE_IMAGEMAP, position, true);
                                 if (replyNode) {
@@ -3370,7 +3284,6 @@ export class FlowDesigner {
                                         // ✅ 關鍵修正：reply 本身就包含完整資料！
                                         // 不需要再從 dataLoader 載入，直接使用 reply 的資料
                                         if (reply.baseUrl && reply.actions) {
-                                            console.log('[載入 Keyword] ✅ 使用 reply 中的 Imagemap 資料');
 
                                             // 直接設置完整資料
                                             replyNode.data.imagemapId = reply.baseUrl;
@@ -3401,9 +3314,6 @@ export class FlowDesigner {
                                     }
                                 }
                             } else if (reply.type === 'flex') {
-                                console.log('[載入 Keyword] 創建 Flex Message 節點');
-                                console.log('[載入 Keyword] reply.id:', reply.id);
-                                console.log('[載入 Keyword] reply.title:', reply.title);
 
                                 replyNode = this.addNode(NodeTypes.MESSAGE_FLEX, position, true);
                                 if (replyNode) {
@@ -3414,7 +3324,6 @@ export class FlowDesigner {
                                             const flexMessage = flexMessages.find(fm => fm.id === reply.id);
 
                                             if (flexMessage && flexMessage.contents) {
-                                                console.log('[載入 Keyword] ✅ 找到 Flex Message:', flexMessage.title);
 
                                                 // 設置完整資料
                                                 replyNode.data.flexId = flexMessage.id;
@@ -3450,14 +3359,12 @@ export class FlowDesigner {
                                     }
                                 }
                             } else if (reply.type === 'message' || reply.type === 'text') {
-                                console.log('[載入 Keyword] 處理 Text 回覆:', reply.text);
 
                                 // ✅ 檢查是否匹配 keyword
                                 const matchedKeyword = await this.matchKeyword(reply.text);
 
                                 if (matchedKeyword) {
                                     // 匹配到 keyword，創建 KEYWORD 節點
-                                    console.log('[載入 Keyword] ✅ 匹配到關鍵字:', matchedKeyword.keyword);
                                     replyNode = this.addNode(NodeTypes.KEYWORD, position, true);
                                     if (replyNode) {
                                         replyNode.data.keyword = matchedKeyword.keyword;
@@ -3469,7 +3376,6 @@ export class FlowDesigner {
                                     }
                                 } else {
                                     // 沒有匹配，創建普通 Text 節點
-                                    console.log('[載入 Keyword] 創建 Text 節點');
                                     replyNode = this.addNode(NodeTypes.MESSAGE_TEXT, position, true);
                                     if (replyNode) {
                                         replyNode.data.text = reply.text || '';
@@ -3543,7 +3449,6 @@ export class FlowDesigner {
 
         findActions(contents);
 
-        console.log(`[extractFlexButtons] 找到 ${buttons.length} 個按鈕:`, buttons);
 
         return buttons;
     }
@@ -3563,7 +3468,6 @@ export class FlowDesigner {
             }
         }
 
-        console.log('[selectImagemap] 找到的選擇器元素:', selectElement);
 
         if (!selectElement) {
             console.error('[selectImagemap] 找不到選擇器元素');
@@ -3572,10 +3476,6 @@ export class FlowDesigner {
         }
 
         const imagemapId = selectElement.value;
-        console.log('[selectImagemap] 開始載入，選擇的 ID:', imagemapId);
-        console.log('[selectImagemap] 選擇器的所有選項:', Array.from(selectElement.options).map(opt => ({ value: opt.value, text: opt.text, selected: opt.selected })));
-        console.log('[selectImagemap] 選擇器的 selectedIndex:', selectElement.selectedIndex);
-        console.log('[selectImagemap] 當前選中的選項:', selectElement.options[selectElement.selectedIndex]);
 
         if (!imagemapId) {
             toast.warning('請先選擇一個 Imagemap');
@@ -3593,17 +3493,12 @@ export class FlowDesigner {
 
             // 載入所有 Imagemap
             const imagemaps = await dataLoader.loadImagemaps();
-            console.log('[selectImagemap] 載入的 Imagemap 列表:', imagemaps);
-            console.log('[selectImagemap] Imagemap 數量:', imagemaps.length);
 
             // Debug: 顯示所有 Imagemap 的 baseUrl
             if (imagemaps.length > 0) {
-                console.log('[selectImagemap] 所有 Imagemap baseUrls:', imagemaps.map(i => i.baseUrl));
-                console.log('[selectImagemap] 第一個 Imagemap 的完整資料:', imagemaps[0]);
             }
 
             const imagemap = imagemaps.find(i => i.baseUrl === imagemapId);
-            console.log('[selectImagemap] 找到的 Imagemap:', imagemap);
 
             if (!imagemap) {
                 console.error('[selectImagemap] 找不到 Imagemap！');
@@ -3612,7 +3507,6 @@ export class FlowDesigner {
                 throw new Error('找不到 Imagemap');
             }
 
-            console.log('[selectImagemap] Imagemap 完整資料:', imagemap);
 
             // 更新節點資料（使用 baseUrl 作為 ID）
             node.data.imagemapId = imagemap.baseUrl;  // 使用 baseUrl 作為 ID
@@ -3623,7 +3517,6 @@ export class FlowDesigner {
             node.data.actions = imagemap.actions;    // 保存 actions
             node.data.imageUrl = imagemap.baseUrl;   // 使用 baseUrl 作為圖片 URL
 
-            console.log('✅ [selectImagemap] Imagemap 資料已載入:', node.data);
 
             // 重新渲染節點以顯示圖片
             const oldElement = document.getElementById(node.id);
@@ -4017,7 +3910,6 @@ export class FlowDesigner {
         this.selectNode(nodeId);
         this.showNodeProperties(nodeId);
 
-        console.log(`🎯 已聚焦到節點: ${nodeId}, zoom: ${this.canvasZoom}`);
     }
 
     /**
@@ -4060,27 +3952,23 @@ export class FlowDesigner {
      */
     _executeDeleteNode(nodesToDelete) {
 
-        console.log(`[刪除節點] 將刪除 ${nodesToDelete.length} 個節點:`, nodesToDelete);
 
         // ✅ 先刪除相關的邊的 DOM 元素（SVG path 和控制點）
         const edgesToRemove = this.edges.filter(edge =>
             nodesToDelete.includes(edge.source) || nodesToDelete.includes(edge.target)
         );
 
-        console.log(`[刪除節點] 將刪除 ${edgesToRemove.length} 條連線`);
 
         edgesToRemove.forEach(edge => {
             // 移除 SVG path（使用 edge.id）
             const pathElement = document.getElementById(edge.id);
             if (pathElement) {
-                console.log(`[刪除節點] 移除連線 path:`, edge.id);
                 pathElement.remove();
             }
 
             // 移除控制點（使用 data-edge-id 屬性）
             const controlPoint = document.querySelector(`[data-edge-id="${edge.id}"]`);
             if (controlPoint) {
-                console.log(`[刪除節點] 移除控制點:`, edge.id);
                 controlPoint.remove();
             }
         });
@@ -4132,26 +4020,17 @@ export class FlowDesigner {
      * 調試：輸出流程結構
      */
     debugFlowStructure() {
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.log('📊 流程結構調試信息');
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
         // 準備 HTML 輸出
         let htmlOutput = '<div style="font-family: monospace; font-size: 12px; line-height: 1.6;">';
         htmlOutput += '<h3 style="margin-top: 0;">📊 流程結構調試信息</h3>';
 
         // 1. 節點信息
-        console.log(`\n📦 節點列表 (共 ${this.nodes.length} 個):`);
-        console.log('─────────────────────────────────────────────');
         htmlOutput += `<h4>📦 節點列表 (共 ${this.nodes.length} 個):</h4>`;
         htmlOutput += '<div style="margin-left: 20px;">';
 
         this.nodes.forEach((node, index) => {
             const label = node.data.label || node.config.label;
-            console.log(`${index + 1}. ${label}`);
-            console.log(`   ID: ${node.id}`);
-            console.log(`   類型: ${node.type}`);
-            console.log(`   位置: (${node.position.x}, ${node.position.y})`);
 
             htmlOutput += `<div style="margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-left: 3px solid ${node.config.color};">`;
             htmlOutput += `<strong>${index + 1}. ${label}</strong><br>`;
@@ -4162,33 +4041,24 @@ export class FlowDesigner {
             // 顯示節點數據摘要
             if (node.type === NodeTypes.URL) {
                 const url = node.data.url || '(空)';
-                console.log(`   URL: ${url}`);
                 htmlOutput += `URL: <a href="${url}" target="_blank">${url}</a><br>`;
             } else if (node.type === NodeTypes.MESSAGE_TEXT) {
                 const text = (node.data.text || '(空)').substring(0, 50);
-                console.log(`   文字: ${text}...`);
                 htmlOutput += `文字: ${text}...<br>`;
             } else if (node.type === NodeTypes.POSTBACK) {
                 const data = node.data.data || '(空)';
-                console.log(`   Data: ${data}`);
                 htmlOutput += `Data: ${data}<br>`;
             } else if (node.type === NodeTypes.RICHMENU) {
                 const name = node.data.name || '(未命名)';
-                console.log(`   名稱: ${name}`);
-                console.log(`   Richmenu ID: ${node.data.richmenuId}`);
-                console.log(`   按鈕數: ${node.data.buttons?.length || 0}`);
                 htmlOutput += `<span style="color: #0066cc; font-weight: bold;">名稱: ${name}</span><br>`;
                 htmlOutput += `Richmenu ID: ${node.data.richmenuId}<br>`;
                 htmlOutput += `按鈕數: ${node.data.buttons?.length || 0}<br>`;
             }
             htmlOutput += '</div>';
-            console.log('');
         });
         htmlOutput += '</div>';
 
         // 2. 連接信息
-        console.log(`\n🔗 連接列表 (共 ${this.edges.length} 條):`);
-        console.log('─────────────────────────────────────────────');
         htmlOutput += `<h4>🔗 連接列表 (共 ${this.edges.length} 條):</h4>`;
         htmlOutput += '<div style="margin-left: 20px;">';
 
@@ -4199,9 +4069,6 @@ export class FlowDesigner {
             const sourceLabel = sourceNode?.data.label || sourceNode?.config.label || edge.source;
             const targetLabel = targetNode?.data.label || targetNode?.config.label || edge.target;
 
-            console.log(`${index + 1}. ${edge.id}`);
-            console.log(`   起點: ${sourceLabel} (${edge.source})`);
-            console.log(`   終點: ${targetLabel} (${edge.target})`);
 
             htmlOutput += `<div style="margin-bottom: 10px; padding: 8px; background: #e7f3ff; border-radius: 4px;">`;
             htmlOutput += `<strong>${index + 1}.</strong> ${sourceLabel} → ${targetLabel}<br>`;
@@ -4209,7 +4076,6 @@ export class FlowDesigner {
             htmlOutput += `<small>終點: ${edge.target}</small><br>`;
 
             if (edge.sourceHandle) {
-                console.log(`   Handle: ${edge.sourceHandle}`);
                 htmlOutput += `<small>Handle: ${edge.sourceHandle}</small><br>`;
             }
 
@@ -4222,18 +4088,14 @@ export class FlowDesigner {
                     const startY = sourceNode.position.y + sourceEl.offsetHeight / 2;
                     const endX = targetNode.position.x;
                     const endY = targetNode.position.y + targetEl.offsetHeight / 2;
-                    console.log(`   路徑: (${startX.toFixed(1)}, ${startY.toFixed(1)}) → (${endX.toFixed(1)}, ${endY.toFixed(1)})`);
                     htmlOutput += `<small style="color: #666;">路徑: (${startX.toFixed(1)}, ${startY.toFixed(1)}) → (${endX.toFixed(1)}, ${endY.toFixed(1)})</small>`;
                 }
             }
             htmlOutput += '</div>';
-            console.log('');
         });
         htmlOutput += '</div>';
 
         // 3. 連接關係圖
-        console.log('\n🌳 連接關係樹:');
-        console.log('─────────────────────────────────────────────');
         htmlOutput += '<h4>🌳 連接關係樹:</h4>';
         htmlOutput += '<div style="margin-left: 20px;">';
 
@@ -4259,22 +4121,18 @@ export class FlowDesigner {
         nodeConnections.forEach((conn, nodeId) => {
             if (conn.outgoing.length > 0) {
                 const nodeLabel = conn.node.data.label || conn.node.config.label;
-                console.log(`${nodeLabel}:`);
                 htmlOutput += `<div style="margin-bottom: 10px;"><strong>${nodeLabel}:</strong><br>`;
 
                 conn.outgoing.forEach(edge => {
                     const target = this.nodes.find(n => n.id === edge.target);
                     const targetLabel = target?.data.label || target?.config.label || edge.target;
-                    console.log(`  └─→ ${targetLabel}`);
                     htmlOutput += `<div style="margin-left: 20px;">└─→ ${targetLabel}</div>`;
                 });
                 htmlOutput += '</div>';
-                console.log('');
             }
         });
         htmlOutput += '</div>';
 
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         htmlOutput += '</div>';
 
         // 顯示在畫面上的 Modal
@@ -4403,7 +4261,6 @@ export class FlowDesigner {
                 await this.refreshAllRichmenuData();
 
                 toast.success('✅ 流程已從後端重新載入');
-                console.log('🔄 流程已更新:', this.flowName);
             }
             // 如果沒有 flowId，從 localStorage 重新載入
             else {
@@ -4420,7 +4277,6 @@ export class FlowDesigner {
                     await this.refreshAllRichmenuData();
 
                     toast.success('✅ 流程已從本地重新載入');
-                    console.log('🔄 從 localStorage 重新載入');
                 } else {
                     toast.warning('⚠️ 沒有可載入的流程資料');
                 }
@@ -4440,11 +4296,9 @@ export class FlowDesigner {
         const richmenuNodes = this.nodes.filter(n => n.type === NodeTypes.RICHMENU && n.data.richmenuId);
 
         if (richmenuNodes.length === 0) {
-            console.log('[刷新 Richmenu] 沒有 Richmenu 節點需要刷新');
             return;
         }
 
-        console.log(`[刷新 Richmenu] 開始刷新 ${richmenuNodes.length} 個 Richmenu 節點`);
 
         for (const node of richmenuNodes) {
             try {
@@ -4462,14 +4316,12 @@ export class FlowDesigner {
                         this.renderNode(node);
                     }
 
-                    console.log(`[刷新 Richmenu] ✅ ${node.data.name} 已刷新`);
                 }
             } catch (error) {
                 console.error(`[刷新 Richmenu] ❌ ${node.id} 刷新失敗:`, error);
             }
         }
 
-        console.log('[刷新 Richmenu] 全部完成');
     }
 
     /**
@@ -4517,7 +4369,6 @@ export class FlowDesigner {
                 this.flowId = parsed.flowId;
                 this.flowName = parsed.flowName;
                 this.renderAll();
-                console.log('📂 已載入草稿');
             } catch (err) {
                 console.error('載入草稿失敗:', err);
             }
@@ -4676,11 +4527,9 @@ export default FlowDesigner;
  * - 從其他頁面跳轉回來
  */
 export async function pageInit() {
-    console.log('🎨 [Flow Designer] pageInit 執行');
 
     // 防止重複初始化
     if (window._flowDesignerInitialized) {
-        console.log('[Flow Designer] 已初始化，跳過重複初始化');
         return;
     }
 
@@ -4696,14 +4545,11 @@ export async function pageInit() {
         }
 
         // 初始化 Flow Designer
-        console.log('[Flow Designer] 創建 FlowDesigner 實例...');
         window.flowDesigner = new FlowDesigner('flow-canvas');
 
         // 標記已初始化
         window._flowDesignerInitialized = true;
 
-        console.log('✅ [Flow Designer] 初始化完成');
-        console.log('💡 提示: 右鍵點擊畫布可新增節點');
 
     } catch (error) {
         console.error('❌ [Flow Designer] 初始化失敗:', error);
@@ -4719,7 +4565,6 @@ async function initializeFlowSelectors() {
     const projectSelect = document.getElementById('flow-project-select');
 
     if (!botSelect) {
-        console.log('[Flow Designer] Bot 選擇器不存在，跳過初始化');
         return;
     }
 
@@ -4816,14 +4661,11 @@ async function initializeFlowSelectors() {
 
                     // ✅ 清除 localStorage 中的舊流程草稿 (正確的 key)
                     localStorage.removeItem('flow_designer_draft');
-                    console.log('🗑️ [Flow Designer] 已清除舊流程草稿');
 
                     // ✅ 清除 dataLoader 快取並重新載入新 Bot 的資料
                     if (window.dataLoader) {
                         window.dataLoader.clearCache();
-                        console.log('🔄 [Flow Designer] 清除資料快取，重新載入新 Bot 資料...');
                         await window.dataLoader.loadAllData();
-                        console.log('✅ [Flow Designer] 新 Bot 資料載入完成');
                     }
 
                     // 不再調用 reloadFlow，因為那會從 localStorage 載入舊資料
@@ -4841,12 +4683,10 @@ async function initializeFlowSelectors() {
         if (projectSelect) {
             projectSelect.addEventListener('change', (e) => {
                 const newProject = e.target.value;
-                console.log('[Flow Designer] 專案篩選:', newProject || '全部');
                 // 未來實作：根據專案過濾流程
             });
         }
 
-        console.log('✅ [Flow Designer] 選擇器初始化完成');
 
     } catch (err) {
         console.error('❌ [Flow Designer] 無法載入選擇器:', err);

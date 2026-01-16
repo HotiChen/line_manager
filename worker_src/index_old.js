@@ -131,20 +131,16 @@ export default {
   
   // ✅ 1️⃣ 註冊 Access Token
   async function handleRegisterAccessToken(request, env, userId) {
-    console.log(`📢 [DEBUG] handleRegisterAccessToken 被呼叫, userId=${userId}`);
   
     const { project, token } = await request.json();
     if (!project || !token) {
-      console.log("🚨 [ERROR] 缺少 project 或 token");
       return jsonResponse({ error: "Missing project or token" }, 400);
     }
   
-    console.log(`📌 [INFO] 註冊 project=${project}, token=${token}`);
   
     let accessTokens = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {};
     accessTokens[project] = token;
   
-    console.log("✅ [INFO] 儲存 Access Token 至 KV_LINE_STORAGE");
     await env.KV_LINE_STORAGE.put(`access_tokens_${userId}`, JSON.stringify(accessTokens));
   
     return jsonResponse({ success: `Access token registered for ${project}` });
@@ -191,10 +187,7 @@ export default {
   
   // ✅ 取得 UserID 的所有專案
   async function handleListUserProjects(env, userId) {
-    console.log("[DEBUG] env keys:", Object.keys(env));
-    console.log("[handleListUserProjects] KV_LINE_STORAGE =", typeof env.KV_LINE_STORAGE);
     const accessTokens = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {};
-    console.log("[handleListUserProjects] 取得 accessTokens =", accessTokens);
     //const accessTokens = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {};
     return new Response(JSON.stringify(accessTokens), {
       headers: {
@@ -206,7 +199,6 @@ export default {
   
   // ✅ 5️⃣ 取得 Richmenu 列表
   async function handleGetRichMenuList(env, userId) {
-    console.log(env);
     const project = await env.KV_LINE_STORAGE.get(`current_token_${userId}`);
     if (!project) return jsonResponse({ error: "No current project set" }, 404);
   
@@ -214,7 +206,6 @@ export default {
     const token = accessTokens[project];
   
   
-    console.log(`📌 取得 access token for ${userId},的 ${project}  token=${token}`);
   
     if (!token) return jsonResponse({ error: "No token found for current project" }, 404);
   
@@ -320,7 +311,6 @@ export default {
   async function handleAddMenus(add, token, results) {
     for (const item of add) {
       try {
-        console.log("[handleAddMenus] 處理:", item.name);
   
         // 1️⃣ 建立 Richmenu
         const res = await fetch("https://api.line.me/v2/bot/richmenu", {
@@ -347,7 +337,6 @@ export default {
         }
   
         const { richMenuId } = await res.json();
-        console.log("[新增成功] richMenuId =", richMenuId);
   
         // // 2️⃣ 圖片上傳
         // if (item.imageBase64) {
@@ -357,7 +346,6 @@ export default {
         //     const base64Data = item.imageBase64.replace(/^data:image\/\w+;base64,/, "");
         //     const imageBuffer = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
   
-        //     console.log(`[圖片上傳中] ${item.name}, MIME: ${mimeType}, 長度: ${imageBuffer.length}`);
   
         //     const uploadRes = await fetch(`https://api-data.line.me/v2/bot/richmenu/${richMenuId}/content`, {
         //       method: "POST",
@@ -373,7 +361,6 @@ export default {
         //       throw new Error(`[圖片上傳失敗] ${uploadRes.status} - ${uploadError}`);
         //     }
   
-        //     console.log(`[圖片上傳成功] richMenuId: ${richMenuId}`);
         //   } catch (imgErr) {
         //     console.error(`[handleAddMenus] ❌ 圖片上傳失敗 (${item.name}):`, imgErr.message);
         //     results.errors.push({ name: item.name, error: imgErr.message });
@@ -391,7 +378,6 @@ export default {
             const arrayBuffer = await imageBlob.arrayBuffer();
             const imageBuffer = new Uint8Array(arrayBuffer);
   
-            console.log(`[圖片上傳中] ${item.name}, MIME: ${mimeType}, 長度: ${imageBuffer.length}`);
   
             const uploadRes = await fetch(`https://api-data.line.me/v2/bot/richmenu/${richMenuId}/content`, {
               method: "POST",
@@ -407,7 +393,6 @@ export default {
               throw new Error(`[圖片上傳失敗] ${uploadRes.status} - ${uploadError}`);
             }
   
-            console.log(`[圖片上傳成功] richMenuId: ${richMenuId}`);
           } catch (imgErr) {
             console.error(`[handleAddMenus] ❌ 圖片上傳失敗 (${item.name}):`, imgErr.message);
             results.errors.push({ name: item.name, error: imgErr.message });
@@ -421,7 +406,6 @@ export default {
         // 3️⃣ 設定 alias（可選）
         if (item.alias) {
           try {
-            console.log(`[設定 alias] ${item.alias} → ${richMenuId}`);
             const aliasRes = await fetch("https://api.line.me/v2/bot/richmenu/alias", {
               method: "POST",
               headers: {
@@ -490,7 +474,6 @@ export default {
           if (!deleteAliasRes.ok) {
             throw new Error(`刪除 alias 失敗：${alias.richMenuId}`);
           } else {
-            console.log(`✅ 已刪除 alias：${alias.richMenuId}`);
           }
         }
   
@@ -574,10 +557,8 @@ export default {
       }
   
       // const raw = await request.text();
-      //console.log("[handleSyncRichmenus] Raw body text =", raw);
   
       // const payload = JSON.parse(raw);
-      console.log("[handleSyncRichmenus] Parsed JSON =", payload);
       
       if (form) {
         // 直接從 form 裡取出各欄位
@@ -603,8 +584,6 @@ export default {
       if (!token) return jsonResponse({ error: "No token found for current project" }, 404);
   
       const results = { added: [], updated: [], removed: [], errors: [] };
-      console.log("[handleSyncRichmenus] 🧾 add 陣列 =", JSON.stringify(add, null, 2));
-      //console.log("add [] : "+JSON.stringify(add))
       await handleAddMenus(add, token, results);
       await handleRemoveMenus(remove, token, results);
       //await handleUpdateMenus(update, results);

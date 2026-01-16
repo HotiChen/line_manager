@@ -10,7 +10,6 @@ let allRichMenus = [];
  * 頁面初始化進入點 (由 main.js 調用)
  */
 export async function pageInit(pageData = {}) {
-    console.log('🚀 [RichMenuSegmented] 頁面初始化', pageData);
     await loadInitialData();
     initEventListeners();
 }

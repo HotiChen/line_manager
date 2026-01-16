@@ -27,10 +27,8 @@ async function handleSaveQuickReply(request, env, userId) {
     const index = existing.findIndex(item => item.id === qrItem.id);
     if (index >= 0) {
         existing[index] = qrItem;
-        console.log('🔄 [QR Save] 更新:', qrItem.id);
     } else {
         existing.push(qrItem);
-        console.log('➕ [QR Save] 新增:', qrItem.id);
     }
 
     await env.KV_LINE_STORAGE.put(listKey, JSON.stringify(existing));
@@ -43,7 +41,6 @@ async function handleSaveQuickReply(request, env, userId) {
 async function handleListQuickReplies(env, userId) {
     const listKey = `quick_reply_list_${userId}`;
     const list = JSON.parse(await env.KV_LINE_STORAGE.get(listKey) || '[]');
-    console.log('📋 [QR List] 共', list.length, '筆');
     return jsonResponse({ success: true, data: list });
 }
 
@@ -66,7 +63,6 @@ async function handleDeleteQuickReply(request, env, userId) {
     const updated = list.filter(item => !toDelete.includes(item.id));
 
     await env.KV_LINE_STORAGE.put(listKey, JSON.stringify(updated));
-    console.log('🗑️ [QR Delete] 已刪除:', toDelete);
     return jsonResponse({ success: true, deleted: toDelete });
 }
 
@@ -89,7 +85,6 @@ async function handleGetQuickReply(env, userId, qrId) {
  * QR 路由處理
  */
 export function route(request, env, userId, pathname) {
-    console.log('📡 [QR Route] 處理路由：', pathname);
 
     if (pathname === '/quickreply/save' && request.method === 'POST') {
         return handleSaveQuickReply(request, env, userId);

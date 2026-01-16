@@ -311,7 +311,6 @@ export function setupGlobalErrorHandlers() {
         ErrorHandler.handle(event.error, '腳本錯誤', { showToast: false });
     });
 
-    console.log('✅ 全局錯誤處理已設置');
 }
 
 // 導出快捷方法

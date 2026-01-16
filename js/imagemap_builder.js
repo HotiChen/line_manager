@@ -83,7 +83,6 @@ class ImageMap {
 export async function pageInit(pageData) {
   setUserId(pageData.userId);
   const userId = getUserId();
-  console.log(`[imagemap builder] ✅ pageInit 被執行, userId: ${userId}`);
 
   // 🔄 顯示 loading 動畫
   const thumbnailArea = document.getElementById("imagemap-thumbnails");
@@ -96,19 +95,15 @@ export async function pageInit(pageData) {
 
   // 偵測 builder 類型
   const builder = "imagemap";
-  console.log("[imagemap_builder] 偵測到 builder:", builder);
 
   // 讀取 Cloudflare Worker 上的 imagemap 資料
   try {
-    console.log("📥 正在從 Worker 載入 ImageMaps...");
 
     // 使用 helper 中的函數載入 imagemap 清單
     const imagemapData = await fetchMessageListByType("imagemap", userId);
 
     if (Array.isArray(imagemapData)) {
       window.imagemaps = imagemapData.map(data => new ImageMap(data));
-      console.log("✅ 從 KV 載入 imagemaps:", window.imagemaps);
-      console.log("✅ 已成功從 Worker 載入 imagemap 數量：", window.imagemaps.length);
     } else {
       console.warn("⚠️ 無法讀取 KV imagemaps");
       window.imagemaps = [];
@@ -135,7 +130,6 @@ export async function pageInit(pageData) {
       thumb.addEventListener("click", () => {
         const selected = window.imagemaps[idx];
         if (!selected) return;
-        console.log("🖼️ 選取了第", idx + 1, "個 ImageMap，標題：", selected.altText);
 
         areas = selected.actions.map(a => ({ ...a })); // 複製
         document.getElementById("menu-name").value = selected.altText;
@@ -171,14 +165,12 @@ export async function pageInit(pageData) {
     return;
   }
 
-  console.log("DOMContentLoaded")
   const canvas = document.getElementById("uploaded-image-canvas");
   if (!canvas) {
     console.error("❌ 找不到 canvas 元素！");
     return;
   }
 
-  console.log("get canva")
   const ctx = canvas.getContext("2d");
   const imageInput = document.getElementById("new-image-upload");
   const imagePreview = new Image();
@@ -356,7 +348,6 @@ export async function pageInit(pageData) {
     }
     try {
 
-      console.log("2")
       CanvasHelper.redrawCanvasWithAreas(areas);
     } catch (e) {
       console.error("[CanvasHelper] ❌ redrawCanvasWithAreas() 發生錯誤：", e);
@@ -413,7 +404,6 @@ export async function pageInit(pageData) {
       imagePreview1.style.display = "block"
       imagePreview1.src = previewURL;
 
-      console.log("image preview load")
 
       // //   canvas.width = imagePreview.width;
       // //   canvas.height = imagePreview.height;
@@ -429,23 +419,18 @@ export async function pageInit(pageData) {
   });
 
   document.getElementById("confirm-new-imagemap")?.addEventListener("click", () => {
-    console.log("[Confirm Click] '確定' 按鈕被點擊。");
 
     const name = document.getElementById("new-menu-name").value.trim();
     if (!name) {
-      console.log("[Confirm Click] 驗證失敗：缺少名稱。");
       return alert("請輸入圖文訊息名稱");
     }
-    console.log(`[Confirm Click] 圖文訊息名稱: ${name}`);
 
     const previewAreaImagePreview = document.getElementById("image-preview");
     const baseUrl = previewAreaImagePreview.src;
 
     if (!baseUrl || baseUrl === window.location.href) {
-      console.log("[Confirm Click] 驗證失敗：缺少圖片來源。");
       return alert("請先上傳圖片或提供圖片網址");
     }
-    console.log(`[Confirm Click] 圖片來源 (baseUrl): ${baseUrl.substring(0, 100)}...`);
 
     // --- NEW LOGIC: Directly use the preview image's properties ---
     const imageWidth = previewAreaImagePreview.naturalWidth;
@@ -456,12 +441,10 @@ export async function pageInit(pageData) {
       alert("錯誤：無法讀取圖片尺寸，請嘗試重新上傳圖片。");
       return;
     }
-    console.log(`[Confirm Click] 取得圖片尺寸: ${imageWidth}x${imageHeight}`);
 
     // --- All logic from the old 'onload' handler is now moved here and executed synchronously ---
     canvas.width = imageWidth;
     canvas.height = imageHeight;
-    console.log(`[Confirm Click] Canvas 尺寸已設定為: ${canvas.width}x${canvas.height}`);
 
     try {
       // We need a new Image object for the CanvasHelper, but we know it's loaded.
@@ -470,7 +453,6 @@ export async function pageInit(pageData) {
 
       CanvasHelper.init(canvas, ctx, 1, imgForCanvas);
       CanvasHelper.redrawCanvasWithAreas([]);
-      console.log("[Confirm Click] CanvasHelper 初始化並重繪成功。");
     } catch (e) {
       console.error("[Confirm Click] ❌ Canvas 操作失敗：", e);
       alert("Canvas 操作失敗，請查看控制台。");
@@ -489,7 +471,6 @@ export async function pageInit(pageData) {
       startX = Math.floor((e.clientX - rect.left) * scaleX);
       startY = Math.floor((e.clientY - rect.top) * scaleY);
       isDrawing = true;
-      console.log("🖱️ Mouse Down - startX:", startX, "startY:", startY);
     });
 
     canvas.addEventListener("mousemove", (e) => {
@@ -551,7 +532,6 @@ export async function pageInit(pageData) {
         }
       }
     });
-    console.log("[Confirm Click] 繪圖事件監聽器已設定。");
 
     // --- Finalize UI ---
     document.getElementById("menu-name").value = name;
@@ -567,7 +547,6 @@ export async function pageInit(pageData) {
         document.body.style.removeProperty('padding-right');
       }, 300);
     }
-    console.log("[Confirm Click] 表單已重設，Modal 已隱藏。");
 
     // --- Create new ImageMap object ---
     const altText = name;
@@ -575,7 +554,6 @@ export async function pageInit(pageData) {
     const actions = [...areas];
     const newImagemap = new ImageMap({ baseUrl, altText, baseSize, actions });
     window.currentImagemap = newImagemap;
-    console.log("✅ [Confirm Click] 新增 ImageMap 物件成功:", newImagemap);
   });
 
   document.getElementById("delete-selected-imagemap")?.addEventListener("click", function () {
@@ -603,7 +581,6 @@ export async function pageInit(pageData) {
 
     if (canvas && ctx) {
       try {
-        console.log("5");
         ctx.clearRect(0, 0, canvas.width, canvas.height);
       } catch (e) {
         console.error("[Canvas] ❌ 清除畫布失敗：", e);
@@ -619,9 +596,7 @@ export async function pageInit(pageData) {
 
   document.getElementById("save-button")?.addEventListener("click", () => {
     const result = getCurrentReplyInput();
-    console.log("DEBUG: Result from getCurrentReplyInput:", result);
     if (!result || !result.item) {
-      console.log("DEBUG: Validation failed. 'result' or 'result.item' is falsy.");
       alert("請選擇一個有效的回覆動作");
       return;
     }
@@ -727,7 +702,6 @@ export async function pageInit(pageData) {
   });
 
   document.getElementById("save-edited-imagemap")?.addEventListener("click", () => {
-    console.log("💾 使用者點擊儲存/更新 ImageMap，actions 數量：", areas.length);
     // 在此區塊內補上同步 areas 到 currentImagemap.actions 的程式碼
     if (window.currentImagemap) {
       window.currentImagemap.actions = [...areas]; // 更新 actions
@@ -761,7 +735,6 @@ export async function pageInit(pageData) {
         thumb.addEventListener("click", () => {
           const selected = window.imagemaps[idx];
           if (!selected) return;
-          console.log("🖼️ 選取了第", idx + 1, "個 ImageMap，標題：", selected.altText);
 
           areas = selected.actions.map(a => ({ ...a })); // 複製
           document.getElementById("menu-name").value = selected.altText;
@@ -792,12 +765,10 @@ export async function pageInit(pageData) {
   const replyFieldsContainer = document.getElementById("reply-dynamic-fields");
   if (replyFieldsContainer) {
     const builder = "imagemap";//detectBuilder();
-    console.log("userID: " + getUserId())
     const dseadfa = generateReplyInputUI({
       builder,
       userId: getUserId(),
       onSelect: (type, item) => {
-        console.log("✅ 使用者選擇訊息：", type, item);
         // 預設將文字帶入下方表單欄位
         const input = document.getElementById("data-input");
         if (input && item.text) {
@@ -807,12 +778,10 @@ export async function pageInit(pageData) {
     }).then((ui) => {
       replyFieldsContainer.appendChild(ui);
     });
-    console.log(dseadfa)
   }
 }
 // 新增：上傳所有 imagemaps 到 Cloudflare Worker
 document.getElementById("upload-imagemap")?.addEventListener("click", async () => {
-  console.log("🚀 開始上傳 ImageMaps 數量：", window.imagemaps?.length || 0);
   const userId = getUserId();
   if (!userId) return alert("⚠️ 無法取得使用者 ID");
 
@@ -849,7 +818,6 @@ document.getElementById("upload-imagemap")?.addEventListener("click", async () =
     const result = await api.post('/imagemap/save', formData);
 
     if (result.success) {
-      console.log("✅ 所有 ImageMaps 已成功儲存至 Worker");
       alert("✅ 上傳成功：" + (result.message || ""));
     } else {
       alert("❌ 上傳失敗：" + (result.error || "未知錯誤"));

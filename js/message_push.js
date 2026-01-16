@@ -20,7 +20,6 @@ let currentPushMessages = []; // 儲存已加入的訊息列表
 let selectedMemberIds = new Set();
 let currentUserId = null;
 
-console.log("🚀 [MessagePush] script loaded v1.2");
 
 /**
  * 頁面初始化
@@ -197,7 +196,6 @@ async function initMessageEditorUI() {
             userId: currentUserId,
             onSelect: (type, selectedItem) => {
                 // 選取時的 callback，我們主要靠 handleAddMessage 裡的 getCurrentReplyInput
-                console.log("[PushEditor] Selected:", type, selectedItem);
             }
         });
         container.innerHTML = '';

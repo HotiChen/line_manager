@@ -1206,7 +1206,6 @@ async function fetchRichMenuList() {
     LoadingManager.show('richmenu-fetch', '載入 Richmenu 列表...');
 
     const response = await api.get('/richmenu/list');
-    console.log('🎨 Richmenu API 回應:', response);
 
     // api.get 直接返回解析後的 JSON
     allRichmenus = response.richmenus || [];
@@ -1296,7 +1295,6 @@ function highlightThumbnail(selectedImg) {
 async function loadDefaultRichmenu() {
   try {
     const response = await api.get('/richmenu/default');
-    console.log('🏠 Default Richmenu API 回應:', response);
 
     // API 直接返回 { richMenuId: 'xxx' }，沒有 success 欄位
     if (response.richMenuId) {
@@ -1411,7 +1409,6 @@ async function syncRichmenusToServer() {
     if (removeList.length > 0) {
       addLog(`🗑️ 刪除 ${removeList.length} 個 Richmenu...`);
       const result = await api.post('/richmenu/sync', { add: [], update: [], remove: removeList, setDefault: null });
-      console.log('🗑️ 刪除 API 回應:', result);
 
       // 檢查是否有錯誤（有 errors 且長度 > 0 才算失敗）
       if (result.errors && result.errors.length > 0) {
@@ -1455,7 +1452,6 @@ async function syncRichmenusToServer() {
           });
 
           const json = await res.json();
-          console.log('➕ 新增 API 回應:', json);
 
           if (json.added?.length > 0 && (!json.errors || json.errors.length === 0)) {
             addLog(`✅ 成功新增 Richmenu: ${richmenu.name}`);
@@ -1540,7 +1536,6 @@ function filterRichmenuList(searchTerm) {
 let isInitialized = false; // 防止重複初始化
 
 export async function pageInit(pageData) {
-  console.log('🎨 [Richmenu] pageInit 被調用', { isInitialized, pageData });
 
   if (isInitialized) {
     console.warn('⚠️ [Richmenu] 已經初始化過了，跳過重複調用');

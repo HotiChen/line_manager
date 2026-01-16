@@ -61,20 +61,16 @@ export default {
 
 // ✅ 1️⃣ 註冊 Access Token
 async function registerAccessToken(request, env, userId) {
-  console.log(`📢 [DEBUG] registerAccessToken 被呼叫, userId=${userId}`);
 
   const { project, token } = await request.json();
   if (!project || !token) {
-    console.log("🚨 [ERROR] 缺少 project 或 token");
     return jsonResponse({ error: "Missing project or token" }, 400);
   }
 
-  console.log(`📌 [INFO] 註冊 project=${project}, token=${token}`);
 
   let accessTokens = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {};
   accessTokens[project] = token;
 
-  console.log("✅ [INFO] 儲存 Access Token 至 KV_LINE_STORAGE");
   await env.KV_LINE_STORAGE.put(`access_tokens_${userId}`, JSON.stringify(accessTokens));
 
   return jsonResponse({ success: `Access token registered for ${project}` });
@@ -139,7 +135,6 @@ async function getRichMenuList(env, userId) {
   const token = accessTokens[project];
 
 
-  console.log(`📌 取得 access token for ${userId},的 ${project}  token=${token}`);
 
   if (!token) return jsonResponse({ error: "No token found for current project" }, 404);
 

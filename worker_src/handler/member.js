@@ -61,7 +61,6 @@ export async function handleSaveMember(request, env, ownerId) {
   };
 
   await env.KV_LINE_STORAGE.put(profileKey, JSON.stringify(profile));
-  console.log("✅ [Save] 已儲存會員:", memberId);
 
   // 處理 Tag 變更（混合設計的核心）
   const tagsToAdd = tags.filter(t => !oldTags.includes(t));
@@ -82,7 +81,6 @@ export async function handleSaveMember(request, env, ownerId) {
   if (!list.includes(memberId)) {
     list.push(memberId);
     await env.KV_LINE_STORAGE.put(listKey, JSON.stringify(list));
-    console.log("📋 [List] 已更新 member list");
   }
 
   // 🔄 同步圖文選單 (根據標籤自動切換 - 分眾)
@@ -91,20 +89,17 @@ export async function handleSaveMember(request, env, ownerId) {
   // 🔄 同步圖文選單 (根據等級自動切換 - 分層)
   const tierConfig = await getTierConfig(env, ownerId);
   const isBenefitEnabled = !!tierConfig.benefits?.richMenu?.enabled;
-  console.log(`🔍 [Save] 分層選單權益狀態: ${isBenefitEnabled} (ownerId: ${ownerId})`);
 
   if (isBenefitEnabled) {
     try {
       // 獲取當前專案的 Access Token
       const tokenMap = await env.KV_LINE_STORAGE.get(`access_tokens_${ownerId}`, { type: 'json' }) || {};
       const currentProject = await env.KV_LINE_STORAGE.get(`current_token_${ownerId}`);
-      console.log(`🔍 [Save] 當前活動專案: ${currentProject}`);
 
       const currentData = tokenMap[currentProject];
       const accessToken = typeof currentData === 'string' ? currentData : currentData?.token;
 
       if (accessToken) {
-        console.log(`🔄 [Save] 準備同步選單: member=${memberId}, tier=${profile.tier}, token縮寫=${accessToken.substring(0, 10)}...`);
         // 加上 await 確保 API 執行完畢
         await applyTierRichMenu(env, ownerId, memberId, profile.tier, accessToken);
       } else {
@@ -114,7 +109,6 @@ export async function handleSaveMember(request, env, ownerId) {
       console.error("❌ [Save] 同步等級 Rich Menu 失敗:", e);
     }
   } else {
-    console.log(`ℹ️ [Save] 分層選單權益未開啟，跳過自動同步`);
   }
 
   return jsonResponse({ success: true, data: profile });
@@ -170,7 +164,6 @@ export async function handleDeleteMember(request, env, ownerId) {
   // 移除 profile & log
   await env.KV_LINE_STORAGE.delete(profileKey);
   await env.KV_LINE_STORAGE.delete(logKey);
-  console.log("🗑️ [Delete] 已刪除 profile & log:", memberId);
 
   // 更新列表
   const list = JSON.parse(await env.KV_LINE_STORAGE.get(listKey) || "[]");
@@ -182,7 +175,6 @@ export async function handleDeleteMember(request, env, ownerId) {
 
 // 路由進入點
 export function route(request, env, ownerId, pathname, url) {
-  console.log("📡 [MemberRoute] 處理路由：", pathname);
 
   if (pathname === "/member/save") return handleSaveMember(request, env, ownerId);
   if (pathname === "/member/list") return handleListMembers(env, ownerId);

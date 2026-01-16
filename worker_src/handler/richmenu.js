@@ -256,8 +256,6 @@ export async function handleBatchSetAlias(request, env, userId) {
 async function handleAddMenus(add, token, results) {
   for (const item of add) {
     try {
-      console.log("[handleAddMenus] Processing item:", item.name);
-      console.log("[handleAddMenus] Areas:", JSON.stringify(item.areas, null, 2));
 
       const res = await fetch("https://api.line.me/v2/bot/richmenu", {
         method: "POST",

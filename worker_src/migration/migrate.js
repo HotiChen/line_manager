@@ -9,7 +9,6 @@ import { BotKeys, UserKeys } from "../lib/kv_schema.js";
 export async function migrateUser(env, userId) {
     const logs = [];
     const log = (msg) => {
-        console.log(msg);
         logs.push(msg);
     };
 
@@ -171,7 +170,6 @@ export async function migrateUser(env, userId) {
 export async function rollbackUser(env, userId) {
     const logs = [];
     const log = (msg) => {
-        console.log(msg);
         logs.push(msg);
     };
 

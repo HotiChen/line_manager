@@ -16,7 +16,6 @@
  * @param {string[]} tags - 要添加的 Tags
  */
 export async function addTagsToEntity(env, userId, entityType, entityId, tags) {
-    console.log(`[Tag] 開始為 ${entityType}:${entityId} 添加標籤:`, tags);
 
     for (const tag of tags) {
         // 1. 確保 Tag 存在於 Tag 列表
@@ -44,7 +43,6 @@ export async function addTagsToEntity(env, userId, entityType, entityId, tags) {
         }
     }
 
-    console.log(`✅ [Tag] 已為 ${entityType}:${entityId} 添加 tags:`, tags);
 }
 
 /**
@@ -68,7 +66,6 @@ export async function removeTagsFromEntity(env, userId, entityType, entityId, ta
         }
     }
 
-    console.log(`🗑️ [Tag] 已從 ${entityType}:${entityId} 移除 tags:`, tags);
 }
 
 /**
@@ -96,7 +93,6 @@ export async function batchAddTag(env, userId, entityType, entityIds, tag) {
     for (const entityId of entityIds) {
         await addTagsToEntity(env, userId, entityType, entityId, [tag]);
     }
-    console.log(`✅ [Tag] 批次為 ${entityIds.length} 個 ${entityType} 添加 tag: ${tag}`);
 }
 
 /**
@@ -136,7 +132,6 @@ export async function renameTag(env, userId, oldTag, newTag) {
     const updatedList = tagList.map(t => t === oldTag ? newTag : t);
     await env.KV_LINE_STORAGE.put(tagListKey, JSON.stringify(updatedList));
 
-    console.log(`📝 [Tag] 已重命名: ${oldTag} → ${newTag}`);
 }
 
 /**
@@ -164,7 +159,6 @@ export async function deleteTag(env, userId, tag) {
     const updatedList = tagList.filter(t => t !== tag);
     await env.KV_LINE_STORAGE.put(tagListKey, JSON.stringify(updatedList));
 
-    console.log(`🗑️ [Tag] 已刪除: ${tag}`);
 }
 
 /**

@@ -309,11 +309,6 @@ async function handleKeywordSubmit() {
     const quickReplyId = qrSelect?.value || null;
 
     // Debug: 確認 QR 選取狀態
-    console.log('🔍 QR 選取狀態:', {
-      qrSelectElement: qrSelect,
-      selectedValue: qrSelect?.value,
-      quickReplyId: quickReplyId
-    });
 
     // 取得自動標籤
     const addTagsRaw = document.getElementById('keyword-add-tags')?.value || '';
@@ -332,14 +327,11 @@ async function handleKeywordSubmit() {
 
     // Debug: 查看準備發送的完整資料
     const dataToSend = newItem.toJSON();
-    console.log('📤 準備發送資料:', dataToSend);
-    console.log('📤 dataToSend.quickReplyId:', dataToSend.quickReplyId);
 
     try {
       const result = await api.post('/keyword/save', dataToSend);
 
       // Debug: 查看實際回應
-      console.log('💾 API 回應:', result);
 
       // ApiClient 已經返回解析後的 JSON，直接檢查
       // 可能是 { success: true, data: ... } 或直接是 API 回應
@@ -545,10 +537,8 @@ async function fetchKeywordReplyList(userId) {
   const list = json.data || [];
 
   // Debug: 查看載入的資料
-  console.log('📋 載入的 keyword 列表:', list);
   list.forEach((item, index) => {
     if (item.quickReplyId) {
-      console.log(`✅ keyword[${index}] "${item.keyword}" 有 QR:`, item.quickReplyId);
     }
   });
 
@@ -592,7 +582,6 @@ async function loadQRTemplates(selectedId = null) {
       }
     });
     cachedQRTemplates = Array.from(uniqueMap.values());
-    console.log(`[QR] 載入 ${cachedQRTemplates.length} 個不重複的 QR 模板`);
 
     cachedQRTemplates.forEach(qr => {
       const option = document.createElement('option');

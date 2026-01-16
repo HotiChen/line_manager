@@ -1,15 +1,12 @@
 // lib/token.js
 
 export async function handleRegisterAccessToken(request, env, userId) {
-  console.log(`📢 [DEBUG] handleRegisterAccessToken 被呼叫, userId=${userId}`);
 
   const { project, token } = await request.json();
   if (!project || !token) {
-    console.log("🚨 [ERROR] 缺少 project 或 token");
     return jsonResponse({ error: "Missing project or token" }, 400);
   }
 
-  console.log(`📌 [INFO] 註冊 project=${project}, token=${token}`);
 
   // 呼叫 LINE 的 /v2/bot/info 取得 destination
   const infoRes = await fetch("https://api.line.me/v2/bot/info", {
@@ -19,7 +16,6 @@ export async function handleRegisterAccessToken(request, env, userId) {
   });
 
   if (!infoRes.ok) {
-    console.log("🚨 [ERROR] 無法取得 LINE bot info");
     return jsonResponse({ error: "Invalid LINE token" }, 400);
   }
 
@@ -27,7 +23,6 @@ export async function handleRegisterAccessToken(request, env, userId) {
   const destination = info.userId;
   const displayName = info.displayName;
 
-  console.log("✅ [INFO] destination =", destination);
 
   let accessTokens = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {};
 
@@ -37,7 +32,6 @@ export async function handleRegisterAccessToken(request, env, userId) {
     displayName
   };
 
-  console.log("✅ [INFO] 儲存 Access Token 至 KV_LINE_STORAGE");
   await env.KV_LINE_STORAGE.put(`access_tokens_${userId}`, JSON.stringify(accessTokens));
 
   // 也建立 destination 對應回 userId 的反查索引

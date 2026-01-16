@@ -2,7 +2,6 @@
  * Logger Utility
  */
 export const info = (tag, message, data = '') => {
-    console.log(`[${tag}] INFO: ${message}`, data);
 };
 
 export const warn = (tag, message, data = '') => {
@@ -14,5 +13,4 @@ export const error = (tag, message, err = '') => {
 };
 
 export const debug = (tag, message, data = '') => {
-    console.log(`[${tag}] DEBUG: ${message}`, data);
 };

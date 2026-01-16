@@ -15,7 +15,6 @@ export async function handleSaveTag(request, env, userId) {
   }
 
   await ensureTagExists(env, userId, name);
-  console.log("✅ [Save] 確保 tag 存在:", name);
 
   return jsonResponse({ success: true });
 }
@@ -47,7 +46,6 @@ export async function handleDeleteTag(request, env, userId) {
   for (const tag of tagsToDelete) {
     if (tag) {
       await deleteTag(env, userId, tag);
-      console.log("🗑️ [Delete] 已全面刪除 tag:", tag);
     }
   }
 
@@ -63,14 +61,12 @@ export async function handleRenameTag(request, env, userId) {
   }
 
   await renameTag(env, userId, oldName, newName);
-  console.log(`📝 [Rename] 已更名 tag: ${oldName} -> ${newName}`);
 
   return jsonResponse({ success: true });
 }
 
 // 路由進入點
 export function route(request, env, userId, pathname) {
-  console.log("📡 [TagRoute] 處理路由：", pathname);
 
   if (pathname === "/tag/save") return handleSaveTag(request, env, userId);
   if (pathname === "/tag/list") return handleListTags(env, userId);

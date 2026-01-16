@@ -118,7 +118,6 @@ export async function handleGenerateInvite(request, env, userId, botId, role) {
         }
     }
 
-    console.log(`[Invite] User ${userId} is generating invite for bots:`, botIds);
     const token = crypto.randomUUID();
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + expiresInHours);
@@ -229,7 +228,6 @@ export async function handleAcceptInvite(request, env) {
 
     for (const botId of botIds) {
         try {
-            console.log(`[AcceptInvite] Processing bot: ${botId} for user: ${userId}`);
 
             // 加入團隊
             const permissionsKey = BotKeys.permissions(botId);
@@ -238,7 +236,6 @@ export async function handleAcceptInvite(request, env) {
             // 檢查是否已經是成員
             const existingMember = permissions.users.find(u => u.userId === userId);
             if (existingMember) {
-                console.log(`[AcceptInvite] User ${userId} is already a member of bot ${botId}`);
                 successfulBots.push({ botId, status: 'already_member' });
                 continue;
             }
@@ -254,11 +251,9 @@ export async function handleAcceptInvite(request, env) {
             });
 
             await env.KV_LINE_STORAGE.put(permissionsKey, JSON.stringify(permissions));
-            console.log(`[AcceptInvite] ✅ Added user to bot ${botId} permissions`);
 
             // 更新使用者的 Bot 列表
             await updateUserBotList(env, userId, botId, inviteData.role);
-            console.log(`[AcceptInvite] ✅ Updated user bot list for ${userId}`);
 
             successfulBots.push({ botId, status: 'joined' });
 
@@ -278,7 +273,6 @@ export async function handleAcceptInvite(request, env) {
             failed: failedBots
         };
         await env.KV_LINE_STORAGE.put(inviteKey, JSON.stringify(inviteData));
-        console.log(`[AcceptInvite] ✅ Marked invite token as used`);
     }
 
     // 返回詳細結果
@@ -337,10 +331,8 @@ export async function handleListInvites(request, env, userId) {
 
 async function updateUserBotList(env, userId, botId, role) {
     const userBotsKey = UserKeys.bots(userId);
-    console.log(`[updateUserBotList] userId=${userId}, botId=${botId}, role=${role}, key=${userBotsKey}`);
 
     const userBots = await env.KV_LINE_STORAGE.get(userBotsKey, { type: "json" }) || { bots: [] };
-    console.log(`[updateUserBotList] Current userBots:`, JSON.stringify(userBots));
 
     // 檢查是否已在列表中
     const existingBotIndex = userBots.bots.findIndex(b => b.botId === botId);
@@ -353,21 +345,16 @@ async function updateUserBotList(env, userId, botId, role) {
 
     if (existingBotIndex >= 0) {
         userBots.bots[existingBotIndex] = { ...userBots.bots[existingBotIndex], ...botInfo };
-        console.log(`[updateUserBotList] Updated existing bot at index ${existingBotIndex}`);
     } else {
         userBots.bots.push(botInfo);
-        console.log(`[updateUserBotList] Added new bot, total bots: ${userBots.bots.length}`);
     }
 
     // 如果是第一個 Bot，設為預設
     if (!userBots.currentBotId) {
         userBots.currentBotId = botId;
-        console.log(`[updateUserBotList] Set currentBotId to ${botId}`);
     }
 
-    console.log(`[updateUserBotList] About to save:`, JSON.stringify(userBots));
     await env.KV_LINE_STORAGE.put(userBotsKey, JSON.stringify(userBots));
-    console.log(`[updateUserBotList] ✅ Saved successfully!`);
 }
 
 async function removeUserBotList(env, userId, botId) {

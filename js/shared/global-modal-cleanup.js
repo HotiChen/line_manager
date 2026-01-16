@@ -32,7 +32,6 @@
                     // 移除所有遺留的 backdrop
                     const backdrops = document.querySelectorAll('.modal-backdrop');
                     if (backdrops.length > 0) {
-                        console.log(`[Global Modal Cleanup] Removing ${backdrops.length} backdrop(s)`);
                         backdrops.forEach(el => el.remove());
                     }
 
@@ -44,7 +43,6 @@
             }, 100); // 100ms 延遲確保 Bootstrap 動畫完成
         });
 
-        console.log('✅ Global modal backdrop cleanup initialized');
     }
 
     // DOMContentLoaded 或立即執行

@@ -3,7 +3,6 @@ import { getAccessToken, pushMessage } from "../lib/line_api.js";
 import { incrementMessageCount } from "../lib/message_stats.js";
 
 export async function handleSendPushMessage(request, env, userId) {
-    console.log(`🚀 [PushHandler] Received request from user ${userId}`);
     try {
         const { to, messages } = await request.json();
 
@@ -54,7 +53,6 @@ export async function handleSendPushMessage(request, env, userId) {
 
             // 🔍 偵錯：如果是 Imagemap，印出其 baseUrl
             if (newMsg.type === 'imagemap') {
-                console.log(`🖼️ [Imagemap Debug] baseUrl: ${newMsg.baseUrl}`);
             }
 
             return newMsg;

@@ -11,7 +11,6 @@ export async function getAccessToken(env, userId) {
 
 export async function pushMessage(token, to, messages) {
     const url = "https://api.line.me/v2/bot/message/push";
-    console.log(`📡 [LINE Push] Sending to ${to}...`);
     const response = await fetch(url, {
         method: "POST",
         headers: {
@@ -25,7 +24,6 @@ export async function pushMessage(token, to, messages) {
     });
 
     const resJson = await response.json();
-    console.log(`📡 [LINE Push] Response:`, JSON.stringify(resJson));
 
     if (!response.ok) {
         console.error(`[LINE API] Push failed: ${response.status}`, resJson);

@@ -44,7 +44,6 @@ async function loadTierConfig() {
         const result = await api.get('/tier/config');
         if (result.success) {
             tierConfig = result.config;
-            console.log("✅ 載入等級配置:", tierConfig);
         }
     } catch (error) {
         console.error("❌ 載入等級配置失敗:", error);
@@ -60,7 +59,6 @@ async function loadTierStats() {
         const result = await api.get('/tier/stats');
         if (result.success) {
             tierStats = result.stats;
-            console.log("✅ 載入等級統計:", tierStats);
         }
     } catch (error) {
         console.error("❌ 載入等級統計失敗:", error);
@@ -75,7 +73,6 @@ async function loadRichMenuList() {
         const result = await api.get('/richmenu/list');
         if (result && result.richmenus) {
             richMenuList = result.richmenus;
-            console.log("✅ 載入 Rich Menu 列表:", richMenuList);
         }
     } catch (error) {
         console.error("❌ 載入 Rich Menu 列表失敗:", error);
@@ -308,9 +305,7 @@ async function saveAllSettings() {
             }
         };
 
-        console.log("📤 正在儲存等級配置...", newConfig);
         const result = await api.post('/tier/config', newConfig);
-        console.log("📥 儲存回應:", result);
 
         if (result && result.success) {
             toast.success('等級配置已更新');

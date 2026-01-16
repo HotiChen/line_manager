@@ -100,14 +100,11 @@ async function apiClient(endpoint, options = {}) {
 async function fetchWithCache(cacheKey, apiCallFunction) {
   const cachedData = messageCache.get(cacheKey);
   if (cachedData) {
-    console.log(`[Cache] HIT: ${cacheKey}`);
     return cachedData;
   }
-  console.log(`[Cache] MISS: ${cacheKey}. Fetching from remote...`);
   try {
     const data = await retryOperation(apiCallFunction);
     messageCache.set(cacheKey, data);
-    console.log(`✅ [API] Fetched and cached: ${cacheKey}`, data);
     return data;
   } catch (err) {
     console.error(`❌ [API] Failed to fetch ${cacheKey}:`, err);
@@ -161,7 +158,6 @@ export async function fetchWelcomeMessage(userId) {
   // Welcome message is a single object, handle potential null response
   const cachedData = messageCache.get(cacheKey);
   if (cachedData) {
-    console.log(`[Cache] HIT: ${cacheKey}`);
     return cachedData;
   }
   try {
@@ -218,7 +214,6 @@ export async function saveRemoteMessages(msgType, messages, userId) {
 
 // ☁️ 上傳圖片到 WordPress (接收 base64)
 export async function uploadImage(base64, filename) {
-  console.log(`[uploadImage] 準備上傳檔案:`, filename);
   showLoader('上傳圖片中...');
   try {
     // This API is external and doesn't use the standard apiClient headers/base_url
@@ -238,7 +233,6 @@ export async function uploadImage(base64, filename) {
       throw new Error(data.error || "未知的上傳錯誤。");
     }
 
-    console.log("📤 圖片成功上傳，新網址:", data.url);
     return data.url;
   } catch (error) {
     console.error("[uploadImage] 上傳過程中發生錯誤:", error);
@@ -433,7 +427,6 @@ export function waitForGlobalVar(varName, timeout = 5000) {
 
 // 🧩 產生動態訊息輸入 UI 區塊
 export async function generateReplyInputUI({ builder, userId, onSelect, initialReply = null, customData = {} }) {
-  console.log(`[generateReplyInputUI] builder=${builder}, userId=${userId}`, initialReply);
   const types = getSupportedMsgTypes(builder);
   const defaultType = initialReply ? initialReply.type : types[0];
 
@@ -718,7 +711,6 @@ export function getCurrentReplyInput() {
     }
   }
 
-  console.log("[getCurrentReplyInput]", { type, value, item });
   return { type, value, item };
 }
 
@@ -782,7 +774,6 @@ export function createAction(reply, builderType) {
 // 🧹 清除快取
 export function clearMessageCache() {
   messageCache.clear();
-  console.log("[clearMessageCache] 快取已清除");
 }
 
 // 📊 取得快取統計
@@ -871,7 +862,6 @@ export async function batchSaveMessages(msgType, messages, userId) {
 export function batchDeleteMessages(msgType, ids) {
   try {
     ids.forEach(id => deleteMessageItem(msgType, id));
-    console.log(`[batchDeleteMessages] 已刪除 ${ids.length} 個 ${msgType} 訊息`);
   } catch (error) {
     console.error(`[batchDeleteMessages] 批量刪除失敗:`, error);
     throw error;

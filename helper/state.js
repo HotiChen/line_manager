@@ -7,7 +7,6 @@ const state = {
 
 export function setUserId(id) {
     state.userId = id;
-    if (config.debug) console.log('[State] User ID set to:', id);
 }
 
 export function getUserId() {
@@ -17,7 +16,6 @@ export function getUserId() {
     // 支援 ?userId= 和 ?testUserId= 兩種格式（userId 優先）
     const userId = urlParams.get('userId') || urlParams.get('testUserId');
     if (userId) {
-        console.log('[State] Using userId from URL:', userId);
         // 強制設定到 state 中
         setUserId(userId);
         return userId;
@@ -34,7 +32,6 @@ export function getUserId() {
 
 export function setCurrentProject(project) {
     state.currentProject = project;
-    if (config.debug) console.log('[State] Current Project set to:', project);
 }
 
 export function getCurrentProject() {

@@ -18,7 +18,6 @@ let quickReplyList = [];
  * 頁面初始化
  */
 export async function pageInit(pageData) {
-    console.log('[Quick Reply Builder] pageInit', pageData);
 
     LoadingManager.show('quick-reply', '載入 Quick Reply...');
 

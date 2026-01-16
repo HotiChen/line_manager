@@ -44,7 +44,6 @@ async function loadMembers() {
 
     if (result.success) {
       members = result.data || [];
-      console.log(`✅ 載入 ${members.length} 位會員`);
     }
   } catch (error) {
     console.error("❌ 載入會員失敗:", error);
@@ -62,7 +61,6 @@ async function loadTags() {
     if (result.success) {
       // 後端現在回傳 [{name, total, stats}, ...]
       tags = result.data || [];
-      console.log(`✅ 載入 ${tags.length} 個標籤`);
     }
   } catch (error) {
     console.error("❌ 載入標籤失敗:", error);
@@ -193,7 +191,6 @@ function setupEventListeners() {
 
   // 儲存會員按鈕
   document.getElementById('save-member-btn')?.addEventListener('click', () => {
-    console.log('按钮被點擊');
     window.saveMember();
   });
 }
@@ -286,7 +283,6 @@ window.saveMember = async function () {
     tags: selectedTags
   };
 
-  console.log('📤 準備儲存會員資料:', memberData);
 
   try {
     LoadingManager.show('save-member', '儲存中...');
@@ -486,10 +482,8 @@ function renderTagManagementList() {
  * 新增標籤
  */
 window.addTag = async function () {
-  console.log('🚀 addTag called');
   const input = document.getElementById('new-tag-input');
   const name = input.value.trim();
-  console.log('🏷️ Tag name to add:', name);
 
   if (!name) {
     toast.error('請輸入標籤名稱');

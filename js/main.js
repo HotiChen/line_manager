@@ -18,7 +18,6 @@ let currentPageName = 'dashboard'; // Default page - 輕量的入口頁面
 
 
 async function loadPage(pageName, pageData = {}) {
-  console.log(`📄 [loadPage] 被調用: ${pageName}`, pageData);
   console.trace('📍 調用來源:');
 
   currentPageName = pageName; // Update current page name
@@ -87,26 +86,21 @@ async function initializeBotSelector(activeBot) {
     // 4. Add event listener for bot change
     botSelect.addEventListener("change", async (e) => {
       const newBot = e.target.value;
-      console.log('🔄 [Bot Switch] 偵測到切換:', newBot);
       if (!newBot) return;
 
       try {
-        console.log('🔄 [Bot Switch] 同步到後端...');
         await api.post('/token/set', { project: newBot });
 
         // Reload the current page to reflect the new bot context
         toast.info(`正在切換至 ${newBot}...`);
-        console.log('🔄 [Bot Switch] 重新載入頁面:', currentPageName);
         await loadPage(currentPageName, { userId: getUserId() });
         toast.success(`已切換至 ${newBot}`);
-        console.log('✅ [Bot Switch] 切換完成');
       } catch (err) {
         console.error("❌ 切換 LINE@ 失敗:", err);
         toast.error("切換失敗，請稍後再試");
       }
     });
 
-    console.log('✅ [Bot Selector] 事件監聽器已註冊');
 
   } catch (err) {
     console.error("❌ 無法載入 LINE@ 列表:", err);
@@ -181,7 +175,6 @@ window.addEventListener("DOMContentLoaded", () => {
       // 只有在沒有其他 modal 打開時才清理
       if (!document.querySelector('.modal.show')) {
         document.querySelectorAll('.modal-backdrop').forEach(el => {
-          console.log('[Global Modal Cleanup] Removing backdrop');
           el.remove();
         });
         document.body.classList.remove('modal-open');
@@ -190,7 +183,6 @@ window.addEventListener("DOMContentLoaded", () => {
       }
     }, 100);
   });
-  console.log('✅ Global modal backdrop cleanup initialized');
 
   // 立即顯示 loading（暗色毛玻璃效果）
   LoadingManager.show('app-init', '初始化應用程式...');
