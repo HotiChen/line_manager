@@ -25,6 +25,7 @@ import { setInnerHTML } from '../helper/security.js';
 
 import { showLoader, hideLoader } from './shared/loader.js';
 import { setUserId, apiBase } from "../helper/state.js";
+import { toast, withButtonLoading } from "../helper/toast.js";
 
 let processedImageFile = null; // To store the processed image file
 
@@ -198,7 +199,7 @@ export async function pageInit(pageData) {
       processedImageFile = dataURLtoFile(processedDataUrl, newFilename);
 
     } catch (error) {
-      alert(error.message);
+      toast.error(error.message);
       e.target.value = '';
       previewAreaImagePreview.src = "";
       previewAreaImagePreview.style.display = "none";
@@ -396,7 +397,10 @@ export async function pageInit(pageData) {
 
   document.getElementById("preview-image-url")?.addEventListener("click", () => {
     previewURL = document.getElementById("new-image-url").value.trim();
-    if (!previewURL) return alert("請輸入圖片網址");
+    if (!previewURL) {
+      toast.warning("請輸入圖片網址");
+      return;
+    }
 
 
     let imagePreview1 = document.getElementById("image-preview");
@@ -597,7 +601,7 @@ export async function pageInit(pageData) {
   document.getElementById("save-button")?.addEventListener("click", () => {
     const result = getCurrentReplyInput();
     if (!result || !result.item) {
-      alert("請選擇一個有效的回覆動作");
+      toast.warning("請選擇一個有效的回覆動作");
       return;
     }
 
@@ -608,7 +612,7 @@ export async function pageInit(pageData) {
     // 取得剛剛畫的那個區域的座標
     const targetArea = areas[areas.length - 1];
     if (!targetArea || !targetArea.area) {
-      alert("找不到目標區域，請重試");
+      toast.warning("找不到目標區域，請重試");
       return;
     }
 
@@ -653,13 +657,13 @@ export async function pageInit(pageData) {
   document.getElementById("update-button")?.addEventListener("click", () => {
     const index = parseInt(document.getElementById("update-button").getAttribute("data-index"), 10);
     if (isNaN(index) || index < 0 || index >= areas.length) {
-      alert("無效的編輯索引");
+      toast.error("無效的編輯索引");
       return;
     }
 
     const result = getCurrentReplyInput();
     if (!result || !result.item) {
-      alert("請選擇一個有效的回覆動作");
+      toast.warning("請選擇一個有效的回覆動作");
       return;
     }
 
@@ -711,7 +715,7 @@ export async function pageInit(pageData) {
       const message = window.imagemaps.includes(window.currentImagemap)
         ? "✅ 已更新 ImageMap！"
         : "✅ 已儲存新增的 ImageMap！";
-      alert(message);
+      toast.success(message);
       if (!window.imagemaps.includes(window.currentImagemap)) {
         window.imagemaps.push(window.currentImagemap);
       }
@@ -781,49 +785,56 @@ export async function pageInit(pageData) {
   }
 }
 // 新增：上傳所有 imagemaps 到 Cloudflare Worker
-document.getElementById("upload-imagemap")?.addEventListener("click", async () => {
+document.getElementById("upload-imagemap")?.addEventListener("click", async function () {
+  const btn = this;
   const userId = getUserId();
-  if (!userId) return alert("⚠️ 無法取得使用者 ID");
+  if (!userId) {
+    toast.warning("⚠️ 無法取得使用者 ID");
+    return;
+  }
 
   if (!window.imagemaps || !window.imagemaps.length) {
-    return alert("⚠️ 尚無任何 ImageMap 可上傳");
+    toast.warning("⚠️ 尚無任何 ImageMap 可上傳");
+    return;
   }
 
-  // 1. 先檢查 baseUrl 是否為 base64，若是則上傳到 WordPress Worker 並替換
-  for (const imap of window.imagemaps) {
-    if (typeof imap.baseUrl === "string" && imap.baseUrl.startsWith("data:image/")) {
-      try {
-        // 優先使用 window.latestBase64Image 作為上傳來源
-        const rawBase64 = window.latestBase64Image || imap.baseUrl;
-        const newUrl = await uploadImage(rawBase64, `${Date.now()}_imagemap.jpg`);
-        imap.baseUrl = newUrl;
-      } catch (err) {
-        console.error("❌ WordPress Worker 上傳失敗，跳過此圖像：", err);
-        alert("❌ 上傳圖片失敗：" + (err.message || err));
-        return;
+  await withButtonLoading(btn, async () => {
+    // 1. 先檢查 baseUrl 是否為 base64，若是則上傳到 WordPress Worker 並替換
+    for (const imap of window.imagemaps) {
+      if (typeof imap.baseUrl === "string" && imap.baseUrl.startsWith("data:image/")) {
+        try {
+          // 優先使用 window.latestBase64Image 作為上傳來源
+          const rawBase64 = window.latestBase64Image || imap.baseUrl;
+          const newUrl = await uploadImage(rawBase64, `${Date.now()}_imagemap.jpg`);
+          imap.baseUrl = newUrl;
+        } catch (err) {
+          console.error("❌ WordPress Worker 上傳失敗，跳過此圖像：", err);
+          toast.error("❌ 上傳圖片失敗：" + (err.message || err));
+          return;
+        }
       }
     }
-  }
 
-  // 過濾掉被標記刪除的 imagemap
-  const filteredImagemaps = [];
-  for (const imap of window.imagemaps) {
-    if (!imap._markedForDelete) {
-      filteredImagemaps.push(imap);
+    // 過濾掉被標記刪除的 imagemap
+    const filteredImagemaps = [];
+    for (const imap of window.imagemaps) {
+      if (!imap._markedForDelete) {
+        filteredImagemaps.push(imap);
+      }
     }
-  }
 
-  try {
-    const formData = { imagemaps: filteredImagemaps.map(i => i.toJSON()) };
-    const result = await api.post('/imagemap/save', formData);
+    try {
+      const formData = { imagemaps: filteredImagemaps.map(i => i.toJSON()) };
+      const result = await api.post('/imagemap/save', formData);
 
-    if (result.success) {
-      alert("✅ 上傳成功：" + (result.message || ""));
-    } else {
-      alert("❌ 上傳失敗：" + (result.error || "未知錯誤"));
+      if (result.success) {
+        toast.success("✅ 上傳成功：" + (result.message || ""));
+      } else {
+        toast.error("❌ 上傳失敗：" + (result.error || "未知錯誤"));
+      }
+    } catch (err) {
+      console.error("[upload-imagemap] 上傳錯誤：", err);
+      // API Client 已經會攔截錯誤並彈出 Toast，這邊不用再彈出一次，除非你確信沒有 catch
     }
-  } catch (err) {
-    console.error("[upload-imagemap] 上傳錯誤：", err);
-    alert("❌ 上傳失敗：" + (err.message || JSON.stringify(err)));
-  }
+  }, "上傳中...");
 });

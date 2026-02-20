@@ -156,6 +156,7 @@ import { toast, withButtonLoading } from "../helper/toast.js";
 import { setInnerHTML } from "../helper/security.js";
 import { createNameCardComponent } from "../js/flexcards.js";
 import { apiBase, debug, getUserId, setUserId } from "../helper/state.js";
+import { api } from "../helper/api.client.js";
 import {
   detectBuilder,
   getSupportedMsgTypes,
@@ -686,14 +687,9 @@ export async function pageInit(pageData) {
 
       await withButtonLoading(syncFlexBtn, async () => {
         try {
-          const response = await fetch(`${apiBase}/flex/sync`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-User-Id": getUserId() },
-            body: JSON.stringify({ flexs: payload })
-          });
+          const result = await api.post('/flex/sync', { flexs: payload });
 
-          const result = await response.json();
-          if (!response.ok) {
+          if (!result.success) {
             throw new Error(result.error || "同步失敗");
           }
 
@@ -708,7 +704,7 @@ export async function pageInit(pageData) {
 
         } catch (err) {
           console.error("❌ 同步失敗:", err);
-          showNotification(`❌ 同步失敗: ${err.message} `, "error");
+          showNotification(`❌ 同步失敗: ${err.message}`, "error");
         }
       }, '同步中...');
     });

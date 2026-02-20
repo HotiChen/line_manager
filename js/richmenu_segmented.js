@@ -1,13 +1,23 @@
 /**
  * 分眾圖文選單管理邏輯
  */
+import { api } from '../helper/api.client.js';
+import { toast } from '../helper/toast.js';
 
 let currentRules = [];
 let allTags = [];
 let allRichMenus = [];
 
 /**
+ * pageInit
  * 頁面初始化進入點 (由 main.js 調用)
+ * 
+ * Pre-conditions:
+ * - 無
+ * 
+ * Post-conditions:
+ * - 載入標籤、選單和分眾規則資料
+ * - 綁定畫面事件
  */
 export async function pageInit(pageData = {}) {
     await loadInitialData();
@@ -15,34 +25,40 @@ export async function pageInit(pageData = {}) {
 }
 
 /**
+ * loadInitialData
  * 載入初始資料 (標籤、選單、現有規則)
+ * 
+ * Post-conditions:
+ * - 利用 api.parallel 查詢所有所需資料
+ * - 更新全域陣列 allTags, allRichMenus, currentRules
+ * - 觸發畫面的 render 動作
  */
 async function loadInitialData() {
     try {
-        // 1. 取得所有標籤
-        const tagRes = await ApiClient.get('/tag/list');
-        if (tagRes.success) {
+        const [tagRes, menuRes, rulesRes] = await api.parallel([
+            { method: 'GET', endpoint: '/tag/list' },
+            { method: 'GET', endpoint: '/richmenu/list' },
+            { method: 'GET', endpoint: '/richmenu/segmented/list' }
+        ]);
+
+        if (!tagRes.error && tagRes.success) {
             allTags = tagRes.data || [];
             renderTagSelect();
         }
 
-        // 2. 取得所有圖文選單
-        const menuRes = await ApiClient.get('/richmenu/list');
-        if (menuRes.richmenus) {
+        if (!menuRes.error && menuRes.richmenus) {
             allRichMenus = menuRes.richmenus;
             renderRichMenuSelect();
         }
 
-        // 3. 取得現有分眾規則
-        const rulesRes = await ApiClient.get('/richmenu/segmented/list');
-        if (rulesRes.success) {
+        if (!rulesRes.error && rulesRes.success) {
             currentRules = rulesRes.rules || [];
             renderRuleList();
         }
 
     } catch (error) {
         console.error('載入資料失敗:', error);
-        showToast('載入資料失敗，請檢查網路連線', 'error');
+        toast.error('載入資料失敗，請檢查網路連線');
     }
 }
 
@@ -51,6 +67,7 @@ async function loadInitialData() {
  */
 function renderTagSelect() {
     const select = document.getElementById('tagSelect');
+    if (!select) return;
     select.innerHTML = '<option value="">請選擇標籤...</option>';
     allTags.forEach(tag => {
         const option = document.createElement('option');
@@ -65,6 +82,7 @@ function renderTagSelect() {
  */
 function renderRichMenuSelect() {
     const select = document.getElementById('richmenuSelect');
+    if (!select) return;
     select.innerHTML = '<option value="">請選擇對應選單...</option>';
     allRichMenus.forEach(menu => {
         const option = document.createElement('option');
@@ -79,19 +97,19 @@ function renderRichMenuSelect() {
  */
 function initEventListeners() {
     // 新增規則
-    document.getElementById('addRuleBtn').addEventListener('click', () => {
+    document.getElementById('addRuleBtn')?.addEventListener('click', () => {
         const tag = document.getElementById('tagSelect').value;
         const richMenuId = document.getElementById('richmenuSelect').value;
         const priority = parseInt(document.getElementById('priorityInput').value);
 
         if (!tag || !richMenuId) {
-            alert('請選擇標籤與對應選單');
+            toast.warning('請選擇標籤與對應選單');
             return;
         }
 
         // 檢查是否重複標籤
         if (currentRules.some(r => r.tag === tag)) {
-            alert('此標籤已存在規則中');
+            toast.warning('此標籤已存在規則中');
             return;
         }
 
@@ -105,22 +123,22 @@ function initEventListeners() {
     });
 
     // 儲存所有規則
-    document.getElementById('saveRulesBtn').addEventListener('click', async () => {
+    document.getElementById('saveRulesBtn')?.addEventListener('click', async () => {
         try {
-            const res = await ApiClient.post('/richmenu/segmented/save', { rules: currentRules });
+            const res = await api.post('/richmenu/segmented/save', { rules: currentRules });
             if (res.success) {
-                showToast('儲存成功！規則已即時生效。');
+                toast.success('儲存成功！規則已即時生效。');
             } else {
-                showToast('儲存失敗: ' + res.error, 'error');
+                toast.error('儲存失敗: ' + (res.error || '未知錯誤'));
             }
         } catch (error) {
-            showToast('系統錯誤，請稍後再試', 'error');
+            toast.error('系統錯誤，請稍後再試');
         }
     });
 
-    // 「同步所有用戶」按鈕 (模擬邏輯，實際可能需要後端批次處理)
-    document.getElementById('syncAllBtn').addEventListener('click', () => {
-        alert('此操作將會針對現有所有用戶重新計算並同步選單，在大數據量下可能耗時較長。目前已排入背景處理。');
+    // 「同步所有用戶」按鈕
+    document.getElementById('syncAllBtn')?.addEventListener('click', () => {
+        toast.info('此操作將會針對現有所有用戶重新計算並同步選單，在大數據量下可能耗時較長。目前已排入背景處理。');
     });
 }
 
@@ -129,6 +147,7 @@ function initEventListeners() {
  */
 function renderRuleList() {
     const container = document.getElementById('ruleList');
+    if (!container) return;
 
     if (currentRules.length === 0) {
         container.innerHTML = `
@@ -177,19 +196,3 @@ window.deleteRule = (index) => {
         renderRuleList();
     }
 };
-
-/**
- * 顯示 Toast 訊息
- */
-function showToast(msg, type = 'success') {
-    const toast = document.getElementById('toast');
-    const toastMsg = document.getElementById('toastMsg');
-
-    toast.style.background = type === 'success' ? '#1DB446' : '#ff4757';
-    toastMsg.textContent = msg;
-
-    toast.style.display = 'block';
-    setTimeout(() => {
-        toast.style.display = 'none';
-    }, 3000);
-}

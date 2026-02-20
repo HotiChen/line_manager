@@ -3,6 +3,7 @@
 import { apiBase, getUserId, setUserId } from "../helper/state.js";
 import { api } from "../helper/api.client.js";
 import { setInnerHTML } from "../helper/security.js";
+import { toast } from "../helper/toast.js";
 
 // let userId = null; // Module-level userId removed
 
@@ -27,6 +28,7 @@ export async function getTagList(passedUserId) {
     return [];
   } catch (err) {
     console.error("❌ 無法載入 tags", err);
+    toast.error('無法載入標籤列表');
     return [];
   }
 }
@@ -37,6 +39,15 @@ export async function getTagList(passedUserId) {
 let tags = [];
 
 // 供 tag.html 頁面初始化使用
+/**
+ * 載入所有標籤到 tags 陣列並渲染
+ * 
+ * Pre-conditions:
+ * - 需透過 getUserId 取得有效使用戶 ID
+ * 
+ * Post-conditions:
+ * - 取得 tags 並調用 renderTags 更新前端清單
+ */
 async function loadTags() {
   tags = await getTagList(getUserId()); // Pass module-level userId
   renderTags();
@@ -78,8 +89,11 @@ async function addNewTag() {
   try {
     const result = await api.post('/tag/save', { name });
     if (result.success) {
+      toast.success('新增標籤成功');
       tagInput.value = "";
       await loadTags();
+    } else {
+      toast.error('新增失敗');
     }
   } catch (err) {
     console.error("❌ 新增 tag 失敗", err);
@@ -87,6 +101,15 @@ async function addNewTag() {
 }
 
 // 刪除選定的標籤
+/**
+ * 刪除透過 Checkbox 勾選的標籤
+ * 
+ * Pre-conditions:
+ * - 畫面上至少勾選一個標籤 `.tag-checkbox:checked`
+ * 
+ * Post-conditions:
+ * - 呼叫 API 進行批次刪除，並重新載入列表
+ */
 async function deleteSelectedTags() {
   const checkboxes = document.querySelectorAll(".tag-checkbox:checked");
   const names = Array.from(checkboxes).map(cb => tags[parseInt(cb.dataset.index)].name);
@@ -95,7 +118,10 @@ async function deleteSelectedTags() {
   try {
     const result = await api.post('/tag/delete', { names });
     if (result.success) {
+      toast.success('刪除標籤成功');
       await loadTags();
+    } else {
+      toast.error('刪除標籤失敗');
     }
   } catch (err) {
     console.error("❌ 批次刪除 tags 失敗", err);

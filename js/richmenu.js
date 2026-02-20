@@ -1201,22 +1201,33 @@ async function saveEditedRichmenu() {
 }
 
 
+/**
+ * fetchRichMenuList
+ * 平行取得 Richmenu 列表與預設選單設定，然後刷新 UI 呈現
+ * 
+ * Pre-conditions:
+ * - 無
+ * 
+ * Post-conditions:
+ * - 若取得成功，更新 allRichmenus 全域變數，並顯示出縮圖列表。
+ * - 無選單資料時顯示空狀態提示。
+ */
 async function fetchRichMenuList() {
   try {
     LoadingManager.show('richmenu-fetch', '載入 Richmenu 列表...');
 
-    const response = await api.get('/richmenu/list');
+    const [listRes, defaultRes] = await api.parallel([
+      { method: 'GET', endpoint: '/richmenu/list' },
+      { method: 'GET', endpoint: '/richmenu/default' }
+    ]);
 
-    // api.get 直接返回解析後的 JSON
-    allRichmenus = response.richmenus || [];
+    allRichmenus = (!listRes.error && listRes.richmenus) ? listRes.richmenus : [];
+    defaultRichmenuId = (!defaultRes.error && defaultRes.richMenuId) ? defaultRes.richMenuId : null;
 
     if (allRichmenus.length === 0) {
       setInnerHTML(document.getElementById("richmenu-thumbnails"), "<p class='text-muted'>目前沒有設定任何 Richmenu，請新增</p>");
-      LoadingManager.hide('richmenu-fetch');
       return;
     }
-
-    defaultRichmenuId = await loadDefaultRichmenu();
 
     const fragment = document.createDocumentFragment();
     await Promise.all(
@@ -1234,12 +1245,23 @@ async function fetchRichMenuList() {
     thumbnailsContainer.appendChild(fragment);
 
   } catch (error) {
-    console.error("❌ 取得 Richmenu 失敗:", error);
+    console.error("❌ 初始化 Richmenu 列表失敗:", error);
   } finally {
     LoadingManager.hide('richmenu-fetch');
   }
 }
 
+/**
+ * fetchRichMenuImage
+ * 從後端取得單一 Richmenu 的詳細圖片與行為設定，並生成側邊欄縮圖元素
+ * 
+ * Pre-conditions:
+ * - richmenuData: 包含 richMenuId 等基本屬性的物件
+ * - isDefault: boolean，標示該選單是否為預設啟動選單
+ * 
+ * Post-conditions:
+ * - 回傳組裝完成的 DOM element，供列表呈現，或於失敗時回傳 null
+ */
 async function fetchRichMenuImage(richmenuData, isDefault = false) {
   const { richMenuId, name: richMenuName } = richmenuData;
   try {
@@ -1267,7 +1289,6 @@ async function fetchRichMenuImage(richmenuData, isDefault = false) {
     richmenu.isDefault = isDefault;
     richmenu.isNew = false;
     richmenu.isUpdated = false;
-    // The `metadata` property is no longer available, but its contents are flattened onto the object.
 
     const richmenuIndex = allRichmenus.findIndex(menu => menu.richMenuId === richMenuId);
     if (richmenuIndex !== -1) {
@@ -1289,24 +1310,6 @@ function highlightThumbnail(selectedImg) {
     img.classList.remove("selected-thumbnail");
   });
   selectedImg.classList.add("selected-thumbnail");
-}
-
-
-async function loadDefaultRichmenu() {
-  try {
-    const response = await api.get('/richmenu/default');
-
-    // API 直接返回 { richMenuId: 'xxx' }，沒有 success 欄位
-    if (response.richMenuId) {
-      return response.richMenuId;
-    } else {
-      console.warn("⚠️ 無法取得 Default Richmenu");
-      return null;
-    }
-  } catch (error) {
-    console.error("❌ 取得 Default Richmenu 失敗:", error);
-    return null;
-  }
 }
 
 document.getElementById("show-default-richmenu").addEventListener("click", async function () {
@@ -1421,38 +1424,19 @@ async function syncRichmenusToServer() {
 
     for (const richmenu of allRichmenus) {
       if (richmenu.isNew && !richmenu.isDeleted) {
-        const formData = new FormData();
-        formData.append("userId", getUserId());
-
-        formData.append("name", richmenu.name);
-        formData.append("diamention", JSON.stringify(richmenu.diamention));
-        formData.append("areas", JSON.stringify(richmenu.areas.map(area => {
-          const processedAction = createAction(area.action, 'richmenu');
-          return {
+        const extraData = {
+          name: richmenu.name,
+          diamention: richmenu.diamention,
+          areas: richmenu.areas.map(area => ({
             bounds: area.bounds,
-            action: processedAction
-          };
-        })));
-
-        formData.append("alias", richmenu.alias);
-        formData.append("chatBarText", richmenu.chatBarText || "Tap to open");
-        if (richmenu.imageFile) {
-          formData.append("imageFile", richmenu.imageFile);
-        }
+            action: createAction(area.action, 'richmenu')
+          })),
+          alias: richmenu.alias,
+          chatBarText: richmenu.chatBarText || "Tap to open"
+        };
 
         try {
-          // ⚠️ 暫時使用 fetch 而非 api.post，因為 FormData 上傳需要特殊處理
-          // TODO: 未來統一 FormData 處理後改用 ApiClient
-          const res = await fetch(`${apiBase}/richmenu/sync`, {
-            method: 'POST',
-            headers: {
-              'X-User-Id': getUserId()
-            },
-            body: formData
-          });
-
-          const json = await res.json();
-
+          const json = await api.upload('/richmenu/sync', richmenu.imageFile, 'imageFile', extraData);
           if (json.added?.length > 0 && (!json.errors || json.errors.length === 0)) {
             addLog(`✅ 成功新增 Richmenu: ${richmenu.name}`);
             continue;
@@ -1462,9 +1446,7 @@ async function syncRichmenusToServer() {
             return;
           }
         } catch (err) {
-          console.error("❌ 新增 Richmenu 發生錯誤", err);
           addLog(`❌ 新增失敗: ${richmenu.name}`, false);
-          toast.error("新增失敗：" + err);
           return;
         }
       }
@@ -1474,22 +1456,19 @@ async function syncRichmenusToServer() {
 
     if (defaultMenu) {
       addLog(`🌟 設定預設選單：${defaultMenu.name}`);
-      const res = await fetch(`${apiBase}/richmenu/sync`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-Id": getUserId() },
-        body: JSON.stringify({ add: [], update: [], remove: [], setDefault: { name: defaultMenu.name, richMenuId: defaultMenu.imageID } })
-      });
-      const result = await res.json();
-      if (!res.ok || result.errors?.length) {
+      try {
+        await api.post('/richmenu/sync', {
+          add: [], update: [], remove: [],
+          setDefault: { name: defaultMenu.name, richMenuId: defaultMenu.imageID }
+        });
+        addLog("✅ 預設選單已設定");
+      } catch (err) {
         addLog("❌ 設定預設選單失敗", false);
-        console.error("❌ 預設選單設定失敗", result.errors);
         return;
       }
-      addLog("✅ 預設選單已設定");
     }
 
     addLog("🎉 所有步驟同步完成！");
-    await fetchRichMenuList();
     await fetchRichMenuList();
   } finally {
     // 確保 loader 一定會被關閉

@@ -38,6 +38,12 @@ export async function pageInit(pageData) {
 
 /**
  * 載入等級配置
+ * 
+ * Pre-conditions:
+ * - api 物件與 /tier/config 後端路由有效
+ * 
+ * Post-conditions:
+ * - 將取得的配置儲存到 tierConfig 供畫面渲染使用 
  */
 async function loadTierConfig() {
     try {
@@ -197,6 +203,13 @@ function setupEventListeners() {
 
 /**
  * 重設為預設值
+ * 
+ * Pre-conditions:
+ * - 無
+ * 
+ * Post-conditions:
+ * - 以內建的 DEFAULT_CONFIG 取代現有的 tierConfig，並更新畫面
+ * - 但未送至伺服器儲存，需再點擊「儲存所有設定」才會真正生效
  */
 function resetToDefaults() {
     if (!confirm('確定要將所有等級設定重設為預設值嗎？（此動作不會即時儲存到伺服器）')) return;
@@ -244,6 +257,13 @@ function resetToDefaults() {
 
 /**
  * 儲存所有設定
+ * 
+ * Pre-conditions:
+ * - 各表單欄位已經填妥，並且有現有的 tierConfig 可以當作基底擴充
+ * 
+ * Post-conditions:
+ * - 將新的 `newConfig` 傳送給後端 API
+ * - 回傳成功將重新渲染畫面與統計，讓最新配置就緒
  */
 async function saveAllSettings() {
     if (!tierConfig) return;

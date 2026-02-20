@@ -277,6 +277,15 @@ window.removeReply = removeReply;
 
 /**
  * 儲存關鍵字
+ * 
+ * Pre-conditions:
+ * - 必須有輸入關鍵字且加入至少一個回覆項目
+ * - `api.post` 必須可連線並解析 JSON
+ * 
+ * Post-conditions:
+ * - 新增/更新關鍵字資料至後端
+ * - 若有增加標籤，顯示成功增加的標籤
+ * - 更新列表，清空快取
  */
 async function handleKeywordSubmit() {
   const saveBtn = document.getElementById('save-keyword-btn');
@@ -365,6 +374,14 @@ async function handleKeywordSubmit() {
 
 /**
  * 刪除選取的關鍵字
+ * 
+ * Pre-conditions:
+ * - 至少勾選一個 checkbox (`.keyword-checkbox:checked`)
+ * - 用戶必須同意確認刪除視窗
+ * 
+ * Post-conditions:
+ * - 經由 API 逐筆呼叫刪除 
+ * - 成功後更新畫面回覆列表，並給予 Toast 提示
  */
 async function handleDeleteSelected() {
   const checkboxes = document.querySelectorAll('.keyword-checkbox:checked');
@@ -429,6 +446,15 @@ function filterKeywordList(searchTerm) {
 
 /**
  * 渲染關鍵字列表
+ * 
+ * Pre-conditions:
+ * - userId 為有效值
+ * - DOM 存在 #reply-list 等元件
+ * 
+ * Post-conditions:
+ * - 呼叫 fetchKeywordReplyList 取回資料
+ * - 非同步平行建立帶有統計數據的表格行，並注入 DOM 中
+ * - 同時更新 window.existingKeywords 記錄
  */
 export async function renderReplyList(userId) {
   const replyListContainer = document.getElementById('reply-list');

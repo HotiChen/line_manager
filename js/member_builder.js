@@ -12,6 +12,12 @@ let currentEditingMember = null;
 
 /**
  * 頁面初始化
+ * 
+ * Pre-conditions:
+ * - 有 pageData 包含 userId
+ * 
+ * Post-conditions:
+ * - 載入 members 與 tags 資料，渲染表格並綁定 UI 事件
  */
 export async function pageInit(pageData) {
   setUserId(pageData.userId);
@@ -37,6 +43,12 @@ export async function pageInit(pageData) {
 
 /**
  * 載入所有會員
+ * 
+ * Pre-conditions:
+ * - 後端 API `/member/list-full` 可連線
+ * 
+ * Post-conditions:
+ * - 更新 members 陣列
  */
 async function loadMembers() {
   try {
@@ -254,6 +266,12 @@ window.editMember = function (memberId) {
 
 /**
  * 儲存會員
+ * 
+ * Pre-conditions:
+ * - 編輯表單已填寫包含 memberId
+ * 
+ * Post-conditions:
+ * - 會員資料更新至後端，並刷新前端列表
  */
 window.saveMember = async function () {
   const memberId = document.getElementById('edit-member-id').value.trim();
@@ -339,6 +357,12 @@ window.deleteMember = async function (memberId) {
 
 /**
  * 批次刪除會員
+ * 
+ * Pre-conditions:
+ * - 列表至少勾選一個 checkbox
+ * 
+ * Post-conditions:
+ * - 逐一呼叫 API 刪除會員清單，並統整刪除成功與失敗的數量提示此用戶
  */
 async function batchDeleteMembers() {
   // 取得所有勾選的 checkbox
