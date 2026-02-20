@@ -1,7 +1,14 @@
 import { jsonResponse } from "../lib/utils.js";
 
 /**
+ * handleGetRichMenuList
  * 取得 Richmenu 列表，已整合別名 (Alias) 資訊
+ * 
+ * Pre-conditions:
+ * - userId: 當前用戶 ID
+ * 
+ * Post-conditions:
+ * - 回傳包含 richmenus 陣列的物件，每個選單皆包含 richMenuAliasId
  */
 export async function handleGetRichMenuList(env, userId) {
   const project = await env.KV_LINE_STORAGE.get(`current_token_${userId}`);
@@ -45,33 +52,33 @@ export async function handleGetRichMenuList(env, userId) {
     }
 
     // 步驟 3: 組合資料，將別名加到對應的選單物件上
-    const combinedRichMenus = (menuData.richmenus || []).map(menu => {
-      return {
-        ...menu,
-        richMenuAliasId: aliasMap.get(menu.richMenuId) || ""
-      };
-    });
+    const combinedRichMenus = (menuData.richmenus || []).map(menu => ({
+      ...menu,
+      richMenuAliasId: aliasMap.get(menu.richMenuId) || ""
+    }));
 
     return jsonResponse({ richmenus: combinedRichMenus });
 
   } catch (err) {
     console.error("在 handleGetRichMenuList 中發生錯誤:", err);
-    return jsonResponse({ error: "無法取得完整的 Rich Menu 資料。" }, 500);
+    return jsonResponse({
+      error: "無法取得完整的 Rich Menu 資料。",
+      details: err.message,
+      stack: err.stack
+    }, 500);
   }
 }
 
 /**
- * 取得 Richmenu 縮圖
+ * handleGetRichMenuImage
+ * 取得 Richmenu 縮圖內容
+ * 
+ * Pre-conditions: richMenuId 必須有效
+ * Post-conditions: 回傳 image/png 二進制數據
  */
 export async function handleGetRichMenuImage(env, userId, richMenuId) {
-  const project = await env.KV_LINE_STORAGE.get(`current_token_${userId}`);
-  if (!project) return jsonResponse({ error: "No current project set" }, 404);
-
-  const accessTokens = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {};
-  const info = accessTokens[project];
-  const token = (typeof info === "object" && info !== null) ? info.token : info;
-
-  if (!token) return jsonResponse({ error: "No token found for current project" }, 404);
+  const token = await getActiveToken(env, userId);
+  if (!token) return jsonResponse({ error: "No active token" }, 404);
 
   const response = await fetch(`https://api-data.line.me/v2/bot/richmenu/${richMenuId}/content`, {
     method: "GET",
@@ -79,7 +86,9 @@ export async function handleGetRichMenuImage(env, userId, richMenuId) {
     cf: { cacheTtl: 0 }
   });
 
-  if (!response.ok) return jsonResponse({ error: `Failed to fetch Rich Menu image (status: ${response.status})` }, response.status);
+  if (!response.ok) {
+    return jsonResponse({ error: `Failed to fetch Rich Menu image (status: ${response.status})` }, response.status);
+  }
 
   return new Response(await response.arrayBuffer(), {
     headers: {
@@ -90,41 +99,37 @@ export async function handleGetRichMenuImage(env, userId, richMenuId) {
 }
 
 /**
- * 取得 Richmenu metadata
+ * handleGetRichMenuMetadata
+ * 取得單個 Richmenu 的 Metadata 詳情
+ * 
+ * Pre-conditions: richMenuId 必須有效
+ * Post-conditions: 回傳選單定義 JSON
  */
 export async function handleGetRichMenuMetadata(env, userId, richMenuId) {
-  const project = await env.KV_LINE_STORAGE.get(`current_token_${userId}`);
-  if (!project) return jsonResponse({ error: "No current project set" }, 404);
-
-  const accessTokens = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {};
-  const info = accessTokens[project];
-  const token = (typeof info === "object" && info !== null) ? info.token : info;
-
-  if (!token) return jsonResponse({ error: "No token found for current project" }, 404);
+  const token = await getActiveToken(env, userId);
+  if (!token) return jsonResponse({ error: "No active token" }, 404);
 
   const response = await fetch(`https://api.line.me/v2/bot/richmenu/${richMenuId}`, {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` }
   });
 
-  if (!response.ok) return jsonResponse({ error: `Failed to fetch Rich Menu metadata (status: ${response.status})` }, response.status);
+  if (!response.ok) {
+    return jsonResponse({ error: `Failed to fetch Rich Menu metadata (status: ${response.status})` }, response.status);
+  }
 
-  const metadata = await response.json();
-  return jsonResponse(metadata);
+  return jsonResponse(await response.json());
 }
 
 /**
- * 取得預設 Richmenu ID
+ * handleGetDefaultRichMenuId
+ * 取得當前 LINE Bot 設定的預設選單 ID
+ * 
+ * Post-conditions: 回傳 { richMenuId: string }
  */
 export async function handleGetDefaultRichMenuId(env, userId) {
-  const project = await env.KV_LINE_STORAGE.get(`current_token_${userId}`);
-  if (!project) return jsonResponse({ error: "No current project set" }, 404);
-
-  const accessTokens = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {};
-  const info = accessTokens[project];
-  const token = (typeof info === "object" && info !== null) ? info.token : info;
-
-  if (!token) return jsonResponse({ error: "No token found for current project" }, 404);
+  const token = await getActiveToken(env, userId);
+  if (!token) return jsonResponse({ error: "No active token" }, 404);
 
   const response = await fetch("https://api.line.me/v2/bot/user/all/richmenu", {
     headers: { Authorization: `Bearer ${token}` }
@@ -137,16 +142,22 @@ export async function handleGetDefaultRichMenuId(env, userId) {
 }
 
 /**
- * 同步 Richmenus
+ * handleSyncRichmenus
+ * 同步 Richmenus (支援新增、刪除、設定預設)
+ * 
+ * Pre-conditions: 支援 multipart/form-data 或 JSON payload
+ * Post-conditions: 執行批次操作並回傳結果報告結果
  */
 export async function handleSyncRichmenus(request, env, userId) {
   try {
+    const token = await getActiveToken(env, userId);
+    if (!token) return jsonResponse({ error: "No active token" }, 404);
+
     let payload = {};
     const contentType = request.headers.get("content-type") || "";
 
     if (contentType.includes("multipart/form-data")) {
       const form = await request.formData();
-      // Handle same structure as old version
       const add = [{
         name: form.get("name"),
         diamention: JSON.parse(form.get("diamention") || "[]"),
@@ -160,21 +171,14 @@ export async function handleSyncRichmenus(request, env, userId) {
       payload = await request.json();
     }
 
-    const project = await env.KV_LINE_STORAGE.get(`current_token_${userId}`);
-    if (!project) return jsonResponse({ error: "No current project set" }, 404);
-
-    const accessTokens = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {};
-    const info = accessTokens[project];
-    const token = (typeof info === "object" && info !== null) ? info.token : info;
-
-    if (!token) return jsonResponse({ error: "No token found for current project" }, 404);
-
+    const { add = [], remove = [], setDefault } = payload;
     const results = { added: [], updated: [], removed: [], errors: [] };
-    const { add = [], update = [], remove = [], setDefault } = payload;
 
-    await handleAddMenus(add, token, results);
-    await handleRemoveMenus(remove, token, results);
-    await handleSetDefaultRichMenu(setDefault, token, results);
+    await Promise.all([
+      handleAddMenus(add, token, results),
+      handleRemoveMenus(remove, token, results),
+      handleSetDefaultRichMenu(setDefault, token, results)
+    ]);
 
     return jsonResponse(results);
   } catch (err) {
@@ -184,17 +188,12 @@ export async function handleSyncRichmenus(request, env, userId) {
 }
 
 /**
- * 取得別名列表
+ * handleGetAliasList
+ * 取得當前 Bot 的別名列表
  */
 export async function handleGetAliasList(env, userId) {
-  const project = await env.KV_LINE_STORAGE.get(`current_token_${userId}`);
-  if (!project) return jsonResponse({ error: "No current project set" }, 404);
-
-  const accessTokens = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {};
-  const info = accessTokens[project];
-  const token = (typeof info === "object" && info !== null) ? info.token : info;
-
-  if (!token) return jsonResponse({ error: "No token found for current project" }, 404);
+  const token = await getActiveToken(env, userId);
+  if (!token) return jsonResponse({ error: "No active token" }, 404);
 
   try {
     const response = await fetch("https://api.line.me/v2/bot/richmenu/alias/list", {
@@ -202,32 +201,25 @@ export async function handleGetAliasList(env, userId) {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`[getAliasList] LINE API 錯誤 ${response.status} - ${errorText}`);
+      throw new Error(`LINE API 錯誤 ${response.status}`);
     }
 
     return jsonResponse(await response.json());
   } catch (err) {
-    console.error("[getAliasList] ❌ 錯誤：", err);
     return jsonResponse({ error: err.message }, 500);
   }
 }
 
 /**
- * 批次設定別名
+ * handleBatchSetAlias
+ * 批次建立別名
  */
 export async function handleBatchSetAlias(request, env, userId) {
   const { aliases } = await request.json();
   if (!Array.isArray(aliases)) return jsonResponse({ error: "Invalid alias list" }, 400);
 
-  const project = await env.KV_LINE_STORAGE.get(`current_token_${userId}`);
-  if (!project) return jsonResponse({ error: "No current project set" }, 404);
-
-  const accessTokens = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {};
-  const info = accessTokens[project];
-  const token = (typeof info === "object" && info !== null) ? info.token : info;
-
-  if (!token) return jsonResponse({ error: "No token found for current project" }, 404);
+  const token = await getActiveToken(env, userId);
+  if (!token) return jsonResponse({ error: "No active token" }, 404);
 
   const results = [];
   for (const item of aliases) {
@@ -240,11 +232,8 @@ export async function handleBatchSetAlias(request, env, userId) {
         },
         body: JSON.stringify(item)
       });
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`API 錯誤 (${response.status}): ${text}`);
-      }
-      results.push({ alias: item.alias, richMenuId: item.richMenuId, success: true });
+      if (!response.ok) throw new Error(`${response.status}`);
+      results.push({ alias: item.alias, success: true });
     } catch (err) {
       results.push({ alias: item.alias, error: err.message });
     }
@@ -252,11 +241,26 @@ export async function handleBatchSetAlias(request, env, userId) {
   return jsonResponse({ results });
 }
 
-// Helper 函式
+// -----------------------------------------------------------------
+// 內部輔助函數 (Internal Helpers)
+// -----------------------------------------------------------------
+
+/**
+ * getActiveToken
+ * 取得當前用戶啟用的 Token (封裝重複邏輯)
+ */
+async function getActiveToken(env, userId) {
+  const project = await env.KV_LINE_STORAGE.get(`current_token_${userId}`);
+  if (!project) return null;
+
+  const accessTokens = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {};
+  const info = accessTokens[project];
+  return (typeof info === "object" && info !== null) ? info.token : info;
+}
+
 async function handleAddMenus(add, token, results) {
   for (const item of add) {
     try {
-
       const res = await fetch("https://api.line.me/v2/bot/richmenu", {
         method: "POST",
         headers: {
@@ -272,31 +276,24 @@ async function handleAddMenus(add, token, results) {
         })
       });
 
-      if (!res.ok) {
-        const errorText = await res.text();
-        throw new Error(`[新增失敗] LINE API 回傳 ${res.status} - ${errorText}`);
-      }
+      if (!res.ok) throw new Error(`Add Failed: ${res.status}`);
 
       const { richMenuId } = await res.json();
 
       if (item.imageFile) {
-        const arrayBuffer = await item.imageFile.arrayBuffer();
         const uploadRes = await fetch(`https://api-data.line.me/v2/bot/richmenu/${richMenuId}/content`, {
           method: "POST",
           headers: {
             "Authorization": `Bearer ${token}`,
             "Content-Type": item.imageFile.type || "image/jpeg"
           },
-          body: arrayBuffer
+          body: await item.imageFile.arrayBuffer()
         });
-        if (!uploadRes.ok) {
-          const uploadError = await uploadRes.text();
-          throw new Error(`[圖片上傳失敗] ${uploadRes.status} - ${uploadError}`);
-        }
+        if (!uploadRes.ok) throw new Error(`Upload Failed: ${uploadRes.status}`);
       }
 
       if (item.alias) {
-        const aliasRes = await fetch("https://api.line.me/v2/bot/richmenu/alias", {
+        await fetch("https://api.line.me/v2/bot/richmenu/alias", {
           method: "POST",
           headers: {
             "Authorization": `Bearer ${token}`,
@@ -304,9 +301,6 @@ async function handleAddMenus(add, token, results) {
           },
           body: JSON.stringify({ richMenuAliasId: item.alias, richMenuId })
         });
-        if (!aliasRes.ok) {
-          console.warn(`[Alias設定失敗] ${await aliasRes.text()}`);
-        }
       }
 
       results.added.push({ name: item.name, richMenuId });
@@ -319,7 +313,7 @@ async function handleAddMenus(add, token, results) {
 async function handleRemoveMenus(remove, token, results) {
   for (const richMenuId of remove) {
     try {
-      // 刪除相關別名
+      // 嘗試刪除別名
       const aliasListRes = await fetch("https://api.line.me/v2/bot/richmenu/alias/list", {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -334,12 +328,11 @@ async function handleRemoveMenus(remove, token, results) {
         }
       }
 
-      // 刪除選單本體
       const res = await fetch(`https://api.line.me/v2/bot/richmenu/${richMenuId}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (!res.ok) throw new Error("刪除失敗");
+      if (!res.ok) throw new Error("Delete Failed");
       results.removed.push(richMenuId);
     } catch (err) {
       results.errors.push({ richMenuId, error: err.message });
@@ -348,38 +341,40 @@ async function handleRemoveMenus(remove, token, results) {
 }
 
 async function handleSetDefaultRichMenu(setDefault, token, results) {
-  if (setDefault?.richMenuId) {
-    try {
-      const res = await fetch("https://api.line.me/v2/bot/user/all/richmenu", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ richMenuId: setDefault.richMenuId })
-      });
-      if (!res.ok) throw new Error("設定失敗");
-      results.setDefault = setDefault;
-    } catch (err) {
-      results.errors.push({ richMenuId: setDefault.richMenuId, error: err.message });
-    }
+  if (!setDefault?.richMenuId) return;
+
+  try {
+    const res = await fetch("https://api.line.me/v2/bot/user/all/richmenu", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ richMenuId: setDefault.richMenuId })
+    });
+    if (!res.ok) throw new Error("SetDefault Failed");
+    results.setDefault = setDefault;
+  } catch (err) {
+    results.errors.push({ richMenuId: setDefault.richMenuId, error: err.message });
   }
 }
 
+/**
+ * route
+ * Richmenu 模組路由
+ */
 export function route(request, env, userId, pathname) {
   if (pathname === "/richmenu/list") return handleGetRichMenuList(env, userId);
   if (pathname === "/richmenu/default") return handleGetDefaultRichMenuId(env, userId);
   if (pathname === "/alias/list") return handleGetAliasList(env, userId);
   if (pathname === "/alias/batch") return handleBatchSetAlias(request, env, userId);
 
-  if (pathname.startsWith("/richmenu/image/")) {
-    const id = pathname.split("/").pop();
-    return handleGetRichMenuImage(env, userId, id);
-  }
-  if (pathname.startsWith("/richmenu/metadata/")) {
-    const id = pathname.split("/").pop();
-    return handleGetRichMenuMetadata(env, userId, id);
-  }
+  const matchedImage = pathname.match(/^\/richmenu\/image\/(.+)$/);
+  if (matchedImage) return handleGetRichMenuImage(env, userId, matchedImage[1]);
+
+  const matchedMeta = pathname.match(/^\/richmenu\/metadata\/(.+)$/);
+  if (matchedMeta) return handleGetRichMenuMetadata(env, userId, matchedMeta[1]);
+
   if (pathname === "/richmenu/sync") return handleSyncRichmenus(request, env, userId);
 
   return jsonResponse({ success: false, error: "Invalid richmenu route" }, 404);

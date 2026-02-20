@@ -1,108 +1,78 @@
 /**
- * Security helper for sanitizing HTML content.
- * Relies on DOMPurify being loaded globally via CDN in index.html.
+ * Security helper - 網頁安全防護工具
+ * 負責過濾 HTML 內容預防 XSS 攻擊。
  */
 
 /**
- * Sanitizes a string of HTML to prevent XSS attacks.
- * @param {string} dirtyHTML - The potentially unsafe HTML string.
- * @returns {string} - The sanitized HTML string.
+ * safeHTML
+ * 清理 HTML 字串，防止惡意腳本執行。
+ * 
+ * Pre-conditions: 需在 index.html 載入 DOMPurify 
  */
 export function safeHTML(dirtyHTML) {
   if (typeof window.DOMPurify === 'undefined') {
-    console.warn('DOMPurify is not loaded. Returning unsanitized content. Please ensure DOMPurify is included in index.html.');
+    console.warn('🛡️ [Security] DOMPurify 未載入，將回傳原始內容。');
     return dirtyHTML;
   }
   return window.DOMPurify.sanitize(dirtyHTML);
 }
 
 /**
- * Safely sets the innerHTML of an element.
- * @param {HTMLElement} element - The target DOM element.
- * @param {string} html - The HTML content to set.
+ * setInnerHTML
+ * 安全地將 HTML 注入到 DOM 元素中
  */
 export function setInnerHTML(element, html) {
-  if (!element) return;
-  element.innerHTML = safeHTML(html);
+  if (element) element.innerHTML = safeHTML(html);
 }
 
 /**
- * Validates a URL to prevent XSS attacks via malicious protocols.
- * Only allows http: and https: protocols.
+ * validateUrl
+ * 驗證並過濾 URL，僅允許安全的協定 (http, https)
  * 
- * @param {string} url - The URL to validate.
- * @param {Object} options - Validation options.
- * @param {boolean} options.allowRelative - Whether to allow relative URLs (default: true).
- * @param {boolean} options.allowLocalhost - Whether to allow localhost URLs (default: false in production).
- * @returns {Object} - { isValid: boolean, sanitizedUrl: string|null, error: string|null }
+ * Pre-conditions:
+ * - url: 待檢驗的字串
+ * 
+ * Post-conditions:
+ * - 回傳包含 isValid 與 sanitizedUrl 的物件
  */
 export function validateUrl(url, options = {}) {
-  const {
-    allowRelative = true,
-    allowLocalhost = window.location.hostname === 'localhost'
-  } = options;
+  const { allowRelative = true, allowLocalhost = window.location.hostname === 'localhost' } = options;
+  const result = { isValid: false, sanitizedUrl: null, error: null };
 
-  // Result object
-  const result = {
-    isValid: false,
-    sanitizedUrl: null,
-    error: null
-  };
-
-  // Check for empty/null
   if (!url || typeof url !== 'string') {
     result.error = 'URL 不可為空';
     return result;
   }
 
-  // Trim whitespace
   const trimmedUrl = url.trim();
-
-  // Allow relative URLs if option enabled
   if (allowRelative && (trimmedUrl.startsWith('/') || trimmedUrl.startsWith('.') || trimmedUrl.startsWith('#'))) {
     result.isValid = true;
     result.sanitizedUrl = trimmedUrl;
     return result;
   }
 
-  // Check for dangerous protocols (XSS vectors)
   const dangerousProtocols = ['javascript:', 'data:', 'vbscript:', 'file:'];
   const lowerUrl = trimmedUrl.toLowerCase();
-
-  for (const protocol of dangerousProtocols) {
-    if (lowerUrl.startsWith(protocol)) {
-      result.error = `不允許的 URL 協議: ${protocol}`;
-      console.warn(`🛡️ [Security] Blocked dangerous URL protocol: ${protocol}`);
-      return result;
-    }
+  if (dangerousProtocols.some(p => lowerUrl.startsWith(p))) {
+    result.error = '不安全的 URL 協定';
+    return result;
   }
 
-  // Try to parse as URL
   try {
     const parsedUrl = new URL(trimmedUrl, window.location.origin);
-
-    // Only allow http and https
-    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
-      result.error = `不支援的 URL 協議: ${parsedUrl.protocol}`;
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+      result.error = '不支援的協定';
       return result;
     }
-
-    // Check for localhost/127.0.0.1 if not allowed
-    if (!allowLocalhost) {
-      const localHosts = ['localhost', '127.0.0.1', '0.0.0.0', '[::1]'];
-      if (localHosts.includes(parsedUrl.hostname)) {
-        result.error = '不允許本地位址';
-        return result;
-      }
+    if (!allowLocalhost && ['localhost', '127.0.0.1'].includes(parsedUrl.hostname)) {
+      result.error = '不允許本地位址';
+      return result;
     }
-
-    // All checks passed
     result.isValid = true;
     result.sanitizedUrl = parsedUrl.href;
     return result;
-
   } catch (e) {
-    result.error = '無效的 URL 格式';
+    result.error = '格式錯誤';
     return result;
   }
 }

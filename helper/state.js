@@ -1,3 +1,6 @@
+/**
+ * State helper - 管理全域用戶狀態與配置項
+ */
 import * as config from '../env/config.js';
 
 const state = {
@@ -9,34 +12,32 @@ export function setUserId(id) {
     state.userId = id;
 }
 
+/**
+ * getUserId
+ * 擷取當前用戶 ID，支援 URL 參數與本地測試預設值。
+ * 
+ * Post-conditions:
+ * - 回傳有效字串 ID 或 null
+ */
 export function getUserId() {
-    // 優先檢查 URL 參數中的測試用戶 ID（用於測試環境）
     const urlParams = new URLSearchParams(window.location.search);
-
-    // 支援 ?userId= 和 ?testUserId= 兩種格式（userId 優先）
     const userId = urlParams.get('userId') || urlParams.get('testUserId');
+
     if (userId) {
-        // 強制設定到 state 中
         setUserId(userId);
         return userId;
     }
 
-    // 如果是本地測試且沒有 userId，使用預設測試 ID
-    if (!state.userId && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+    if (!state.userId && ['localhost', '127.0.0.1'].includes(window.location.hostname)) {
         const defaultTestUserId = 'Ud66f9caf44c4d927ca4f9361d66ccc18';
-        console.warn('[State] No userId set, using default test userId:', defaultTestUserId);
+        console.warn('⚠️ [State] 本地開發模式，使用預設 ID:', defaultTestUserId);
         return defaultTestUserId;
     }
     return state.userId;
 }
 
-export function setCurrentProject(project) {
-    state.currentProject = project;
-}
-
-export function getCurrentProject() {
-    return state.currentProject;
-}
+export function setCurrentProject(project) { state.currentProject = project; }
+export function getCurrentProject() { return state.currentProject; }
 
 export const apiBase = config.apiBase;
 export const debug = config.debug;

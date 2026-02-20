@@ -1,51 +1,47 @@
 import * as config from '../env/config.js?v=223';
 import { initLiff } from "./liff.js";
 import { setInnerHTML } from "../helper/security.js";
-import { setupGlobalErrorHandlers } from "../helper/error.handler.js";
-
+import { setupGlobalErrorHandlers, ErrorHandler } from "../helper/error.handler.js";
 import { setUserId, getUserId, apiBase, debug } from "../helper/state.js";
 import { toast } from "../helper/toast.js";
 import { LoadingManager } from "./shared/loader.js";
-import { ApiClient as api } from "../helper/api.client.js";
+import { api } from "../helper/api.client.js";
 
-// 設置全局錯誤處理
+// 初始化全域錯誤捕獲
 setupGlobalErrorHandlers();
 
 
 
-// Keep track of the current page
-let currentPageName = 'dashboard'; // Default page - 輕量的入口頁面
+let currentPageName = 'dashboard';
 
-
+/**
+ * loadPage
+ * 動態載入頁面 HTML 與對應的 JS 模組
+ * 
+ * Pre-conditions:
+ * - pageName: 頁面名稱 (對應 pages/[name].html 與 js/[name].js)
+ * - pageData: 傳遞給 pageInit 的資料
+ * 
+ * Post-conditions:
+ * - 更新 #main 內容，隱藏 Loading，並執行初始化。
+ */
 async function loadPage(pageName, pageData = {}) {
-  console.trace('📍 調用來源:');
-
-  currentPageName = pageName; // Update current page name
-
+  currentPageName = pageName;
   const content = document.getElementById("main");
-  const pagePath = `./pages/${pageName}.html`;
-  const scriptPath = `./${pageName}.js`;
+  if (!content) return;
 
   try {
-
-    // 顯示 loading 動畫
-    LoadingManager.show('page-load', `載入 ${pageName}...`);
-
-    // 載入頁面 HTML (加上 cache buster 避免快取問題)
-    const res = await fetch(`${pagePath}?cb=${Date.now()}`);
+    LoadingManager.show('page-load', `載入中...`);
+    const res = await fetch(`./pages/${pageName}.html?cb=${Date.now()}`);
     setInnerHTML(content, await res.text());
 
-    // 動態載入模組並執行 pageInit，傳入 pageData
-    const module = await import(`${scriptPath}?cb=${Date.now()}`);
-
+    const module = await import(`./${pageName}.js?cb=${Date.now()}`);
     if (typeof module.pageInit === "function") {
-      await module.pageInit(pageData); // 等待 pageInit 完成（包括資料載入）
+      await module.pageInit(pageData);
     }
-
-    // 隱藏 loading
-    LoadingManager.hide('page-load');
   } catch (e) {
-    console.error(`❌ 載入 ${pageName}.html 或 JS 失敗:`, e);
+    ErrorHandler.handle(e, `載入頁面 ${pageName} 失敗`);
+  } finally {
     LoadingManager.hide('page-load');
   }
 }
@@ -53,232 +49,141 @@ async function loadPage(pageName, pageData = {}) {
 window.loadPage = loadPage;
 
 /**
- * Initializes the Bot (LINE@) selector in the sidebar.
- * Fetches bot list, sets the active bot, and handles selection changes.
+ * initializeBotSelector
+ * 初始化側邊欄的 LINE@ 專案選擇器
  */
 async function initializeBotSelector(activeBot) {
   const botSelect = document.getElementById("bot-select-global");
   if (!botSelect) return;
 
   try {
-    // 1. Fetch bot/project list
     const botData = await api.get('/token/list');
+    const options = ['<option value="">選擇帳號...</option>', ...Object.keys(botData).map(name => `<option value="${name}">${name}</option>`)];
+    setInnerHTML(botSelect, options.join(''));
 
-    // 2. Populate dropdown
-    setInnerHTML(botSelect, '<option value="">選擇帳號...</option>');
-    Object.keys(botData).forEach(botName => {
-      const option = document.createElement("option");
-      option.value = botName;
-      option.textContent = botName;
-      botSelect.appendChild(option);
-    });
-
-    // 3. Set active bot
-    if (activeBot && botData[activeBot]) {
-      botSelect.value = activeBot;
-    } else if (Object.keys(botData).length > 0) {
-      // If no active bot, default to the first one
-      botSelect.value = Object.keys(botData)[0];
-      // Set this as the active project on the backend
-      await api.post('/token/set', { project: botSelect.value });
+    let targetBot = activeBot;
+    if (!targetBot || !botData[targetBot]) {
+      targetBot = Object.keys(botData)[0] || '';
     }
 
-    // 4. Add event listener for bot change
+    if (targetBot) {
+      botSelect.value = targetBot;
+      localStorage.setItem('flow_designer_bot', targetBot);
+      if (targetBot !== activeBot) await api.post('/token/set', { project: targetBot });
+    }
+
     botSelect.addEventListener("change", async (e) => {
       const newBot = e.target.value;
       if (!newBot) return;
 
       try {
         await api.post('/token/set', { project: newBot });
-
-        // Reload the current page to reflect the new bot context
-        toast.info(`正在切換至 ${newBot}...`);
+        localStorage.setItem('flow_designer_bot', newBot);
+        toast.info(`切換至 ${newBot}...`);
         await loadPage(currentPageName, { userId: getUserId() });
         toast.success(`已切換至 ${newBot}`);
       } catch (err) {
-        console.error("❌ 切換 LINE@ 失敗:", err);
-        toast.error("切換失敗，請稍後再試");
+        ErrorHandler.handle(err, '切換帳號失敗');
       }
     });
 
-
   } catch (err) {
-    console.error("❌ 無法載入 LINE@ 列表:", err);
+    console.error("❌ 載入專案列表失敗:", err);
   }
 }
 
 /**
- * 更新 Sidebar 的用戶資訊
+ * updateUserInfo
+ * 更新 Sidebar 顯示的使用者名稱與頭像
  */
 async function updateUserInfo(userId, profileData = null) {
   const nameEl = document.getElementById('sidebar-user-name');
   const avatarEl = document.getElementById('user-avatar');
-
   if (!nameEl) return;
 
-  // 嘗試獲取用戶名稱
   const urlParams = new URLSearchParams(window.location.search);
-  const testDisplayName = urlParams.get('testDisplayName') || urlParams.get('displayName');
-
-  let displayName = 'User';
-
-  if (profileData?.name) {
-    displayName = profileData.name;
-  } else if (testDisplayName) {
-    displayName = testDisplayName;
-  } else if (userId === 'Ud66f9caf44c4d927ca4f9361d66ccc18') {
-    displayName = 'Owner';
-  }
+  const displayName = profileData?.name || urlParams.get('displayName') || (userId === 'Ud66f9caf44c4d927ca4f9361d66ccc18' ? 'Owner' : 'User');
 
   nameEl.textContent = displayName;
-
-  // 設定 Avatar 文字 (取名稱第一個字)
-  if (avatarEl) {
-    avatarEl.textContent = displayName.charAt(0).toUpperCase();
-  }
+  if (avatarEl) avatarEl.textContent = displayName.charAt(0).toUpperCase();
 }
 
 /**
- * 初始化登出按鈕
+ * initializeLogoutButton
+ * 設置登出邏輯，支援 LIFF 與 本地模式
  */
 function initializeLogoutButton() {
   const logoutBtn = document.getElementById('btn-logout');
   if (!logoutBtn) return;
 
   logoutBtn.addEventListener('click', async () => {
-    if (!confirm('確定要登出嗎？')) return;
+    const { showConfirm } = await import('../helper/modal.helper.js');
+    if (!(await showConfirm({ title: '登出', message: '確定要登出嗎？', type: 'warning' }))) return;
 
-    try {
-      // 如果使用 LIFF，呼叫 LIFF 登出
-      if (!debug && window.liff && liff.isLoggedIn()) {
-        liff.logout();
-      }
-
-      // 清除本地狀態
-      setUserId(null);
-
-      // 重新載入頁面
-      window.location.reload();
-    } catch (err) {
-      console.error('登出失敗:', err);
-      toast.error('登出失敗，請稍後再試');
-    }
+    if (!debug && window.liff?.isLoggedIn()) window.liff.logout();
+    setUserId(null);
+    window.location.reload();
   });
 }
 
 
+// 監聽 DOM 載入
 window.addEventListener("DOMContentLoaded", () => {
-  // 🔧 全局 Modal Backdrop 清理
-  // 自動監聽所有 modal 的關閉事件
-  document.addEventListener('hidden.bs.modal', function (event) {
-    setTimeout(() => {
-      // 只有在沒有其他 modal 打開時才清理
-      if (!document.querySelector('.modal.show')) {
-        document.querySelectorAll('.modal-backdrop').forEach(el => {
-          el.remove();
-        });
-        document.body.classList.remove('modal-open');
-        document.body.style.removeProperty('overflow');
-        document.body.style.removeProperty('padding-right');
-      }
-    }, 100);
+  // 自動清理 Modal 背景 (Bootstrap 5 輔助)
+  document.addEventListener('hidden.bs.modal', () => {
+    if (!document.querySelector('.modal.show')) {
+      document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+      document.body.classList.remove('modal-open');
+      document.body.style.removeProperty('overflow');
+    }
   });
 
-  // 立即顯示 loading（暗色毛玻璃效果）
-  LoadingManager.show('app-init', '初始化應用程式...');
+  LoadingManager.show('app-init', '初始化中...');
 
-  // 綁定側邊選單事件
   document.querySelectorAll(".nav-link[data-page]").forEach(link => {
     link.addEventListener("click", (e) => {
-      e.preventDefault(); // 防止 # 造成頁面跳轉
-      const pageName = e.currentTarget.dataset.page;
-      if (pageName) {
-        // Pass userId on every page navigation
-        loadPage(pageName, { userId: getUserId() });
-      }
+      e.preventDefault();
+      const page = e.currentTarget.dataset.page;
+      if (page) loadPage(page, { userId: getUserId() });
     });
   });
 
-  const startApp = (userId, profileData) => {
+  const startApp = async (userId, profileData) => {
     setUserId(userId);
-    const activeProject = profileData?.activeProject;
-
-    const userIdDisplay = document.getElementById("user-id-display");
-    if (userIdDisplay) {
-      userIdDisplay.textContent = `User ID: ${userId}`;
-    }
-
-    // 更新 Top Bar 用戶資訊
-    updateUserInfo(userId);
-
-    // 隱藏初始化 loading
-    LoadingManager.hide('app-init');
-
-    // 初始化登出按鈕
+    updateUserInfo(userId, profileData);
     initializeLogoutButton();
 
-    // Initialize the bot selector and then load the initial page
-    initializeBotSelector(activeProject).then(() => {
-      loadPage(currentPageName, { userId: getUserId() }); // Pass userId to the default page
-    });
+    await initializeBotSelector(profileData?.activeProject);
+    await loadPage(currentPageName, { userId: getUserId() });
+    LoadingManager.hide('app-init');
+  };
+
+  const handleNoProfile = (userId) => {
+    LoadingManager.hide('app-init');
+    toast.warning("請先填寫個人資料");
+    setUserId(userId);
+    loadPage("profile", { userId });
   };
 
   if (!debug) {
-    initLiff(config.liffId).then(profile => {
-      if (!profile || !profile.userId) {
-        throw new Error("⚠️ LIFF 回傳 profile 為 undefined");
-      }
-
-      // 🔧 先設定 userI才能讓 ApiClient 加上 X-User-Id header
+    initLiff(config.liffId).then(async profile => {
+      if (!profile?.userId) throw new Error("LIFF 載入失敗");
       setUserId(profile.userId);
-
-      api.post('/profile/check')
-        .then(data => {
-          if (!data.exists) {
-            LoadingManager.hide('app-init');
-            toast.warning("請先填寫個人資料");
-            // Set userId here as well, because startApp is not called
-            setUserId(profile.userId);
-            // Explicitly pass userId to the profile page
-            loadPage("profile", { userId: profile.userId });
-          } else {
-            startApp(profile.userId, data.profile);
-          }
-        });
-    }).catch(err => {
-      console.error("❌ LIFF 初始化失敗", err);
+      const data = await api.post('/profile/check');
+      data.exists ? startApp(profile.userId, data.profile) : handleNoProfile(profile.userId);
+    }).catch(e => ErrorHandler.handle(e, 'LIFF 初始化失敗'));
+  } else {
+    const uid = getUserId() || config.testUserId;
+    setUserId(uid);
+    updateUserInfo(uid);
+    api.post('/profile/check').then(data => {
+      if (!data.exists) {
+        initializeBotSelector().catch(console.error);
+        initializeLogoutButton();
+        if (!window.location.pathname.includes('invite.html')) handleNoProfile(uid);
+      } else {
+        startApp(uid, data.profile);
+      }
     });
-  }
-  else {
-    // 優先使用 URL 參數中的 testUserId (由 getUserId 處理)
-    const testUserId = getUserId() || config.testUserId;
-
-    // 🔧 先設定 userId 才能讓 ApiClient 加上 X-User-Id header
-    setUserId(testUserId);
-
-    // 立即更新 Top Bar (使用 URL 參數或預設值)
-    updateUserInfo(testUserId);
-
-    api.post('/profile/check')
-      .then(data => {
-        if (!data.exists) {
-          LoadingManager.hide('app-init');
-          toast.warning("請先填寫個人資料");
-          // Set userId in debug mode for consistency
-          setUserId(testUserId);
-
-          // 即使沒有 Profile，也嘗試初始化 Bot 選擇器 (因為可能是被邀請加入的)
-          initializeBotSelector().catch(console.error);
-          initializeLogoutButton();
-
-          // Explicitly pass userId to the profile page
-          // 如果當前頁面不是 invite，才跳轉 profile
-          if (!window.location.pathname.includes('invite.html')) {
-            loadPage("profile", { userId: testUserId });
-          }
-        } else {
-          startApp(testUserId, data.profile);
-        }
-      });
   }
 });

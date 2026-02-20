@@ -1,172 +1,69 @@
 /**
- * Toast Notification Utility
- * Simple, Bootstrap-based toast notifications to replace alert()
+ * Toast Notification Utility - 基於 Bootstrap 的通知模組
  */
 
 /**
- * Show a toast notification
- * @param {string} message - The message to display
- * @param {string} type - The type of toast: 'success', 'error', 'warning', 'info'
- * @param {number} duration - Auto-hide duration in milliseconds (default: 4000)
+ * showToast
+ * 顯示 Toast 通知
+ * 
+ * Pre-conditions: 需在 DOM 中存在 #toast-container
  */
 export function showToast(message, type = 'info', duration = 4000) {
-    const toastContainer = document.getElementById('toast-container');
-    if (!toastContainer) {
-        console.error('Toast container not found');
-        return;
-    }
+    const container = document.getElementById('toast-container');
+    if (!container) return console.error('找不到 #toast-container');
 
-    // ✅ 限制最多顯示 2 個 Toast
-    const existingToasts = toastContainer.querySelectorAll('.toast');
-    const MAX_TOASTS = 2;
+    // 限制堆疊數量
+    const existing = container.querySelectorAll('.toast');
+    if (existing.length >= 2) existing[0].remove();
 
-    // 如果已經有 2 個，移除最舊的
-    if (existingToasts.length >= MAX_TOASTS) {
-        const oldestToast = existingToasts[0];
-        oldestToast.remove();
-    }
-
-    // Create unique ID for this toast
-    const toastId = `toast-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-
-    // Icon and title mapping
-    const toastConfig = {
+    const id = `toast-${Date.now()}`;
+    const mapping = {
         success: { title: '成功', icon: '✓' },
         error: { title: '錯誤', icon: '✗' },
         warning: { title: '警告', icon: '⚠' },
         info: { title: '提示', icon: 'ℹ' }
     };
+    const config = mapping[type] || mapping.info;
 
-    const config = toastConfig[type] || toastConfig.info;
-
-    // Create toast HTML
-    const toastHTML = `
-    <div id="${toastId}" class="toast toast-${type} toast-new" role="alert" aria-live="assertive" aria-atomic="true">
+    const html = `
+    <div id="${id}" class="toast toast-${type}" role="alert">
       <div class="toast-header">
         <strong class="me-auto">${config.icon} ${config.title}</strong>
-        <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+        <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
       </div>
-      <div class="toast-body">
-        ${message}
-      </div>
-    </div>
-  `;
+      <div class="toast-body">${message}</div>
+    </div>`;
 
-    // ✅ 將之前的 Toast 縮小 25%
-    const previousToasts = toastContainer.querySelectorAll('.toast');
-    previousToasts.forEach(toast => {
-        toast.classList.remove('toast-new');
-        toast.classList.add('toast-old');
-    });
+    container.insertAdjacentHTML('beforeend', html);
+    const element = document.getElementById(id);
+    const toastObj = new bootstrap.Toast(element, { autohide: true, delay: duration });
+    toastObj.show();
 
-    // Insert toast into container
-    toastContainer.insertAdjacentHTML('beforeend', toastHTML);
-
-    // Get the toast element and initialize Bootstrap Toast
-    const toastElement = document.getElementById(toastId);
-    const toast = new bootstrap.Toast(toastElement, {
-        autohide: true,
-        delay: duration
-    });
-
-    // Show the toast
-    toast.show();
-
-    // Remove from DOM after it's hidden
-    toastElement.addEventListener('hidden.bs.toast', () => {
-        toastElement.remove();
-
-        // ✅ 如果移除後只剩一個，將它恢復到原始大小
-        const remainingToasts = toastContainer.querySelectorAll('.toast');
-        if (remainingToasts.length === 1) {
-            remainingToasts[0].classList.remove('toast-old');
-            remainingToasts[0].classList.add('toast-new');
-        }
-    });
-
-    // ✅ Toast 展開/收起功能
-    setupToastStackInteraction(toastContainer);
+    element.addEventListener('hidden.bs.toast', () => element.remove());
 }
 
-/**
- * 設置 Toast 堆疊展開/收起互動
- */
-function setupToastStackInteraction(toastContainer) {
-    // 避免重複綁定
-    if (toastContainer.dataset.interactionSetup) return;
-    toastContainer.dataset.interactionSetup = 'true';
-
-    let isExpanded = false;
-
-    // 點擊展開
-    toastContainer.addEventListener('mousedown', () => {
-        const toasts = toastContainer.querySelectorAll('.toast');
-        if (toasts.length > 1) {
-            isExpanded = true;
-            toastContainer.classList.add('toast-stack-expanded');
-        }
-    });
-
-    // 放開收起
-    const collapse = () => {
-        if (isExpanded) {
-            isExpanded = false;
-            toastContainer.classList.remove('toast-stack-expanded');
-        }
-    };
-
-    toastContainer.addEventListener('mouseup', collapse);
-    toastContainer.addEventListener('mouseleave', collapse);
-}
-
-/**
- * Convenience methods for different toast types
- */
 export const toast = {
-    success: (message, duration) => showToast(message, 'success', duration),
-    error: (message, duration) => showToast(message, 'error', duration),
-    warning: (message, duration) => showToast(message, 'warning', duration),
-    info: (message, duration) => showToast(message, 'info', duration)
+    success: (m, d) => showToast(m, 'success', d),
+    error: (m, d) => showToast(m, 'error', d),
+    warning: (m, d) => showToast(m, 'warning', d),
+    info: (m, d) => showToast(m, 'info', d)
 };
 
 /**
- * Button Loading State Management
+ * ButtonLoader
+ * 管理按鈕的 Loading 狀態（旋轉圖示與停用）
  */
 export class ButtonLoader {
-    constructor(buttonElement) {
-        this.button = buttonElement;
-        this.originalHTML = buttonElement.innerHTML;
-        this.originalDisabled = buttonElement.disabled;
+    constructor(element) {
+        this.btn = element;
+        this.oldHTML = element.innerHTML;
     }
-
-    start(loadingText = '處理中...') {
-        this.button.disabled = true;
-        this.button.classList.add('btn-loading');
-        this.button.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span> ${loadingText}`;
+    start(text = '處理中...') {
+        this.btn.disabled = true;
+        this.btn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span> ${text}`;
     }
-
     stop() {
-        this.button.disabled = this.originalDisabled;
-        this.button.classList.remove('btn-loading');
-        this.button.innerHTML = this.originalHTML;
-    }
-}
-
-/**
- * Helper function to wrap async button actions with loading state
- * @param {HTMLButtonElement} button - The button element
- * @param {Function} asyncFunction - The async function to execute
- * @param {string} loadingText - Optional loading text
- * @returns {Promise} The result of the async function
- */
-export async function withButtonLoading(button, asyncFunction, loadingText = '處理中...') {
-    const loader = new ButtonLoader(button);
-    loader.start(loadingText);
-
-    try {
-        const result = await asyncFunction();
-        return result;
-    } finally {
-        loader.stop();
+        this.btn.disabled = false;
+        this.btn.innerHTML = this.oldHTML;
     }
 }

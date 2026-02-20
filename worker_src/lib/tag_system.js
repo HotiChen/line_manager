@@ -8,20 +8,26 @@
  */
 
 /**
- * 為實體添加 Tag
- * @param {Object} env - KV 環境
- * @param {string} userId - 用戶 ID
- * @param {string} entityType - 實體類型: member, keyword, richmenu, message
- * @param {string} entityId - 實體 ID
- * @param {string[]} tags - 要添加的 Tags
+ * addTagsToEntity
+ * 為實體添加一個或多個 Tag，並同步反向索引與實體內部的嵌入式 Tag 列表
+ * 
+ * Pre-conditions:
+ * - env: Cloudflare Worker 環境物件
+ * - userId: 用戶識別碼
+ * - entityType: 'member' | 'keyword' | 'richmenu' | 'message'
+ * - entityId: 該實體的唯一 ID
+ * - tags: 要添加的標籤陣列
+ * 
+ * Post-conditions:
+ * - 若 Tag 不存在於全域列表，則自動建立
+ * - 更新該 Tag 的實體 ID 索引列表
+ * - 如果實體 Profile 存在，則更新其內部的 tags 欄位
  */
 export async function addTagsToEntity(env, userId, entityType, entityId, tags) {
-
     for (const tag of tags) {
-        // 1. 確保 Tag 存在於 Tag 列表
         await ensureTagExists(env, userId, tag);
 
-        // 2. 更新 Tag 的反向索引
+        // 更新反向索引
         const indexKey = `tag_${entityType}s_${userId}_${tag}`;
         const entityList = JSON.parse(await env.KV_LINE_STORAGE.get(indexKey) || "[]");
 
@@ -30,7 +36,7 @@ export async function addTagsToEntity(env, userId, entityType, entityId, tags) {
             await env.KV_LINE_STORAGE.put(indexKey, JSON.stringify(entityList));
         }
 
-        // 3. 更新實體的 Tag 列表（嵌入式）
+        // 更新實體的 Tag 列表（嵌入式）
         const profileKey = getProfileKey(entityType, userId, entityId);
         const profile = JSON.parse(await env.KV_LINE_STORAGE.get(profileKey) || "{}");
 
@@ -38,47 +44,49 @@ export async function addTagsToEntity(env, userId, entityType, entityId, tags) {
             profile.tags = profile.tags || [];
             if (!profile.tags.includes(tag)) {
                 profile.tags.push(tag);
+                await env.KV_LINE_STORAGE.put(profileKey, JSON.stringify(profile));
             }
-            await env.KV_LINE_STORAGE.put(profileKey, JSON.stringify(profile));
         }
     }
-
 }
 
 /**
- * 從實體移除 Tag
+ * removeTagsFromEntity
+ * 從實體中移除指定的 Tag
+ * 
+ * Post-conditions:
+ * - 更新 Tag 的反向索引清單
+ * - 從實體 Profile 的內嵌標籤列表中移除
  */
 export async function removeTagsFromEntity(env, userId, entityType, entityId, tags) {
     for (const tag of tags) {
-        // 1. 更新反向索引
         const indexKey = `tag_${entityType}s_${userId}_${tag}`;
         const entityList = JSON.parse(await env.KV_LINE_STORAGE.get(indexKey) || "[]");
         const updated = entityList.filter(id => id !== entityId);
         await env.KV_LINE_STORAGE.put(indexKey, JSON.stringify(updated));
 
-        // 2. 更新實體的 Tag 列表
         const profileKey = getProfileKey(entityType, userId, entityId);
         const profile = JSON.parse(await env.KV_LINE_STORAGE.get(profileKey) || "{}");
 
-        if (profile && profile.tags) {
+        if (profile?.tags) {
             profile.tags = profile.tags.filter(t => t !== tag);
             await env.KV_LINE_STORAGE.put(profileKey, JSON.stringify(profile));
         }
     }
-
 }
 
 /**
- * 取得有特定 Tag 的所有實體
+ * getEntitiesByTag
+ * 根據標籤取得所有關聯的實體 ID
  */
 export async function getEntitiesByTag(env, userId, entityType, tag) {
     const indexKey = `tag_${entityType}s_${userId}_${tag}`;
-    const entityList = JSON.parse(await env.KV_LINE_STORAGE.get(indexKey) || "[]");
-    return entityList;
+    return JSON.parse(await env.KV_LINE_STORAGE.get(indexKey) || "[]");
 }
 
 /**
- * 取得實體的所有 Tags
+ * getEntityTags
+ * 取得特定實體目前擁有的所有標籤
  */
 export async function getEntityTags(env, userId, entityType, entityId) {
     const profileKey = getProfileKey(entityType, userId, entityId);
@@ -87,16 +95,19 @@ export async function getEntityTags(env, userId, entityType, entityId) {
 }
 
 /**
- * 批次為多個實體添加 Tag
+ * batchAddTag
+ * 批次將一個標籤套用到多個實體案
  */
 export async function batchAddTag(env, userId, entityType, entityIds, tag) {
-    for (const entityId of entityIds) {
-        await addTagsToEntity(env, userId, entityType, entityId, [tag]);
-    }
+    await Promise.all(entityIds.map(id => addTagsToEntity(env, userId, entityType, id, [tag])));
 }
 
 /**
- * 重命名 Tag（影響所有使用該 Tag 的實體）
+ * renameTag
+ * 全域重命名標籤並更新所有關聯實源
+ * 
+ * Pre-conditions: oldTag 必須存在
+ * Post-conditions: 所有標記為 oldTag 的實體都會更新為 newTag，舊索引將刪除
  */
 export async function renameTag(env, userId, oldTag, newTag) {
     const entityTypes = ['member', 'keyword', 'richmenu', 'message'];
@@ -105,37 +116,33 @@ export async function renameTag(env, userId, oldTag, newTag) {
         const oldKey = `tag_${type}s_${userId}_${oldTag}`;
         const newKey = `tag_${type}s_${userId}_${newTag}`;
 
-        // 複製舊索引到新索引
         const entityList = JSON.parse(await env.KV_LINE_STORAGE.get(oldKey) || "[]");
-        if (entityList.length > 0) {
-            await env.KV_LINE_STORAGE.put(newKey, JSON.stringify(entityList));
+        if (entityList.length === 0) continue;
 
-            // 更新每個實體的 tags
-            for (const entityId of entityList) {
-                const profileKey = getProfileKey(type, userId, entityId);
-                const profile = JSON.parse(await env.KV_LINE_STORAGE.get(profileKey) || "{}");
+        await env.KV_LINE_STORAGE.put(newKey, JSON.stringify(entityList));
 
-                if (profile.tags) {
-                    profile.tags = profile.tags.map(t => t === oldTag ? newTag : t);
-                    await env.KV_LINE_STORAGE.put(profileKey, JSON.stringify(profile));
-                }
+        await Promise.all(entityList.map(async entityId => {
+            const profileKey = getProfileKey(type, userId, entityId);
+            const profile = JSON.parse(await env.KV_LINE_STORAGE.get(profileKey) || "{}");
+
+            if (profile.tags) {
+                profile.tags = profile.tags.map(t => t === oldTag ? newTag : t);
+                await env.KV_LINE_STORAGE.put(profileKey, JSON.stringify(profile));
             }
+        }));
 
-            // 刪除舊索引
-            await env.KV_LINE_STORAGE.delete(oldKey);
-        }
+        await env.KV_LINE_STORAGE.delete(oldKey);
     }
 
-    // 更新 Tag 列表
     const tagListKey = `tag_list_${userId}`;
     const tagList = JSON.parse(await env.KV_LINE_STORAGE.get(tagListKey) || "[]");
     const updatedList = tagList.map(t => t === oldTag ? newTag : t);
     await env.KV_LINE_STORAGE.put(tagListKey, JSON.stringify(updatedList));
-
 }
 
 /**
- * 刪除 Tag（從所有實體移除）
+ * deleteTag
+ * 從系統中永久刪除某個標籤
  */
 export async function deleteTag(env, userId, tag) {
     const entityTypes = ['member', 'keyword', 'richmenu', 'message'];
@@ -144,25 +151,19 @@ export async function deleteTag(env, userId, tag) {
         const indexKey = `tag_${type}s_${userId}_${tag}`;
         const entityList = JSON.parse(await env.KV_LINE_STORAGE.get(indexKey) || "[]");
 
-        // 從每個實體移除此 Tag
-        for (const entityId of entityList) {
-            await removeTagsFromEntity(env, userId, type, entityId, [tag]);
-        }
-
-        // 刪除索引
+        await Promise.all(entityList.map(id => removeTagsFromEntity(env, userId, type, id, [tag])));
         await env.KV_LINE_STORAGE.delete(indexKey);
     }
 
-    // 從 Tag 列表移除
     const tagListKey = `tag_list_${userId}`;
     const tagList = JSON.parse(await env.KV_LINE_STORAGE.get(tagListKey) || "[]");
     const updatedList = tagList.filter(t => t !== tag);
     await env.KV_LINE_STORAGE.put(tagListKey, JSON.stringify(updatedList));
-
 }
 
 /**
- * 取得 Tag 使用統計
+ * getTagStats
+ * 取得標籤的使用統計（各類型實體數量）
  */
 export async function getTagStats(env, userId, tag) {
     const entityTypes = ['member', 'keyword', 'richmenu', 'message'];
@@ -178,28 +179,25 @@ export async function getTagStats(env, userId, tag) {
 }
 
 /**
- * 取得所有 Tag 及其使用統計
+ * getAllTagsWithStats
+ * 取得所有標籤及其統計數據
  */
 export async function getAllTagsWithStats(env, userId) {
     const tagListKey = `tag_list_${userId}`;
     const tagList = JSON.parse(await env.KV_LINE_STORAGE.get(tagListKey) || "[]");
 
-    const tagsWithStats = [];
-    for (const tag of tagList) {
+    const tagsWithStats = await Promise.all(tagList.map(async tag => {
         const stats = await getTagStats(env, userId, tag);
         const total = Object.values(stats).reduce((sum, count) => sum + count, 0);
-        tagsWithStats.push({
-            name: tag,
-            total,
-            stats
-        });
-    }
+        return { name: tag, total, stats };
+    }));
 
     return tagsWithStats;
 }
 
 /**
- * 輔助函數：確保 Tag 存在
+ * ensureTagExists
+ * 輔助函數：確保標籤存在於全域列表中
  */
 export async function ensureTagExists(env, userId, tag) {
     const tagListKey = `tag_list_${userId}`;
@@ -212,7 +210,8 @@ export async function ensureTagExists(env, userId, tag) {
 }
 
 /**
- * 輔助函數：取得 Profile Key
+ * getProfileKey
+ * 輔助函數：取得對應實體類型的 KV Key
  */
 function getProfileKey(entityType, userId, entityId) {
     const keyMap = {
