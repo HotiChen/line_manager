@@ -275,12 +275,19 @@ function removeReply(index) {
 }
 window.removeReply = removeReply;
 
+let isSavingKeyword = false;
+
 /**
+ * handleKeywordSubmit
  * 儲存關鍵字
+ * 
+ * Why (為什麼要這樣寫):
+ * - 防止因為網路延遲或滑鼠連點造成的重複新增。透過 `isSavingKeyword` 鎖住請求並搭配 `withButtonLoading` 改變 UI 狀態，避免建立出兩組相同的關鍵字觸發 LINE 機器人重複回覆。
  * 
  * Pre-conditions:
  * - 必須有輸入關鍵字且加入至少一個回覆項目
  * - `api.post` 必須可連線並解析 JSON
+ * - 不能與其他儲存操作同時發生
  * 
  * Post-conditions:
  * - 新增/更新關鍵字資料至後端
@@ -288,8 +295,11 @@ window.removeReply = removeReply;
  * - 更新列表，清空快取
  */
 async function handleKeywordSubmit() {
+  if (isSavingKeyword) return;
+
   const saveBtn = document.getElementById('save-keyword-btn');
 
+  isSavingKeyword = true;
   await withButtonLoading(saveBtn, async () => {
     const keywordInput = document.getElementById('keyword-input');
     const keyword = keywordInput?.value?.trim();
@@ -368,22 +378,32 @@ async function handleKeywordSubmit() {
       } else {
         toast.error('儲存過程中發生錯誤: ' + (err.message || err));
       }
+    } finally {
+      isSavingKeyword = false;
     }
   }, '儲存中...');
 }
 
+let isDeletingKeyword = false;
+
 /**
+ * handleDeleteSelected
  * 刪除選取的關鍵字
+ * 
+ * Why (為什麼要這樣寫):
+ * - 批次刪除如果遇到連點，有可能會重複傳送 API 請求造成伺服器拋出 404 (找不到資源)。因此除了使用 `withButtonLoading`，我們透過 `isDeletingKeyword` 強制鎖住狀態。
  * 
  * Pre-conditions:
  * - 至少勾選一個 checkbox (`.keyword-checkbox:checked`)
  * - 用戶必須同意確認刪除視窗
+ * - 不可重複觸發
  * 
  * Post-conditions:
  * - 經由 API 逐筆呼叫刪除 
  * - 成功後更新畫面回覆列表，並給予 Toast 提示
  */
 async function handleDeleteSelected() {
+  if (isDeletingKeyword) return;
   const checkboxes = document.querySelectorAll('.keyword-checkbox:checked');
   if (checkboxes.length === 0) {
     toast.warning('請先選取要刪除的項目');
@@ -415,6 +435,7 @@ async function handleDeleteSelected() {
     }
     await renderReplyList(getUserId());
     toast.success(`已刪除 ${keywords.length} 個關鍵字`);
+    isDeletingKeyword = false;
   }, '刪除中...');
 }
 
@@ -444,12 +465,19 @@ function filterKeywordList(searchTerm) {
   }
 }
 
+let isFetchingReplyList = false;
+
 /**
+ * renderReplyList
  * 渲染關鍵字列表
+ * 
+ * Why (為什麼要這樣寫):
+ * - 如果在列表渲染的同時使用者又按下重新整理，可能會導致 DOM 插入錯亂或是重複拉取大量資料。加入 `isFetchingReplyList` 防止 Race Condition。
  * 
  * Pre-conditions:
  * - userId 為有效值
  * - DOM 存在 #reply-list 等元件
+ * - 不能處於正在載入列表的狀態
  * 
  * Post-conditions:
  * - 呼叫 fetchKeywordReplyList 取回資料
@@ -457,6 +485,9 @@ function filterKeywordList(searchTerm) {
  * - 同時更新 window.existingKeywords 記錄
  */
 export async function renderReplyList(userId) {
+  if (isFetchingReplyList) return;
+  isFetchingReplyList = true;
+
   const replyListContainer = document.getElementById('reply-list');
   const savedKeywordReplies = await fetchKeywordReplyList(userId);
   setInnerHTML(replyListContainer, '');
@@ -479,6 +510,8 @@ export async function renderReplyList(userId) {
     setInnerHTML(replyListContainer, `
       <tr><td colspan="6" class="text-center text-danger">❌ 載入失敗，請重新整理頁面</td></tr>
     `);
+  } finally {
+    isFetchingReplyList = false;
   }
 }
 

@@ -1,0 +1,1324 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LINE Bot 管理後台 — 完整功能與 UI/UX 報告</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&family=Outfit:wght@400;600;700&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --primary-light: #ede9fe;
+            --success: #059669;
+            --success-light: #d1fae5;
+            --warning: #d97706;
+            --warning-light: #fef3c7;
+            --danger: #dc2626;
+            --danger-light: #fee2e2;
+            --info: #0284c7;
+            --info-light: #e0f2fe;
+            --gray-50: #f9fafb;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-400: #9ca3af;
+            --gray-600: #4b5563;
+            --gray-700: #374151;
+            --gray-900: #111827;
+            --border-radius: 10px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Noto Sans TC', 'Outfit', sans-serif;
+            color: var(--gray-900);
+            background: #fff;
+            font-size: 13px;
+            line-height: 1.65;
+        }
+
+        /* ── Cover Page ── */
+        .cover {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 80px;
+            background: linear-gradient(135deg, #1e1b4b 0%, #312e81 40%, #4f46e5 100%);
+            color: white;
+            page-break-after: always;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .cover::before {
+            content: '';
+            position: absolute;
+            right: -100px;
+            top: -100px;
+            width: 500px;
+            height: 500px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 50%;
+        }
+
+        .cover::after {
+            content: '';
+            position: absolute;
+            right: 100px;
+            bottom: -150px;
+            width: 700px;
+            height: 700px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 50%;
+        }
+
+        .cover-badge {
+            background: rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 20px;
+            padding: 6px 16px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 28px;
+            display: inline-block;
+        }
+
+        .cover h1 {
+            font-size: 48px;
+            font-weight: 700;
+            line-height: 1.2;
+            margin-bottom: 16px;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        .cover-sub {
+            font-size: 18px;
+            opacity: 0.8;
+            margin-bottom: 60px;
+            max-width: 500px;
+            line-height: 1.6;
+        }
+
+        .cover-meta {
+            display: flex;
+            gap: 40px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+            padding-top: 30px;
+            font-size: 12px;
+            opacity: 0.7;
+        }
+
+        .cover-meta-item strong {
+            display: block;
+            font-size: 15px;
+            opacity: 1;
+            color: white;
+            margin-bottom: 2px;
+        }
+
+        .cover-score {
+            position: absolute;
+            right: 80px;
+            bottom: 80px;
+            text-align: center;
+        }
+
+        .cover-score-circle {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            border: 4px solid rgba(255, 255, 255, 0.4);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .cover-score-num {
+            font-size: 36px;
+            font-weight: 700;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        .cover-score-label {
+            font-size: 10px;
+            opacity: 0.7;
+            letter-spacing: 0.1em;
+            margin-top: 2px;
+        }
+
+        /* ── TOC ── */
+        .toc-page {
+            padding: 60px 80px;
+            page-break-after: always;
+        }
+
+        .toc-page h2 {
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 32px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid var(--primary);
+            color: var(--primary);
+        }
+
+        .toc-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px dashed var(--gray-200);
+            font-size: 13px;
+        }
+
+        .toc-item:last-child {
+            border-bottom: none;
+        }
+
+        .toc-num {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: var(--primary-light);
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 700;
+            flex-shrink: 0;
+            margin-right: 14px;
+        }
+
+        .toc-title {
+            flex: 1;
+            font-weight: 500;
+            color: var(--gray-700);
+        }
+
+        .toc-dots {
+            flex: 1;
+            border-bottom: 1px dotted var(--gray-300);
+            margin: 0 8px;
+        }
+
+        .toc-page-num {
+            font-size: 12px;
+            color: var(--gray-400);
+            font-weight: 600;
+            width: 20px;
+            text-align: right;
+        }
+
+        /* ── Content Pages ── */
+        .page {
+            padding: 50px 72px;
+            page-break-after: always;
+        }
+
+        .page:last-child {
+            page-break-after: auto;
+        }
+
+        /* Section Heading */
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 28px;
+            padding-bottom: 14px;
+            border-bottom: 2px solid var(--gray-200);
+        }
+
+        .section-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            background: var(--primary);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+
+        .section-header h2 {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--gray-900);
+            font-family: 'Outfit', sans-serif;
+        }
+
+        .section-header .section-num {
+            font-size: 11px;
+            color: var(--gray-400);
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            display: block;
+            margin-bottom: 2px;
+        }
+
+        /* Sub heading */
+        h3 {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--primary);
+            margin: 24px 0 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        h3::before {
+            content: '';
+            display: block;
+            width: 4px;
+            height: 16px;
+            background: var(--primary);
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+
+        h4 {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--gray-700);
+            margin: 16px 0 8px;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 14px 0;
+            font-size: 12px;
+        }
+
+        th {
+            background: var(--gray-100);
+            color: var(--gray-600);
+            font-weight: 700;
+            font-size: 11px;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            padding: 10px 14px;
+            border: 1px solid var(--gray-200);
+            text-align: left;
+        }
+
+        td {
+            padding: 9px 14px;
+            border: 1px solid var(--gray-200);
+            vertical-align: top;
+            line-height: 1.5;
+        }
+
+        tr:hover td {
+            background: var(--gray-50);
+        }
+
+        .td-icon {
+            font-size: 16px;
+            width: 36px;
+            text-align: center;
+        }
+
+        /* Badges */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .badge-green {
+            background: var(--success-light);
+            color: var(--success);
+        }
+
+        .badge-yellow {
+            background: var(--warning-light);
+            color: var(--warning);
+        }
+
+        .badge-red {
+            background: var(--danger-light);
+            color: var(--danger);
+        }
+
+        .badge-blue {
+            background: var(--info-light);
+            color: var(--info);
+        }
+
+        .badge-purple {
+            background: var(--primary-light);
+            color: var(--primary);
+        }
+
+        /* Cards */
+        .card-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+            margin: 14px 0;
+        }
+
+        .card-grid-3 {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 12px;
+            margin: 14px 0;
+        }
+
+        .card {
+            border: 1px solid var(--gray-200);
+            border-radius: var(--border-radius);
+            padding: 16px;
+            background: var(--gray-50);
+        }
+
+        .card-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--gray-700);
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .card p {
+            font-size: 12px;
+            color: var(--gray-600);
+            line-height: 1.6;
+        }
+
+        /* Score Bar */
+        .score-row {
+            display: flex;
+            align-items: center;
+            margin: 10px 0;
+            gap: 12px;
+        }
+
+        .score-label {
+            width: 110px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--gray-700);
+            flex-shrink: 0;
+        }
+
+        .score-bar-wrap {
+            flex: 1;
+            background: var(--gray-200);
+            border-radius: 6px;
+            height: 10px;
+            overflow: hidden;
+        }
+
+        .score-bar {
+            height: 100%;
+            border-radius: 6px;
+        }
+
+        .bar-green {
+            background: var(--success);
+        }
+
+        .bar-yellow {
+            background: var(--warning);
+        }
+
+        .bar-red {
+            background: var(--danger);
+        }
+
+        .score-pct {
+            width: 36px;
+            font-size: 12px;
+            font-weight: 700;
+            text-align: right;
+        }
+
+        /* Architecture Block */
+        .arch-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 14px;
+            margin: 16px 0;
+        }
+
+        .arch-card {
+            border-radius: var(--border-radius);
+            padding: 16px;
+            border-top: 4px solid;
+        }
+
+        .arch-front {
+            border-color: var(--primary);
+            background: #f5f3ff;
+        }
+
+        .arch-back {
+            border-color: var(--success);
+            background: #f0fdf4;
+        }
+
+        .arch-infra {
+            border-color: var(--info);
+            background: #f0f9ff;
+        }
+
+        .arch-card h4 {
+            font-size: 12px;
+            font-weight: 700;
+            margin: 0 0 8px;
+        }
+
+        .arch-card ul {
+            list-style: none;
+        }
+
+        .arch-card li {
+            font-size: 11px;
+            color: var(--gray-600);
+            padding: 3px 0;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+        }
+
+        .arch-card li:last-child {
+            border-bottom: none;
+        }
+
+        /* Issues */
+        .issue-item {
+            display: flex;
+            gap: 12px;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--gray-200);
+        }
+
+        .issue-item:last-child {
+            border-bottom: none;
+        }
+
+        .issue-badge {
+            flex-shrink: 0;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 700;
+            height: fit-content;
+            margin-top: 2px;
+        }
+
+        .issue-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--gray-900);
+            margin-bottom: 4px;
+        }
+
+        .issue-desc {
+            font-size: 11px;
+            color: var(--gray-600);
+            line-height: 1.5;
+        }
+
+        /* Highlight Box */
+        .highlight {
+            border-radius: 8px;
+            padding: 14px 18px;
+            margin: 16px 0;
+            font-size: 12px;
+            line-height: 1.7;
+        }
+
+        .highlight-purple {
+            background: var(--primary-light);
+            border-left: 4px solid var(--primary);
+        }
+
+        .highlight-green {
+            background: var(--success-light);
+            border-left: 4px solid var(--success);
+        }
+
+        .highlight-yellow {
+            background: var(--warning-light);
+            border-left: 4px solid var(--warning);
+        }
+
+        /* Footer */
+        @page {
+            margin: 0;
+            size: A4;
+        }
+
+        .page-footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 36px;
+            background: var(--gray-50);
+            border-top: 1px solid var(--gray-200);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 72px;
+            font-size: 10px;
+            color: var(--gray-400);
+        }
+
+        /* Print Styles */
+        @media print {
+            body {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+
+            .cover {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+
+            .no-print {
+                display: none !important;
+            }
+        }
+
+        /* Print button */
+        .print-btn {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 20px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.4);
+            z-index: 999;
+            font-family: 'Noto Sans TC', sans-serif;
+        }
+
+        .print-btn:hover {
+            background: #4338ca;
+        }
+
+        ul.check-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        ul.check-list li {
+            padding: 4px 0;
+            font-size: 12px;
+            color: var(--gray-700);
+            display: flex;
+            align-items: flex-start;
+            gap: 6px;
+        }
+
+        ul.check-list li::before {
+            content: '✓';
+            color: var(--success);
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+
+        code {
+            background: var(--gray-100);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            color: var(--primary);
+            font-family: monospace;
+        }
+
+        p {
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <button class="print-btn no-print" onclick="window.print()">🖨️ 列印 / 匯出 PDF</button>
+
+    <!-- ═══════════════════════════════ COVER ═══════════════════════════════ -->
+    <div class="cover">
+        <div class="cover-badge">技術審計報告 · 2026-02-19</div>
+        <h1>LINE Bot<br>管理後台</h1>
+        <p class="cover-sub">完整功能盤點、UI/UX 評估<br>與技術健康度報告</p>
+        <div class="cover-meta">
+            <div class="cover-meta-item">
+                <strong>專案版本</strong>
+                v2.0-lightweight-autotag
+            </div>
+            <div class="cover-meta-item">
+                <strong>架構</strong>
+                Cloudflare Workers + KV
+            </div>
+            <div class="cover-meta-item">
+                <strong>前端框架</strong>
+                Bootstrap 5 + Vanilla JS
+            </div>
+            <div class="cover-meta-item">
+                <strong>頁面數量</strong>
+                15 功能頁面
+            </div>
+        </div>
+        <div class="cover-score">
+            <div class="cover-score-circle">
+                <span class="cover-score-num">74%</span>
+                <span class="cover-score-label">整體評分</span>
+            </div>
+            <div style="margin-top: 10px; font-size: 12px; opacity: 0.7;">🟡 良好，有改進空間</div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════ TOC ═══════════════════════════════ -->
+    <div class="toc-page">
+        <h2>📋 目錄</h2>
+
+        <div class="toc-item">
+            <div class="toc-num">1</div>
+            <div class="toc-title">專案架構概覽</div>
+            <div class="toc-dots"></div>
+            <div class="toc-page-num">3</div>
+        </div>
+        <div class="toc-item">
+            <div class="toc-num">2</div>
+            <div class="toc-title">系統基礎能力</div>
+            <div class="toc-dots"></div>
+            <div class="toc-page-num">3</div>
+        </div>
+        <div class="toc-item">
+            <div class="toc-num">3</div>
+            <div class="toc-title">各頁面功能盤點（前端）</div>
+            <div class="toc-dots"></div>
+            <div class="toc-page-num">4</div>
+        </div>
+        <div class="toc-item">
+            <div class="toc-num">4</div>
+            <div class="toc-title">後端 API Handler 清單</div>
+            <div class="toc-dots"></div>
+            <div class="toc-page-num">5</div>
+        </div>
+        <div class="toc-item">
+            <div class="toc-num">5</div>
+            <div class="toc-title">UI/UX 優點分析</div>
+            <div class="toc-dots"></div>
+            <div class="toc-page-num">6</div>
+        </div>
+        <div class="toc-item">
+            <div class="toc-num">6</div>
+            <div class="toc-title">UI/UX 問題與技術債</div>
+            <div class="toc-dots"></div>
+            <div class="toc-page-num">6</div>
+        </div>
+        <div class="toc-item">
+            <div class="toc-num">7</div>
+            <div class="toc-title">整體健康度評分</div>
+            <div class="toc-dots"></div>
+            <div class="toc-page-num">7</div>
+        </div>
+        <div class="toc-item">
+            <div class="toc-num">8</div>
+            <div class="toc-title">優先行動建議</div>
+            <div class="toc-dots"></div>
+            <div class="toc-page-num">7</div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════ P1: ARCH ═══════════════════════════════ -->
+    <div class="page">
+        <div class="section-header">
+            <div class="section-icon">🏗️</div>
+            <div>
+                <span class="section-num">SECTION 1</span>
+                <h2>專案架構概覽</h2>
+            </div>
+        </div>
+
+        <div class="arch-grid">
+            <div class="arch-card arch-front">
+                <h4 style="color: var(--primary);">🖥️ 前端層</h4>
+                <ul>
+                    <li>HTML + Vanilla JS（ES Modules）</li>
+                    <li>Bootstrap 5.3 + Bootstrap Icons</li>
+                    <li>自訂 CSS 變數系統（Light/Dark）</li>
+                    <li>Chart.js（儀表板圖表）</li>
+                    <li>DOMPurify（XSS 防護）</li>
+                    <li>Swiper.js + LIFF SDK</li>
+                    <li>SPA 架構（Sidebar 切頁）</li>
+                </ul>
+            </div>
+            <div class="arch-card arch-back">
+                <h4 style="color: var(--success);">⚙️ 後端層</h4>
+                <ul>
+                    <li>Cloudflare Workers（Serverless）</li>
+                    <li>16 個 API Handler 模組</li>
+                    <li>LINE Webhook 接收與事件路由</li>
+                    <li>KV 儲存（設定/會員/模板）</li>
+                    <li>TypeScript + Wrangler 部署</li>
+                    <li>統一錯誤處理 middleware</li>
+                    <li>Queue 非同步任務支援</li>
+                </ul>
+            </div>
+            <div class="arch-card arch-infra">
+                <h4 style="color: var(--info);">☁️ 整合層</h4>
+                <ul>
+                    <li>LINE Messaging API</li>
+                    <li>LIFF（LINE Front-end Framework）</li>
+                    <li>Cloudflare KV（資料儲存）</li>
+                    <li>Cloudflare Queue</li>
+                    <li>Cloudflare Pages / Worker</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="section-header" style="margin-top: 36px;">
+            <div class="section-icon">⚙️</div>
+            <div>
+                <span class="section-num">SECTION 2</span>
+                <h2>系統基礎能力</h2>
+            </div>
+        </div>
+
+        <div class="card-grid">
+            <div class="card">
+                <div class="card-title">🌗 深/淺色主題切換</div>
+                <p>完整 CSS 變數系統（<code>theme-system.css</code>），<code>theme-switcher.js</code> 動態切換，深色模式有額外修復 CSS。</p>
+            </div>
+            <div class="card">
+                <div class="card-title">🔔 Toast 通知系統</div>
+                <p><code>helper/toast.js</code> 統一非干擾式通知，支援 success / error / warning / info 四種樣式。</p>
+            </div>
+            <div class="card">
+                <div class="card-title">⏳ 統一 Loading 管理</div>
+                <p><code>LoadingManager</code> 管理多重載入狀態，使用 key 區分不同操作，防止畫面閃爍。</p>
+            </div>
+            <div class="card">
+                <div class="card-title">🚨 統一錯誤處理</div>
+                <p><code>ErrorHandler</code> 分類網路/權限/業務邏輯錯誤，全域捕獲 unhandledRejection。</p>
+            </div>
+            <div class="card">
+                <div class="card-title">🌐 統一 API 客戶端</div>
+                <p><code>ApiClient</code> 支援 GET/POST/PUT/DELETE/PATCH 及 FormData 上傳，自動加入 X-User-Id Header 及逾時處理。</p>
+            </div>
+            <div class="card">
+                <div class="card-title">🛡️ XSS 防護架構</div>
+                <p>已實作 <code>setInnerHTML()</code>（DOMPurify 封裝）與 <code>validateUrl()</code>，127 處已安全替換。</p>
+            </div>
+            <div class="card">
+                <div class="card-title">🎭 自訂確認 Modal</div>
+                <p>全面替換原生 <code>confirm()</code>，<code>modal.helper.js</code> 提供 danger/warning/info
+                    三種樣式及鍵盤支援（Enter/ESC）。</p>
+            </div>
+            <div class="card">
+                <div class="card-title">🏷️ Auto-Tag 系統</div>
+                <p><code>helper/autotag-ui.js</code> 共用組件，Rich Menu / Imagemap / Flex Message 按鈕點擊可自動新增/移除會員標籤。</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════ P2: FEATURES ═══════════════════════════════ -->
+    <div class="page">
+        <div class="section-header">
+            <div class="section-icon">📄</div>
+            <div>
+                <span class="section-num">SECTION 3</span>
+                <h2>各頁面功能盤點</h2>
+            </div>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th style="width:30px;">#</th>
+                    <th style="width:150px;">頁面</th>
+                    <th>核心功能</th>
+                    <th style="width:80px;">狀態</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td class="td-icon">🏠</td>
+                    <td><strong>主控台</strong><br><small style="color:#9ca3af;">dashboard</small></td>
+                    <td>6 項統計卡片（Richmenu / Flex / Imagemap / 關鍵字 / 發送訊息 / 會員人數）；Chart.js 7日會員成長折線圖 + 關鍵字熱度圓餅圖；快速連結卡片（含
+                        hover 動畫）</td>
+                    <td><span class="badge badge-green">✅ 完成</span></td>
+                </tr>
+                <tr>
+                    <td class="td-icon">🎛️</td>
+                    <td><strong>Rich Menu 管理</strong><br><small style="color:#9ca3af;">richmenu</small></td>
+                    <td>左右分欄（縮圖清單 + Canvas 編輯）；即時滑鼠座標顯示；熱區 CRUD；點擊動作設定（postback / URI / message + auto-tag）；複製/同步至
+                        LINE；上傳進度 Modal；空白狀態插圖</td>
+                    <td><span class="badge badge-green">✅ 完成</span></td>
+                </tr>
+                <tr>
+                    <td class="td-icon">🧩</td>
+                    <td><strong>分眾圖文選單</strong><br><small style="color:#9ca3af;">richmenu_segmented</small></td>
+                    <td>依不同會員標籤/群體分派不同 Rich Menu；與標籤系統整合</td>
+                    <td><span class="badge badge-green">✅ 完成</span></td>
+                </tr>
+                <tr>
+                    <td class="td-icon">💬</td>
+                    <td><strong>Flex Message 管理</strong><br><small style="color:#9ca3af;">flex_builder</small></td>
+                    <td>建立/編輯 Flex Message 模板（64KB JS）；即時本地預覽（flex2html.js）；按鈕 auto-tag；多種訊息類型支援（bubble / carousel）</td>
+                    <td><span class="badge badge-green">✅ 完成</span></td>
+                </tr>
+                <tr>
+                    <td class="td-icon">🗺️</td>
+                    <td><strong>圖文訊息管理</strong><br><small style="color:#9ca3af;">imagemap_builder</small></td>
+                    <td>Canvas 熱區繪製；支援多區域點擊/URI/postback 動作；auto-tag 整合；圖片上傳至後端</td>
+                    <td><span class="badge badge-green">✅ 完成</span></td>
+                </tr>
+                <tr>
+                    <td class="td-icon">🔑</td>
+                    <td><strong>關鍵字自動回覆</strong><br><small style="color:#9ca3af;">keyword_reply_builder</small></td>
+                    <td>關鍵字規則 CRUD；多種回覆類型（文字/Flex/Imagemap/Rich Menu/keyword）；auto-tag；規則優先序</td>
+                    <td><span class="badge badge-green">✅ 完成</span></td>
+                </tr>
+                <tr>
+                    <td class="td-icon">⚡</td>
+                    <td><strong>Quick Reply Builder</strong><br><small
+                            style="color:#9ca3af;">quick_reply_builder</small></td>
+                    <td>快速回覆按鈕建立；auto-tag 支援；即時預覽</td>
+                    <td><span class="badge badge-green">✅ 完成</span></td>
+                </tr>
+                <tr>
+                    <td class="td-icon">💌</td>
+                    <td><strong>訊息發送</strong><br><small style="color:#9ca3af;">message_push</small></td>
+                    <td>分眾推送（按標籤/性別/年齡區間/縣市地區多維篩選）；最多 5 則混合訊息；發送進度條 + 逐筆日誌；LINE API 批次推送</td>
+                    <td><span class="badge badge-green">✅ 完成</span></td>
+                </tr>
+                <tr>
+                    <td class="td-icon">👥</td>
+                    <td><strong>會員管理</strong><br><small style="color:#9ca3af;">member_builder</small></td>
+                    <td>搜尋 +
+                        四維度複合篩選（標籤/溫度/等級/狀態）；會員資料（LINE名稱/電話/Email/生日/性別）；客戶溫度（Hot/Warm/Cold）；等級（新手/一般/VIP/SVIP）；標籤批次操作；空白狀態插圖
+                    </td>
+                    <td><span class="badge badge-green">✅ 完成</span></td>
+                </tr>
+                <tr>
+                    <td class="td-icon">👑</td>
+                    <td><strong>會員等級設定</strong><br><small style="color:#9ca3af;">tier_settings</small></td>
+                    <td>升級條件設定（消費/互動門檻）；等級對應 Rich Menu 指派</td>
+                    <td><span class="badge badge-green">✅ 完成</span></td>
+                </tr>
+                <tr>
+                    <td class="td-icon">🏷️</td>
+                    <td><strong>標籤管理</strong><br><small style="color:#9ca3af;">tag</small></td>
+                    <td>全域標籤 CRUD；颜色設定</td>
+                    <td><span class="badge badge-green">✅ 完成</span></td>
+                </tr>
+                <tr>
+                    <td class="td-icon">👤</td>
+                    <td><strong>個人設定</strong><br><small style="color:#9ca3af;">profile</small></td>
+                    <td>LINE@ Token 設定；LINE@ 帳號管理（新增/編輯/刪除）；帳號 Webhook 設定</td>
+                    <td><span class="badge badge-green">✅ 完成</span></td>
+                </tr>
+                <tr>
+                    <td class="td-icon">👨‍👩‍👧</td>
+                    <td><strong>團隊管理</strong><br><small style="color:#9ca3af;">team_management</small></td>
+                    <td>成員邀請（Email）；角色/權限設定；邀請連結生成；成員啟停用</td>
+                    <td><span class="badge badge-green">✅ 完成</span></td>
+                </tr>
+                <tr>
+                    <td class="td-icon">🎨</td>
+                    <td><strong>視覺化流程設計器</strong><br><small style="color:#9ca3af;">flow_designer_full</small></td>
+                    <td>5000×5000 自訂畫布；Pan/Zoom/拖曳；右鍵選單；多選框選；有向連線箭頭；節點 Flex 即時預覽；左側編輯 Sidebar；LocalStorage
+                        自動儲存；LINE@/專案選擇器</td>
+                    <td><span class="badge badge-yellow">🚧 75%</span></td>
+                </tr>
+                <tr>
+                    <td class="td-icon">💬</td>
+                    <td><strong>歡迎訊息</strong><br><small style="color:#9ca3af;">welcome_msg_builder</small></td>
+                    <td>新好友加入時觸發的歡迎訊息設定</td>
+                    <td><span class="badge badge-red">⚠️ 骨架</span></td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ═══════════════════════════════ P3: BACKEND ═══════════════════════════════ -->
+    <div class="page">
+        <div class="section-header">
+            <div class="section-icon">⚙️</div>
+            <div>
+                <span class="section-num">SECTION 4</span>
+                <h2>後端 API Handler 清單（Cloudflare Worker）</h2>
+            </div>
+        </div>
+
+        <div class="card-grid-3">
+            <div class="card">
+                <div class="card-title" style="color:var(--primary);">📋 richmenu.js</div>
+                <p>Rich Menu 完整 CRUD；圖片上傳至 LINE；多 Rich Menu 一鍵同步；設為預設選單</p>
+            </div>
+            <div class="card">
+                <div class="card-title" style="color:var(--primary);">🔑 keyword_reply.js</div>
+                <p>關鍵字規則管理；精確/模糊匹配；優先序排列；多類型回覆</p>
+            </div>
+            <div class="card">
+                <div class="card-title" style="color:var(--primary);">👥 member.js</div>
+                <p>會員 CRUD；標籤新增/移除；溫度/等級更新；批次操作</p>
+            </div>
+            <div class="card">
+                <div class="card-title" style="color:var(--primary);">💌 push_message.js</div>
+                <p>分眾篩選推送；批次 LINE Push API 呼叫；逐筆發送狀態回報</p>
+            </div>
+            <div class="card">
+                <div class="card-title" style="color:var(--primary);">📱 flex.js</div>
+                <p>Flex Message 模板 CRUD；JSON 驗證；版本管理</p>
+            </div>
+            <div class="card">
+                <div class="card-title" style="color:var(--primary);">🗺️ imagemap.js</div>
+                <p>Imagemap 模板 CRUD；圖片上傳；熱區資料儲存</p>
+            </div>
+            <div class="card">
+                <div class="card-title" style="color:var(--success);">🔗 webhook.js</div>
+                <p>LINE Webhook 接收；HMAC-SHA256 簽名驗證；事件路由（message/postback/follow/unfollow）</p>
+            </div>
+            <div class="card">
+                <div class="card-title" style="color:var(--success);">👨‍👩‍👧 team.js</div>
+                <p>成員邀請 Email 發送；角色/權限管理；邀請 Token 生成與驗證</p>
+            </div>
+            <div class="card">
+                <div class="card-title" style="color:var(--success);">👑 tier.js</div>
+                <p>等級條件設定；自動升級邏輯觸發；等級與 Rich Menu 對應</p>
+            </div>
+            <div class="card">
+                <div class="card-title" style="color:var(--warning);">🔒 token.js</div>
+                <p>Channel Access Token 管理；安全儲存（KV）；多 Bot 帳號支援</p>
+            </div>
+            <div class="card">
+                <div class="card-title" style="color:var(--warning);">🏷️ tag.js</div>
+                <p>全域標籤 CRUD；標籤事件追蹤；與 webhook 自動觸發整合</p>
+            </div>
+            <div class="card">
+                <div class="card-title" style="color:var(--warning);">⚡ quick_reply.js</div>
+                <p>Quick Reply 按鈕組管理；傳回指定 Flex / postback 回覆</p>
+            </div>
+        </div>
+
+        <div class="highlight highlight-purple" style="margin-top: 20px;">
+            <strong>後端架構補充：</strong>
+            Cloudflare Worker 採用 <code>worker_src/index.js</code> 作為路由入口，搭配 <code>worker_src/lib/</code> 內的事件處理器（含
+            auto-tag 邏輯）與 <code>middleware/</code>（認證驗證），整體為函數式模組化架構。Queue 支援非同步大量推送任務，避免 Worker 執行時間限制。
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════ P4: UX-PROS ═══════════════════════════════ -->
+    <div class="page">
+        <div class="section-header">
+            <div class="section-icon">✅</div>
+            <div>
+                <span class="section-num">SECTION 5</span>
+                <h2>UI/UX 優點分析</h2>
+            </div>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th style="width:170px;">項目</th>
+                    <th>說明</th>
+                    <th style="width:80px;">評價</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>🎨 設計一致性</strong></td>
+                    <td>Bootstrap 5 全站統一；CSS 變數系統（<code>--bg-primary</code>, <code>--text-primary</code> 等）讓 Light/Dark
+                        樣式切換零痛點</td>
+                    <td><span class="badge badge-green">★★★★★</span></td>
+                </tr>
+                <tr>
+                    <td><strong>🖼️ 空白狀態設計</strong></td>
+                    <td>Rich Menu、會員管理等列表頁均有 SVG 插圖 + 友善說明文字 + 行動指引按鈕，使用者不會面對空白頁面不知所措</td>
+                    <td><span class="badge badge-green">★★★★★</span></td>
+                </tr>
+                <tr>
+                    <td><strong>⏳ Loading 體驗</strong></td>
+                    <td>統一 LoadingManager 確保所有非同步操作均有視覺回饋，解決早期 Loading 消失過快或永遠轉圈的問題</td>
+                    <td><span class="badge badge-green">★★★★</span></td>
+                </tr>
+                <tr>
+                    <td><strong>🔔 通知設計</strong></td>
+                    <td>Toast 非干擾式通知取代 alert()；自訂 confirm Modal 樣式精美（三種危險等級）並支援 Enter/ESC 鍵盤操作</td>
+                    <td><span class="badge badge-green">★★★★★</span></td>
+                </tr>
+                <tr>
+                    <td><strong>✨ 微動畫</strong></td>
+                    <td><code>animations-enhanced.css</code> 提供入場動畫；Dashboard 快速連結卡片有 hover 上浮效果；Flow Designer 側邊欄滑入動畫
+                    </td>
+                    <td><span class="badge badge-green">★★★★</span></td>
+                </tr>
+                <tr>
+                    <td><strong>🔤 字體系統</strong></td>
+                    <td>Outfit（英數）+ Noto Sans TC（中文）混排，<code>typography-enhanced.css</code> 統一字型大小層級</td>
+                    <td><span class="badge badge-green">★★★★</span></td>
+                </tr>
+                <tr>
+                    <td><strong>🎨 流程設計器</strong></td>
+                    <td>視覺化節點編輯是整個系統最大亮點，Flex Message 節點內即時預覽、框選多節點、有向連線、大畫布平移縮放體驗接近商業產品水準</td>
+                    <td><span class="badge badge-green">★★★★★</span></td>
+                </tr>
+                <tr>
+                    <td><strong>📊 分眾推送 UX</strong></td>
+                    <td>訊息發送頁面的多維度篩選（標籤 + 性別 + 年齡 + 縣市）設計完善，全選/清除快捷按鈕提升效率</td>
+                    <td><span class="badge badge-green">★★★★</span></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="section-header" style="margin-top: 36px;">
+            <div class="section-icon">⚠️</div>
+            <div>
+                <span class="section-num">SECTION 6</span>
+                <h2>UI/UX 問題與技術債</h2>
+            </div>
+        </div>
+
+        <div class="issue-item">
+            <span class="issue-badge badge-red">🔴 重要</span>
+            <div>
+                <div class="issue-title">響應式設計缺失</div>
+                <div class="issue-desc">Sidebar 在手機（&lt;768px）沒有漢堡選單，會直接覆蓋內容。Flow Designer 未實作觸控手勢（pinch-to-zoom /
+                    swipe）。整個後台目前僅適合桌面使用。</div>
+            </div>
+        </div>
+        <div class="issue-item">
+            <span class="issue-badge badge-red">🔴 重要</span>
+            <div>
+                <div class="issue-title">Flow Designer 尚未接後端</div>
+                <div class="issue-desc">目前流程資料僅存於 LocalStorage，一旦清除瀏覽器資料會遺失。後端
+                    <code>/flow/save</code>、<code>/flow/list</code>、<code>/flow/:id</code> API 尚未完成，也無流程驗證器與執行模擬功能。
+                </div>
+            </div>
+        </div>
+        <div class="issue-item">
+            <span class="issue-badge badge-yellow">🟡 中等</span>
+            <div>
+                <div class="issue-title">richmenu.html 樣式不一致</div>
+                <div class="issue-desc">Rich Menu 頁面是建立在較早開發的獨立 HTML，使用舊版 Bootstrap alpha 版本，未載入主後台的 Theme / Typography
+                    / Animation CSS，深色模式支援不完整。</div>
+            </div>
+        </div>
+        <div class="issue-item">
+            <span class="issue-badge badge-yellow">🟡 中等</span>
+            <div>
+                <div class="issue-title">XSS 防護不完整</div>
+                <div class="issue-desc">雖已實作 <code>setInnerHTML()</code>（使用 DOMPurify），仍有 71 處 <code>.innerHTML =</code>
+                    未替換，主要集中在 <code>flex_builder.js</code>、<code>member_builder.js</code>、<code>richmenu.js</code>。
+                </div>
+            </div>
+        </div>
+        <div class="issue-item">
+            <span class="issue-badge badge-yellow">🟡 中等</span>
+            <div>
+                <div class="issue-title">Flow Designer CSS 重複定義</div>
+                <div class="issue-desc"><code>flow_designer_full.html</code> 中 <code>.multi-selected</code> 的 CSS 規則重複出現
+                    7 次（copy-paste 遺留），雖不影響功能，但程式碼品質差。</div>
+            </div>
+        </div>
+        <div class="issue-item">
+            <span class="issue-badge badge-blue">🟢 輕微</span>
+            <div>
+                <div class="issue-title">備份檔污染目錄</div>
+                <div class="issue-desc">大量 <code>.bak</code>、<code>.backup_*</code>、<code>.tmp</code> 版本備份直接存放在
+                    <code>js/</code> 目錄，且 57+ 天未 Git commit，難以追蹤真正的程式碼變更。</div>
+            </div>
+        </div>
+        <div class="issue-item">
+            <span class="issue-badge badge-blue">🟢 輕微</span>
+            <div>
+                <div class="issue-title">歡迎訊息頁面 (welcome_msg_builder) 為空殼</div>
+                <div class="issue-desc">頁面僅 1.2KB，功能尚未實作，但已出現在 Sidebar 主選單中，點擊後會顯示空白頁面。</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════ P5: SCORE + ACTION ═══════════════════════════════ -->
+    <div class="page">
+        <div class="section-header">
+            <div class="section-icon">📊</div>
+            <div>
+                <span class="section-num">SECTION 7</span>
+                <h2>整體健康度評分</h2>
+            </div>
+        </div>
+
+        <div class="score-row">
+            <div class="score-label">功能完整度</div>
+            <div class="score-bar-wrap">
+                <div class="score-bar bar-green" style="width:85%"></div>
+            </div>
+            <div class="score-pct" style="color:var(--success);">85%</div>
+            <div style="font-size:11px;color:#6b7280;margin-left:8px;">核心功能全覆蓋，Flow Designer 差後端整合</div>
+        </div>
+        <div class="score-row">
+            <div class="score-label">UI 一致性</div>
+            <div class="score-bar-wrap">
+                <div class="score-bar bar-yellow" style="width:75%"></div>
+            </div>
+            <div class="score-pct" style="color:var(--warning);">75%</div>
+            <div style="font-size:11px;color:#6b7280;margin-left:8px;">主後台統一，richmenu.html 設計老舊</div>
+        </div>
+        <div class="score-row">
+            <div class="score-label">UX 流暢度</div>
+            <div class="score-bar-wrap">
+                <div class="score-bar bar-green" style="width:80%"></div>
+            </div>
+            <div class="score-pct" style="color:var(--success);">80%</div>
+            <div style="font-size:11px;color:#6b7280;margin-left:8px;">Loading/Toast/Modal 完善，Flow Designer 是亮點</div>
+        </div>
+        <div class="score-row">
+            <div class="score-label">安全性</div>
+            <div class="score-bar-wrap">
+                <div class="score-bar bar-yellow" style="width:70%"></div>
+            </div>
+            <div class="score-pct" style="color:var(--warning);">70%</div>
+            <div style="font-size:11px;color:#6b7280;margin-left:8px;">架構到位，但 71 處 innerHTML 待替換</div>
+        </div>
+        <div class="score-row">
+            <div class="score-label">響應式設計</div>
+            <div class="score-bar-wrap">
+                <div class="score-bar bar-red" style="width:50%"></div>
+            </div>
+            <div class="score-pct" style="color:var(--danger);">50%</div>
+            <div style="font-size:11px;color:#6b7280;margin-left:8px;">桌面優秀，手機幾乎不可用</div>
+        </div>
+        <div class="score-row">
+            <div class="score-label">程式碼品質</div>
+            <div class="score-bar-wrap">
+                <div class="score-bar bar-yellow" style="width:65%"></div>
+            </div>
+            <div class="score-pct" style="color:var(--warning);">65%</div>
+            <div style="font-size:11px;color:#6b7280;margin-left:8px;">超大檔案（flow_designer.js 4700行），備份檔污染</div>
+        </div>
+        <div class="score-row">
+            <div class="score-label">版本控制</div>
+            <div class="score-bar-wrap">
+                <div class="score-bar bar-red" style="width:40%"></div>
+            </div>
+            <div class="score-pct" style="color:var(--danger);">40%</div>
+            <div style="font-size:11px;color:#6b7280;margin-left:8px;">57+ 天未 Git commit，大量變更未追蹤</div>
+        </div>
+
+        <div class="highlight highlight-yellow" style="margin: 24px 0 0;">
+            <strong>綜合評分：🟡 74% — 功能豐富，商業可用，但有明確技術債需要清理。</strong>
+        </div>
+
+        <div class="section-header" style="margin-top: 36px;">
+            <div class="section-icon">🎯</div>
+            <div>
+                <span class="section-num">SECTION 8</span>
+                <h2>優先行動建議</h2>
+            </div>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th style="width:60px;">優先</th>
+                    <th style="width:200px;">行動項目</th>
+                    <th>說明</th>
+                    <th style="width:80px;">預估工時</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><span class="badge badge-red">🔴 P0</span></td>
+                    <td><strong>Git commit 當前狀態</strong></td>
+                    <td>立即保護 57 天的開發成果，建立里程碑 commit，避免意外丟失</td>
+                    <td>15 分鐘</td>
+                </tr>
+                <tr>
+                    <td><span class="badge badge-red">🔴 P0</span></td>
+                    <td><strong>Sidebar 響應式 + 漢堡</strong></td>
+                    <td>新增 <code>css/responsive.css</code>，手機版 Sidebar 折疊，加漢堡選單按鈕</td>
+                    <td>3-4 小時</td>
+                </tr>
+                <tr>
+                    <td><span class="badge badge-red">🔴 P0</span></td>
+                    <td><strong>Flow Designer 後端儲存</strong></td>
+                    <td>完成 <code>POST /flow/save</code> 與 <code>GET /flow/list</code> API，前端接入，避免資料遺失</td>
+                    <td>1-2 天</td>
+                </tr>
+                <tr>
+                    <td><span class="badge badge-yellow">🟡 P1</span></td>
+                    <td><strong>清理 js/ 目錄備份檔</strong></td>
+                    <td>移除所有 <code>.bak</code>、<code>.backup_*</code>、<code>.tmp</code> 檔案至 backups/ 或刪除，整理版本控制</td>
+                    <td>30 分鐘</td>
+                </tr>
+                <tr>
+                    <td><span class="badge badge-yellow">🟡 P1</span></td>
+                    <td><strong>richmenu.html 樣式升級</strong></td>
+                    <td>補入主後台的 theme-system.css / typography-enhanced.css，統一深色模式樣式</td>
+                    <td>2-3 小時</td>
+                </tr>
+                <tr>
+                    <td><span class="badge badge-yellow">🟡 P1</span></td>
+                    <td><strong>補完歡迎訊息頁面</strong></td>
+                    <td>或在完成前從 Sidebar 隱藏該連結，避免用戶看到空白頁面</td>
+                    <td>0.5-4 小時</td>
+                </tr>
+                <tr>
+                    <td><span class="badge badge-blue">🟢 P2</span></td>
+                    <td><strong>XSS innerHTML 替換</strong></td>
+                    <td>優先評估用戶輸入相關的 71 處 <code>.innerHTML =</code>，高風險位置改用 <code>setInnerHTML()</code></td>
+                    <td>4-6 小時</td>
+                </tr>
+                <tr>
+                    <td><span class="badge badge-blue">🟢 P2</span></td>
+                    <td><strong>拆分超大 JS 檔案</strong></td>
+                    <td><code>flow_designer.js</code>（4700行）拆為多模組，提升維護性與載入效能</td>
+                    <td>2-3 週</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="highlight highlight-green" style="margin-top: 20px;">
+            <strong>✅ 結論：</strong>
+            這個專案在功能豐富度上表現出色，特別是視覺化流程設計器、分眾推送、會員分層管理等功能在同類工具中屬於高完成度。主要瓶頸是響應式設計與 Flow Designer 後端整合，解決這兩點後整體評分可提升至 85%+
+            以上。
+        </div>
+
+        <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--gray-200);
+    display: flex; justify-content: space-between; color: var(--gray-400); font-size: 11px;">
+            <span>LINE Bot 管理後台 — 技術審計報告</span>
+            <span>報告日期：2026-02-19 ｜ 版本：v2.0-lightweight-autotag</span>
+        </div>
+    </div>
+
+</body>
+
+</html>

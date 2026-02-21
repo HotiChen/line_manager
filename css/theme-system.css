@@ -1,0 +1,216 @@
+/* ========================================
+   Dark/Light Theme System
+   Complete color system with CSS variables
+   ======================================== */
+
+/* === LIGHT THEME (DEFAULT) === */
+:root {
+    /* Brand Colors */
+    --color-primary: #3b82f6;
+    --color-primary-dark: #2563eb;
+    --color-primary-light: #60a5fa;
+    --color-secondary: #8b5cf6;
+    --color-success: #10b981;
+    --color-warning: #f59e0b;
+    --color-danger: #ef4444;
+    --color-info: #3b82f6;
+
+    /* Backgrounds */
+    --bg-primary: #ffffff;
+    --bg-secondary: #f9fafb;
+    --bg-tertiary: #f3f4f6;
+    --bg-elevated: #ffffff;
+    --bg-inverse: #111827;
+
+    /* Text Colors */
+    --text-primary: #111827;
+    --text-secondary: #6b7280;
+    --text-tertiary: #9ca3af;
+    --text-inverse: #ffffff;
+    --text-link: var(--color-primary);
+
+    /* Borders */
+    --border-color: #e5e7eb;
+    --border-color-hover: #d1d5db;
+    --border-color-focus: var(--color-primary);
+
+    /* Shadows */
+    --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+
+    /* Overlays */
+    --overlay-color: rgba(0, 0, 0, 0.5);
+}
+
+/* === DARK THEME === */
+[data-theme="dark"] {
+    /* Backgrounds - darker for better contrast */
+    --bg-primary: #1a1d23;
+    /* Darker from #111827 */
+    --bg-secondary: #252932;
+    /* Darker from #1f2937 */
+    --bg-tertiary: #2d3340;
+    /* Lighter from #374151 */
+    --bg-elevated: #1f2329;
+    /* Darker from #1f2937 */
+    --bg-inverse: #ffffff;
+
+    /* Text Colors - MUCH BRIGHTER for readability */
+    --text-primary: #ffffff;
+    /* Pure white from #f9fafb */
+    --text-secondary: #e5e7eb;
+    /* Brighter from #d1d5db */
+    --text-tertiary: #d1d5db;
+    /* Brighter from #9ca3af */
+    --text-inverse: #111827;
+
+    /* Borders */
+    --border-color: #374151;
+    --border-color-hover: #4b5563;
+
+    /* Shadows - darker in dark mode */
+    --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+    --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.4), 0 1px 2px 0 rgba(0, 0, 0, 0.2);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.6), 0 4px 6px -2px rgba(0, 0, 0, 0.4);
+    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.7), 0 10px 10px -5px rgba(0, 0, 0, 0.5);
+
+    /* Overlays */
+    --overlay-color: rgba(0, 0, 0, 0.7);
+
+    /* Adjust brand colors for better contrast in dark mode */
+    --color-primary: #60a5fa;
+    --color-primary-dark: #3b82f6;
+    --color-primary-light: #93c5fd;
+}
+
+/* === APPLY THEME VARIABLES === */
+
+body {
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+.card,
+.modal-content {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+    transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+.card-header {
+    background-color: var(--bg-primary);
+    border-bottom-color: var(--border-color);
+}
+
+/* Sidebar theming */
+.sidebar {
+    background-color: var(--bg-elevated);
+    border-right-color: var(--border-color);
+}
+
+.sidebar-nav li a {
+    color: var(--text-secondary);
+}
+
+.sidebar-nav li a:hover {
+    color: var(--text-primary);
+    background-color: var(--bg-tertiary);
+}
+
+.sidebar-nav li.active a,
+.sidebar-nav li a.active {
+    color: var(--color-primary);
+    background-color: var(--bg-tertiary);
+}
+
+/* Form elements */
+.form-control,
+.form-select {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+}
+
+.form-control:focus,
+.form-select:focus {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    border-color: var(--border-color-focus);
+}
+
+/* Tables */
+.table {
+    color: var(--text-primary);
+}
+
+.table thead th {
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
+    border-bottom-color: var(--border-color);
+}
+
+.table tbody tr:hover {
+    background-color: var(--bg-tertiary);
+}
+
+/* Modals */
+.modal-backdrop {
+    background-color: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="dark"] .modal-backdrop {
+    background-color: rgba(0, 0, 0, 0.7);
+}
+
+/* Buttons - adjust gradients for dark mode */
+[data-theme="dark"] .btn-primary {
+    background: linear-gradient(135deg, #818cf8 0%, #a78bfa 100%);
+}
+
+[data-theme="dark"] .btn-success {
+    background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
+}
+
+/* === THEME TOGGLE BUTTON === */
+.theme-toggle {
+    position: relative;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 0.5rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+}
+
+.theme-toggle:hover {
+    background: var(--bg-secondary);
+    transform: scale(1.05);
+}
+
+.theme-toggle svg {
+    width: 20px;
+    height: 20px;
+    color: var(--text-secondary);
+    transition: transform 0.3s ease;
+}
+
+.theme-toggle:hover svg {
+    transform: rotate(15deg);
+}
+
+.sun-icon,
+.moon-icon {
+    position: absolute;
+    transition: opacity 0.2s ease;
+}

@@ -18,6 +18,14 @@ export class FlowNodeAdapter {
 
     /**
      * 編輯節點 - 主要入口函數
+     * 
+     * Why: 
+     * - 這是外部呼叫介面，身為 Adapter 必須將不同節點分流至對應的編輯器。將複雜度保留在此，維持外部介面簡潔。
+     * 
+     * Pre-conditions:
+     * - `node` 必須帶有 `type` 與 `config`
+     * - `onSave` 必須是 Function
+     * 
      * @param {Object} node - Flow Designer 節點
      * @param {Function} onSave - 儲存回調函數
      */
@@ -57,6 +65,16 @@ export class FlowNodeAdapter {
 
     /**
      * 側邊欄編輯器 - 用於簡單節點
+     * 
+     * Why:
+     * - 針對純文字、URL、Postback、Delay 等不需要大畫面的節點，統一在右側邊欄解決，避免開啟過多 Modal 遮擋流程圖。
+     * 
+     * Pre-conditions:
+     * - `node` 與 `onSave` 必須有效。
+     * - 畫面上必須存在 `#flow-node-editor` 元素。
+     * 
+     * Post-conditions:
+     * - 清空側邊欄並依據 node.type 插入新建的表單欄位元件。
      */
     static async openSidebarEditor(node, onSave) {
         const sidebar = document.getElementById('flow-node-editor');
@@ -107,6 +125,9 @@ export class FlowNodeAdapter {
 
     /**
      * 文字訊息編輯器
+     * 
+     * Why:
+     * - 需限制文字長度不高過 5000 字（LINE 官方限制），即時回饋長度與提示。
      */
     static createTextEditor(form, node, onSave) {
         const group = document.createElement('div');
@@ -139,7 +160,16 @@ export class FlowNodeAdapter {
         saveBtn.className = 'btn btn-primary w-100 mt-2';
         setInnerHTML(saveBtn, '<i class="bi bi-check"></i> 儲存');
         saveBtn.onclick = () => {
-            node.data.text = textarea.value;
+            const val = textarea.value.trim();
+            if (!val) {
+                toast.warning('⚠️ 訊息內容不能為空（Early Return）');
+                return;
+            }
+            if (val.length > 5000) {
+                toast.error('❌ 文字長度超過 5000 字限制');
+                return;
+            }
+            node.data.text = val;
             onSave(node);
             toast.success('訊息內容已更新');
         };
@@ -153,6 +183,9 @@ export class FlowNodeAdapter {
 
     /**
      * URL 編輯器
+     * 
+     * Why:
+     * - 提供兩個欄位（實際連結與顯示文字），必須驗證 URL 不能為空。
      */
     static createURLEditor(form, node, onSave) {
         const group = document.createElement('div');
@@ -204,6 +237,9 @@ export class FlowNodeAdapter {
 
     /**
      * Postback 編輯器
+     * 
+     * Why:
+     * - 提供給開發者自訂 data string，是隱藏且最強大的串接手段。顯示文字是按鈕外觀。必須阻止空 data。
      */
     static createPostbackEditor(form, node, onSave) {
         const group = document.createElement('div');
@@ -253,6 +289,9 @@ export class FlowNodeAdapter {
 
     /**
      * 延遲編輯器
+     * 
+     * Why:
+     * - 客服與行銷常需要時間差營造真實感，限制最高 86400 (24h) 防呆。
      */
     static createDelayEditor(form, node, onSave) {
         const group = document.createElement('div');
@@ -277,7 +316,12 @@ export class FlowNodeAdapter {
         saveBtn.className = 'btn btn-primary w-100 mt-2';
         setInnerHTML(saveBtn, '<i class="bi bi-check"></i> 儲存');
         saveBtn.onclick = () => {
-            const seconds = parseInt(input.value);
+            const secondsStr = input.value;
+            if (secondsStr === '') {
+                toast.error('請輸入延遲秒數');
+                return;
+            }
+            const seconds = parseInt(secondsStr);
             if (isNaN(seconds) || seconds < 0 || seconds > 86400) {
                 toast.error('延遲秒數必須在 0-86400 之間');
                 return;

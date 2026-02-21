@@ -8,16 +8,33 @@ const state = {
     currentProject: null
 };
 
+/**
+ * 設定當前用戶 ID
+ * 
+ * @param {string} id - 用戶 ID
+ * 
+ * Pre-conditions:
+ * - id 必須是有效字串
+ * Post-conditions:
+ * - 全域 state.userId 被更新
+ */
 export function setUserId(id) {
+    if (!id || typeof id !== 'string') {
+        console.warn('⚠️ [State] 傳入的 userId 無效:', id);
+        return;
+    }
     state.userId = id;
 }
 
 /**
- * getUserId
  * 擷取當前用戶 ID，支援 URL 參數與本地測試預設值。
  * 
+ * Pre-conditions:
+ * - window.location 必須可以存取
  * Post-conditions:
- * - 回傳有效字串 ID 或 null
+ * - 回傳有效的字串 ID 或 null，如果從 URL 取得則會同步更新本地 state
+ * 
+ * @returns {string|null} 用戶 ID
  */
 export function getUserId() {
     const urlParams = new URLSearchParams(window.location.search);
@@ -36,8 +53,25 @@ export function getUserId() {
     return state.userId;
 }
 
-export function setCurrentProject(project) { state.currentProject = project; }
-export function getCurrentProject() { return state.currentProject; }
+/**
+ * 設定當前的專案 ID
+ * @param {string} project - 專案 ID
+ * 
+ * Pre-conditions:
+ * - project 不能為空
+ */
+export function setCurrentProject(project) {
+    if (!project) return;
+    state.currentProject = project;
+}
+
+/**
+ * 取得當前的專案 ID
+ * @returns {string|null} 當前的專案 ID
+ */
+export function getCurrentProject() {
+    return state.currentProject;
+}
 
 export const apiBase = config.apiBase;
 export const debug = config.debug;

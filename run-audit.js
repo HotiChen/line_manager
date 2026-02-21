@@ -1,0 +1,3 @@
+const fs = require('fs');
+const testFiles = ['js/richmenu.js', 'js/imagemap_builder.js', 'js/flex_builder.js'];
+// Just a simple script format we can use to start the manual refactor...

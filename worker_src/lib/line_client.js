@@ -5,8 +5,18 @@ import * as logger from '../utils/logger.js';
 
 /**
  * 取得 LINE 使用者 Profile
+ * 
+ * Pre-conditions:
+ * - lineUserId 與 accessToken 不可為空
+ * Post-conditions:
+ * - 成功回傳 profile 物件，失敗或無效參數回傳 null
  */
 export async function getLineUserProfile(lineUserId, accessToken) {
+    if (!lineUserId || !accessToken) {
+        logger.warn('PROFILE', '缺少 lineUserId 或 accessToken，提早放棄請求');
+        return null;
+    }
+
     try {
         const res = await fetch(`https://api.line.me/v2/bot/profile/${lineUserId}`, {
             headers: { 'Authorization': `Bearer ${accessToken}` }
@@ -26,9 +36,17 @@ export async function getLineUserProfile(lineUserId, accessToken) {
 
 /**
  * 格式化回覆訊息 (將內部格式轉為 LINE 格式)
+ * 
+ * Pre-conditions:
+ * - reply 必須包含 type 屬性
+ * Post-conditions:
+ * - 回傳符合 Messaging API 的格式，不支援類型回傳 null
  */
 export async function formatReplyMessage(reply, env, userId) {
-    if (!reply || !reply.type) return null;
+    if (!reply || typeof reply !== 'object' || !reply.type) {
+        logger.warn('LINE_CLIENT', '無效的 reply 物件或缺少 type，格式化終止');
+        return null;
+    }
 
     switch (reply.type) {
         case 'text':
@@ -75,9 +93,14 @@ export async function formatReplyMessage(reply, env, userId) {
 
 /**
  * 正規化 Imagemap Actions (LINE 要求 type 為 message 或 uri)
+ * 
+ * Pre-conditions:
+ * - 無特別限制
  */
 export function normalizeImagemapActions(msg) {
-    if (msg.type !== 'imagemap' || !msg.actions) return msg;
+    if (!msg || typeof msg !== 'object' || msg.type !== 'imagemap' || !Array.isArray(msg.actions)) {
+        return msg;
+    }
 
     const normalizedMsg = { ...msg };
     normalizedMsg.actions = msg.actions.map(action => {
@@ -93,8 +116,16 @@ export function normalizeImagemapActions(msg) {
 
 /**
  * 發送回覆 (具備重試機制)
+ * 
+ * Pre-conditions:
+ * - replyToken, messages, accessToken 皆不可為空
  */
 export async function replyWithRetry(replyToken, messages, accessToken, retryCount = 1) {
+    if (!replyToken || !messages || !accessToken) {
+        logger.error('LINE_API', '缺少發送回覆的必要參數 (replyToken / messages / accessToken)');
+        throw new Error('LINE API 發送回覆缺少必要參數');
+    }
+
     const url = 'https://api.line.me/v2/bot/message/reply';
 
     for (let i = 0; i <= retryCount; i++) {
@@ -135,8 +166,16 @@ export async function replyWithRetry(replyToken, messages, accessToken, retryCou
  * @param {string} lineUserId LINE 使用者 ID
  * @param {string} richMenuId Rich Menu ID
  * @param {string} accessToken LINE Access Token
+ * 
+ * Pre-conditions:
+ * - lineUserId, richMenuId, accessToken 皆不可為空
  */
 export async function linkRichMenuToUser(lineUserId, richMenuId, accessToken) {
+    if (!lineUserId || !richMenuId || !accessToken) {
+        logger.warn('LINE_API', '綁定選單缺少必要參數，提早中斷');
+        return false;
+    }
+
     const url = `https://api.line.me/v2/bot/user/${lineUserId}/richmenu/${richMenuId}`;
     try {
         const res = await fetch(url, {
@@ -162,8 +201,16 @@ export async function linkRichMenuToUser(lineUserId, richMenuId, accessToken) {
  * 取消使用者的特定 Rich Menu 綁定
  * @param {string} lineUserId LINE 使用者 ID
  * @param {string} accessToken LINE Access Token
+ * 
+ * Pre-conditions:
+ * - lineUserId 與 accessToken 不可為空
  */
 export async function unlinkRichMenuFromUser(lineUserId, accessToken) {
+    if (!lineUserId || !accessToken) {
+        logger.warn('LINE_API', '解除綁定選單缺少必要參數，提早中斷');
+        return false;
+    }
+
     const url = `https://api.line.me/v2/bot/user/${lineUserId}/richmenu`;
     try {
         const res = await fetch(url, {

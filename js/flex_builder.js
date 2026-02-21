@@ -1,4 +1,15 @@
-// (REWORKED) Renders the list of saved flex messages from the local `allFlexMessages` array
+/**
+ * renderSavedFlexList
+ * 渲染左側/列表區的 Flex Messages，將全域 `allFlexMessages` 反映到 UI 上。
+ * 
+ * Why (為什麼要這樣寫):
+ * - 所有針對 Flex 的增刪改都是在記憶體中（allFlexMessages）進行，此函式負責將記憶體狀態（包括新增、修改、刪除標籤）單向綁定到 DOM 上，確保 UI 與 State 的一致性，減少直接操作 DOM 產生的混亂。
+ * 
+ * Pre-conditions:
+ * - `allFlexMessages` 必須是陣列，且 DOM 必須存在 `#saved-flex-list`。
+ * Post-conditions:
+ * - 列表容器將被清空並重新填入最新狀態的 Flex 卡片。
+ */
 function renderSavedFlexList() {
   const container = document.getElementById('saved-flex-list');
   if (!container) return;
@@ -128,12 +139,27 @@ function filterFlexList(searchTerm) {
   }
 }
 
-// (NEW) Fetches the initial list from the backend and renders it.
+let isFetchingFlexList = false;
+
+/**
+ * loadAndRenderInitialList
+ * 從後端 API 取得現有 Flex 列表並載入記憶體。
+ * 
+ * Why (為什麼要這樣寫):
+ * - 確保編輯器一載入時擁有最完整的對照清單。加入 Lock 鎖防止網路延遲時多次調用引發 Race Condition（載入兩次導致清單重複）。
+ * 
+ * Pre-conditions:
+ * - userId 不得為空。不可並行重複呼叫。
+ * Post-conditions:
+ * - 取得資料後標記為 clean 狀態 (isNew/isUpdated = false) 並存放於 allFlexMessages。
+ */
 async function loadAndRenderInitialList(userId) {
   if (!userId) {
     showNotification("無法獲取使用者 ID，功能可能異常", "error");
     return;
   }
+  if (isFetchingFlexList) return;
+  isFetchingFlexList = true;
 
   try {
     LoadingManager.show('flex-fetch', '正在從後端讀取列表...');
@@ -145,6 +171,7 @@ async function loadAndRenderInitialList(userId) {
     const container = document.getElementById('saved-flex-list');
     if (container) setInnerHTML(container, "<div class='text-danger'>無法載入列表，請稍後再試。</div>");
   } finally {
+    isFetchingFlexList = false;
     LoadingManager.hide('flex-fetch');
     updateButtonStates();
   }

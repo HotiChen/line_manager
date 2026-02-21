@@ -22,17 +22,33 @@ export class FlowDataLoader {
             keywords: null,
             projects: null
         };
+        this.locks = {
+            richmenus: false,
+            flexMessages: false,
+            imagemaps: false,
+            keywords: false,
+            projects: false
+        };
 
         // 自動載入
         this.loadAllData();
     }
 
     /**
+     * loadRichmenus
      * 載入所有 Richmenu
+     * 
+     * Why: 
+     * - 表單下拉選單或是重新渲染節點時可能會高頻度呼叫此函數。加入 lock 防止初次載入時發出多個相同 API 請求。
+     * 
+     * Pre-conditions: 無
+     * Post-conditions: 回傳 Array 格式的 Richmenu 清單並寫入 cache。
      */
     async loadRichmenus() {
         if (this.cache.richmenus) return this.cache.richmenus;
+        if (this.locks.richmenus) return new Promise(resolve => setTimeout(() => resolve(this.loadRichmenus()), 100));
 
+        this.locks.richmenus = true;
         try {
             const data = await api.get('/richmenu/list');
             this.cache.richmenus = data.richmenus || [];
@@ -41,6 +57,8 @@ export class FlowDataLoader {
             console.error('❌ 載入 Richmenu 失敗:', err);
             toast.error('載入 Richmenu 失敗');
             return [];
+        } finally {
+            this.locks.richmenus = false;
         }
     }
 
@@ -145,20 +163,27 @@ export class FlowDataLoader {
     }
 
     /**
+     * loadFlexMessages
      * 載入所有 Flex Message
+     * 
+     * Why:
+     * - 用途與 loadRichmenus 相同，確保在拉取複雜的 JSON 結構時不會因為 Race Condition (競態條件) 而塞爆網路。
      */
     async loadFlexMessages() {
         if (this.cache.flexMessages) return this.cache.flexMessages;
+        if (this.locks.flexMessages) return new Promise(resolve => setTimeout(() => resolve(this.loadFlexMessages()), 100));
 
+        this.locks.flexMessages = true;
         try {
             const data = await fetchMessageListByType('flex', getUserId());
             this.cache.flexMessages = data || [];
-
             return this.cache.flexMessages;
         } catch (err) {
             console.error('❌ 載入 Flex Message 失敗:', err);
             toast.error('載入 Flex Message 失敗');
             return [];
+        } finally {
+            this.locks.flexMessages = false;
         }
     }
 
@@ -221,44 +246,49 @@ export class FlowDataLoader {
     }
 
     /**
+     * loadImagemaps
      * 載入所有 Imagemap
+     * 
+     * Why: 
+     * - 防止表單元件重複渲染時洗廢 API，加入防呆 Lock。
      */
     async loadImagemaps() {
         if (this.cache.imagemaps) return this.cache.imagemaps;
+        if (this.locks.imagemaps) return new Promise(resolve => setTimeout(() => resolve(this.loadImagemaps()), 100));
 
+        this.locks.imagemaps = true;
         try {
             const data = await fetchMessageListByType('imagemap', getUserId());
-
             this.cache.imagemaps = data || [];
-
-
-            // Debug: 顯示第一個 Imagemap 的完整資料結構
-            if (this.cache.imagemaps.length > 0) {
-            }
-
             return this.cache.imagemaps;
         } catch (err) {
             console.error('❌ 載入 Imagemap 失敗:', err);
             toast.error('載入 Imagemap 失敗');
             return [];
+        } finally {
+            this.locks.imagemaps = false;
         }
     }
 
     /**
+     * loadKeywords
      * 載入關鍵字列表
      */
     async loadKeywords() {
         if (this.cache.keywords) return this.cache.keywords;
+        if (this.locks.keywords) return new Promise(resolve => setTimeout(() => resolve(this.loadKeywords()), 100));
 
+        this.locks.keywords = true;
         try {
             const data = await fetchKeywordReplies(getUserId());
             this.cache.keywords = data || [];
-
             return this.cache.keywords;
         } catch (err) {
             console.error('❌ 載入關鍵字失敗:', err);
             toast.error('載入關鍵字失敗');
             return [];
+        } finally {
+            this.locks.keywords = false;
         }
     }
 

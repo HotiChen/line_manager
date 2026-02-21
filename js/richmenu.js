@@ -1118,7 +1118,18 @@ function createUniqueAlieasID() {
   return `alias-${userId}-${timestamp}-${random}`;
 }
 
-
+/**
+ * saveEditedRichmenu
+ * 儲存目前正在編輯的 Richmenu 到本地的 allRichmenus 陣列中。
+ * 
+ * Why (為什麼要這樣寫):
+ * - 避免每畫一個框就打 API 導致效能低落或不完整。統一暫存於記憶體，使用者確認無誤後再按同步 (sync) 一起發送。
+ * 
+ * Pre-conditions:
+ * - 必須輸入 richmenuName 且不可為空。
+ * Post-conditions:
+ * - 若為新選單則 push 進全域陣列；若為舊選單則覆寫原有設定，標記 isUpdated = true 並更新 UI 預覽圖。
+ */
 async function saveEditedRichmenu() {
   const richmenuName = document.getElementById("menu-name").value;
   if (!richmenuName) {
@@ -1201,18 +1212,28 @@ async function saveEditedRichmenu() {
 }
 
 
+let isFetchingRichmenuList = false;
+
 /**
  * fetchRichMenuList
  * 平行取得 Richmenu 列表與預設選單設定，然後刷新 UI 呈現
  * 
+ * Why (為什麼要這樣寫):
+ * - 列表 (List) 與預設狀態 (Default) 在後端是分開的介面，使用 Promise.all 併發請求可縮減等待時間，提供更好的 UX。
+ * 
  * Pre-conditions:
- * - 無
+ * - 不可與其他 Fetch 重疊 (防禦 Race Condition)
  * 
  * Post-conditions:
- * - 若取得成功，更新 allRichmenus 全域變數，並顯示出縮圖列表。
- * - 無選單資料時顯示空狀態提示。
+ * - 取回最新狀態並渲染 UI。若無資料顯示空狀態。
  */
 async function fetchRichMenuList() {
+  if (isFetchingRichmenuList) {
+    console.warn("[fetchRichMenuList] 取消重複呼叫，仍在加載中...");
+    return;
+  }
+  isFetchingRichmenuList = true;
+
   try {
     LoadingManager.show('richmenu-fetch', '載入 Richmenu 列表...');
 
@@ -1247,6 +1268,7 @@ async function fetchRichMenuList() {
   } catch (error) {
     console.error("❌ 初始化 Richmenu 列表失敗:", error);
   } finally {
+    isFetchingRichmenuList = false;
     LoadingManager.hide('richmenu-fetch');
   }
 }
@@ -1393,7 +1415,28 @@ if (deleteButton) {
   });
 }
 
+let isSyncingRichmenus = false;
+
+/**
+ * syncRichmenusToServer
+ * 將本地端的 Richmenu 狀態 (包含新增、刪除、預設) 批次同步到遠端。
+ * 
+ * Why (為什麼要這樣寫):
+ * - Richmenu 的圖片上傳、元資料關聯十分繁瑣，一次過批次處理可以減少多次 API 往返的 Loading 中斷感，同時確保 UI 狀態最終一致性。
+ * 
+ * Pre-conditions:
+ * - 必須不在 isSyncingRichmenus 狀態，防止 Race Condition 導致同一張圖片被上傳兩次或 ID 衝突。
+ * 
+ * Post-conditions:
+ * - 同步成功後更新 UI 日誌，並重新 fetchRichMenuList() 清單確保與伺服器完全同步。
+ */
 async function syncRichmenusToServer() {
+  if (isSyncingRichmenus) {
+    toast.warning("同步正在進行中，請稍候...");
+    return;
+  }
+  isSyncingRichmenus = true;
+
   LoadingManager.show('richmenu-sync', '同步中請稍候...');
 
   const log = document.getElementById("upload-task-log");
@@ -1471,7 +1514,8 @@ async function syncRichmenusToServer() {
     addLog("🎉 所有步驟同步完成！");
     await fetchRichMenuList();
   } finally {
-    // 確保 loader 一定會被關閉
+    // 確保 loader 與 lock 一定會被關閉
+    isSyncingRichmenus = false;
     LoadingManager.hide('richmenu-sync');
   }
 }

@@ -26,6 +26,11 @@ import { setInnerHTML } from './security.js';
  * if (confirmed) {
  *   // 執行刪除操作
  * }
+ * 
+ * Pre-conditions:
+ * - 系統必須載入 Bootstrap JS，且 document.body 存在
+ * Post-conditions:
+ * - 在 DOM 插入對話框並於操作後自動清理
  */
 export function showConfirm({
     title = '確認操作',
@@ -147,6 +152,9 @@ export function showConfirm({
  * @param {string} message - 訊息內容
  * @param {string} [title='警告'] - 標題
  * @returns {Promise<boolean>}
+ * 
+ * Pre-conditions: 系統已載入 Bootstrap JS
+ * Post-conditions: 顯示 danger 類型的 Modal
  */
 export function confirmDanger(message, title = '警告') {
     return showConfirm({
@@ -163,6 +171,9 @@ export function confirmDanger(message, title = '警告') {
  * @param {string} message - 訊息內容
  * @param {string} [title='確認'] - 標題
  * @returns {Promise<boolean>}
+ * 
+ * Pre-conditions: 系統已載入 Bootstrap JS
+ * Post-conditions: 顯示 warning 類型的 Modal
  */
 export function confirmWarning(message, title = '確認') {
     return showConfirm({
@@ -179,6 +190,9 @@ export function confirmWarning(message, title = '確認') {
  * @param {string} message - 訊息內容
  * @param {string} [title='提示'] - 標題
  * @returns {Promise<boolean>}
+ * 
+ * Pre-conditions: 系統已載入 Bootstrap JS
+ * Post-conditions: 顯示 info 類型的 Modal
  */
 export function confirmInfo(message, title = '提示') {
     return showConfirm({

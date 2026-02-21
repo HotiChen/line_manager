@@ -1,5 +1,36 @@
 # 更新日誌 (Changelog)
 
+## 2026-02-21 - Agent Workflows & JS Batch Audit
+
+### 🆕 新增功能 / 系統增強 (Features & Enhancements)
+
+#### 1. 🤖 自動化工作流 (Agent Workflows)
+建立並啟用了多個標準化開發流程腳本，提升開發紀律與自動化程度：
+- `/auto-dev`: 快速/深度開發智能路由
+- `/batch-audit`: 逐檔批次稽核程式碼 (防呆機制覆蓋)
+- `/build-feature`: 完整的前後端功能開發藍圖
+- `/qa-deploy`: 測試與上線部署流程
+- `/sos-emergency`: 緊急 Root Cause 分析與救火流程
+- `/start-epic`: 產品 PRD 與規格發想工作流
+- `/auto-commit`: 自動化盤點變更與 Git 提交
+
+#### 2. 🛡️ 前端核心邏輯加固 (Batch Audit JS)
+對所有大型互動元件進行全面的競態條件 (Race Condition) 掃描，新增多把防連點、防重複載入的安全鎖，並補齊 `Why` 之 JSDoc 註解：
+- `flow_designer.js` & `flow_designer_data_loader.js`: 鎖定存檔 (`isSaving`) 與拉取 API (`isLoading`)。
+- `flow_node_adapter.js`: 側邊欄表單之 Early Returns 字數限制與防呆。
+- `message_push.js`: 推播發送前之雙重鎖定防護 (`isSending`)。
+- `team_management.js`: 踢除成員及載入名單之不可穿透保護。
+- `message.helper.js`: 實作 `inflightRequests` Map 防範同秒發送重複 API 網路風暴。
+
+#### 3. 🎨 UI/UX 視覺與架構升級
+抽離並模組化多個前端 CSS，落實防呆視覺引導與進階美學：
+- `empty-state.css`: 優化無資料時的空狀態體驗。
+- `z-index-system.css`: 建立全域層級管理，避免 Modal 疊加衝突。
+- `theme-system.css` & `dark-mode-fixes.css`: 導入色彩變數與修復深色介面。
+- `typography-enhanced.css` & `animations-enhanced.css`: 導入流暢微動畫與排版。
+
+---
+
 ## 2024-12-28 - Quick Reply & 變數替換功能
 
 ### 🆕 新增功能

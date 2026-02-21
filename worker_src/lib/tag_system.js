@@ -24,6 +24,8 @@
  * - 如果實體 Profile 存在，則更新其內部的 tags 欄位
  */
 export async function addTagsToEntity(env, userId, entityType, entityId, tags) {
+    if (!env || !userId || !entityType || !entityId || !Array.isArray(tags)) return;
+
     for (const tag of tags) {
         await ensureTagExists(env, userId, tag);
 
@@ -59,6 +61,8 @@ export async function addTagsToEntity(env, userId, entityType, entityId, tags) {
  * - 從實體 Profile 的內嵌標籤列表中移除
  */
 export async function removeTagsFromEntity(env, userId, entityType, entityId, tags) {
+    if (!env || !userId || !entityType || !entityId || !Array.isArray(tags)) return;
+
     for (const tag of tags) {
         const indexKey = `tag_${entityType}s_${userId}_${tag}`;
         const entityList = JSON.parse(await env.KV_LINE_STORAGE.get(indexKey) || "[]");
@@ -80,6 +84,8 @@ export async function removeTagsFromEntity(env, userId, entityType, entityId, ta
  * 根據標籤取得所有關聯的實體 ID
  */
 export async function getEntitiesByTag(env, userId, entityType, tag) {
+    if (!env || !userId || !entityType || !tag) return [];
+
     const indexKey = `tag_${entityType}s_${userId}_${tag}`;
     return JSON.parse(await env.KV_LINE_STORAGE.get(indexKey) || "[]");
 }
@@ -89,6 +95,8 @@ export async function getEntitiesByTag(env, userId, entityType, tag) {
  * 取得特定實體目前擁有的所有標籤
  */
 export async function getEntityTags(env, userId, entityType, entityId) {
+    if (!env || !userId || !entityType || !entityId) return [];
+
     const profileKey = getProfileKey(entityType, userId, entityId);
     const profile = JSON.parse(await env.KV_LINE_STORAGE.get(profileKey) || "{}");
     return profile.tags || [];
@@ -110,6 +118,8 @@ export async function batchAddTag(env, userId, entityType, entityIds, tag) {
  * Post-conditions: 所有標記為 oldTag 的實體都會更新為 newTag，舊索引將刪除
  */
 export async function renameTag(env, userId, oldTag, newTag) {
+    if (!env || !userId || !oldTag || !newTag) return;
+
     const entityTypes = ['member', 'keyword', 'richmenu', 'message'];
 
     for (const type of entityTypes) {

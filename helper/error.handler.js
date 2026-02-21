@@ -64,11 +64,17 @@ const ERROR_MESSAGES = {
 
 export class ErrorHandler {
     /**
-     * handle
      * 分類並展示錯誤訊息給用戶
      * 
+     * @param {Error|Response|object|string} error - 錯誤物件或訊息
+     * @param {string} [context=''] - 發生錯誤的情境或模組名稱
+     * @param {object} [options={}] - 選項 (showToast, logToConsole)
+     * @returns {object} 分類後的 errorInfo 物件
+     * 
+     * Pre-conditions:
+     * - error 不可為空
      * Post-conditions:
-     * - 記錄錯誤到 Console 並顯示 Toast 通知
+     * - 記錄錯誤到 Console 並根據設定顯示 Toast 通知，回傳標準化錯誤資訊
      */
     static handle(error, context = '', options = {}) {
         const { showToast = true, logToConsole = true } = options;
@@ -94,6 +100,17 @@ export class ErrorHandler {
         return errorInfo;
     }
 
+    /**
+     * 根據錯誤型態分類
+     * 
+     * @param {any} error - 原始錯誤物件
+     * @returns {object} 包含 type 與 message 的錯誤資訊
+     * 
+     * Pre-conditions:
+     * - 無特別限制
+     * Post-conditions:
+     * - 回傳合法的分類物件
+     */
     static classify(error) {
         if (error instanceof Response || error?.status) return this.classifyHttpError(error);
 
@@ -134,6 +151,14 @@ export class ErrorHandler {
     }
 }
 
+/**
+ * 設定全域的錯誤攔截處理器
+ * 
+ * Pre-conditions:
+ * - window 物件存在
+ * Post-conditions:
+ * - 系統未捕捉的 promise rejection 或 error 都由 ErrorHandler 接手
+ */
 export function setupGlobalErrorHandlers() {
     window.addEventListener('unhandledrejection', (e) => {
         ErrorHandler.handle(e.reason, '未處理的請求失敗', { showToast: false });
@@ -145,4 +170,3 @@ export function setupGlobalErrorHandlers() {
 
 // 導出快捷方法
 export const handleError = ErrorHandler.handle.bind(ErrorHandler);
-export const handleFetch = ErrorHandler.handleFetch.bind(ErrorHandler);

@@ -4200,9 +4200,23 @@ export class FlowDesigner {
     }
 
     /**
+     * saveFlow
      * 儲存流程
+     * 
+     * Why (為什麼要這樣寫):
+     * - 如果使用者按了多次 Ctrl+S 或多次點擊儲存，會在這瞬間發出好幾個儲存請求。防護鎖 `isSaving` 可確保畫面上只存一次。
+     * 
+     * Pre-conditions:
+     * - `this.nodes` 和 `this.edges` 必須存在。
+     * - 不允許並發執行。
+     * 
+     * Post-conditions:
+     * - 從 API 獲取最新的 `flowId`。
+     * - 將狀態保存在 LocalStorage 中。
      */
     async saveFlow() {
+        if (this.isSaving) return;
+        this.isSaving = true;
         const flowData = {
             id: this.flowId,
             name: this.flowName,
@@ -4221,13 +4235,30 @@ export class FlowDesigner {
         } catch (err) {
             console.error('儲存失敗:', err);
             toast.error('❌ 儲存失敗: ' + err.message);
+        } finally {
+            this.isSaving = false;
         }
     }
 
     /**
+     * loadFlow
      * 載入流程
+     * 
+     * Why (為什麼要這樣寫):
+     * - 避免網路卡頓時使用者多次點選載入不同流程，導致最後呈現出的畫面與預期狀態不同步。
+     * 
+     * Pre-conditions:
+     * - 不可傳入空 `flowId`。
+     * - 確保不在載入中。
+     * 
+     * Post-conditions:
+     * - 從 API 獲取完整節點與連線設定並取代本地變數 (`this.nodes`, `this.edges`)。
+     * - 觸發 `renderAll()` 更新 DOM 視圖。
      */
     async loadFlow(flowId) {
+        if (!flowId) return;
+        if (this.isLoading) return;
+        this.isLoading = true;
         try {
             const data = await api.get(`/flow/get/${flowId}`);
 
@@ -4245,13 +4276,27 @@ export class FlowDesigner {
         } catch (err) {
             console.error('載入失敗:', err);
             toast.error('❌ 載入失敗: ' + err.message);
+        } finally {
+            this.isLoading = false;
         }
     }
 
     /**
+     * reloadFlow
      * 重新載入流程（刷新最新資料）
+     * 
+     * Why (為什麼要這樣寫):
+     * - 在切換專案，或某些按鈕強制要求重新讀取關聯圖表（如 Richmenu 圖片）時使用。加入鎖定防止瘋狂重整。
+     * 
+     * Pre-conditions:
+     * - 先確認是否已經載入中 (isLoading)
+     * 
+     * Post-conditions:
+     * - 所有資料會被重置為遠端最新進度或 localStorage 的備份。
      */
     async reloadFlow() {
+        if (this.isLoading) return;
+        this.isLoading = true;
         try {
             showLoader('正在重新載入流程資料...');
 
@@ -4285,6 +4330,7 @@ export class FlowDesigner {
             console.error('重新載入失敗:', err);
             toast.error('❌ 重新載入失敗: ' + err.message);
         } finally {
+            this.isLoading = false;
             hideLoader();
         }
     }

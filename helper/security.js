@@ -4,10 +4,15 @@
  */
 
 /**
- * safeHTML
  * 清理 HTML 字串，防止惡意腳本執行。
  * 
- * Pre-conditions: 需在 index.html 載入 DOMPurify 
+ * @param {string} dirtyHTML - 未過濾的 HTML 字串
+ * @returns {string} 安全的 HTML 字串
+ * 
+ * Pre-conditions: 
+ * - 需在 index.html 載入 DOMPurify 
+ * Post-conditions:
+ * - 回傳已清除潛在 XSS 威脅的 HTML，若 DOMPurify 不存在則回傳原值並警告
  */
 export function safeHTML(dirtyHTML) {
   if (typeof window.DOMPurify === 'undefined') {
@@ -18,22 +23,31 @@ export function safeHTML(dirtyHTML) {
 }
 
 /**
- * setInnerHTML
  * 安全地將 HTML 注入到 DOM 元素中
+ * 
+ * @param {HTMLElement} element - 目標 DOM 元素
+ * @param {string} html - 欲注入的 HTML 字串
+ * 
+ * Pre-conditions:
+ * - element 必須是存在的 DOM 節點
+ * Post-conditions:
+ * - element 的 innerHTML 被安全替換，防範 XSS
  */
 export function setInnerHTML(element, html) {
   if (element) element.innerHTML = safeHTML(html);
 }
 
 /**
- * validateUrl
  * 驗證並過濾 URL，僅允許安全的協定 (http, https)
  * 
- * Pre-conditions:
- * - url: 待檢驗的字串
+ * @param {string} url - 待檢驗的字串
+ * @param {object} [options={}] - 驗證選項 (allowRelative, allowLocalhost)
+ * @returns {object} { isValid, sanitizedUrl, error }
  * 
+ * Pre-conditions:
+ * - url 必須為字串
  * Post-conditions:
- * - 回傳包含 isValid 與 sanitizedUrl 的物件
+ * - 回傳包含 isValid (boolean) 與 sanitizedUrl (string|null) 的檢驗結果物件
  */
 export function validateUrl(url, options = {}) {
   const { allowRelative = true, allowLocalhost = window.location.hostname === 'localhost' } = options;
@@ -78,11 +92,16 @@ export function validateUrl(url, options = {}) {
 }
 
 /**
- * Simple URL check - returns boolean only.
- * Use this for quick validation in conditionals.
+ * 簡單檢查 URL 是否安全，僅回傳 boolean。
+ * 適合用在簡易邏輯判斷。
  * 
  * @param {string} url - The URL to check.
- * @returns {boolean} - Whether the URL is safe.
+ * @returns {boolean} Whether the URL is safe.
+ * 
+ * Pre-conditions:
+ * - 無特別限制
+ * Post-conditions:
+ * - 一律回傳 boolean
  */
 export function isUrlSafe(url) {
   return validateUrl(url).isValid;

@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UI Enhancement Demo - LINE@ Management System</title>
+
+    <!-- Bootstrap CSS (if using) -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+
+    <!-- ===  Enhanced UI System CSS (Add in this order) === -->
+    <!-- 1. Typography (loads fonts first) -->
+    <link rel="stylesheet" href="/css/typography-enhanced.css">
+
+    <!-- 2. Theme System (color variables) -->
+    <link rel="stylesheet" href="/css/theme-system.css">
+
+    <!-- 3. Z-index System -->
+    <link rel="stylesheet" href="/css/z-index-system.css">
+
+    <!-- 4. Animations -->
+    <link rel="stylesheet" href="/css/animations-enhanced.css">
+
+    <!-- 5. Existing UI Enhancements -->
+    <link rel="stylesheet" href="/css/ui-enhancements.css">
+
+    <!-- 6. Other existing CSS files -->
+    <link rel="stylesheet" href="/css/loader.css">
+
+    <style>
+        /* Page-specific inline styles if needed */
+    </style>
+</head>
+
+<body>
+    <!-- Your content here -->
+    <div class="container-fluid py-4">
+        <h1>UI/UX Enhancements Demo</h1>
+        <p class="lead">Testing the new design system</p>
+
+        <!-- Example cards with animation -->
+        <div class="row row-cols-1 row-cols-md-3 g-4">
+            <div class="col">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <h5 class="card-title">Animated Card 1</h5>
+                        <p class="card-text">This card will slide up on page load</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <h5 class="card-title">Animated Card 2</h5>
+                        <p class="card-text">With a slight delay</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <h5 class="card-title">Animated Card 3</h5>
+                        <p class="card-text">Staggered animation</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Button examples -->
+        <div class="mt-5">
+            <h3>Button Hierarchy</h3>
+            <div class="d-flex gap-3 flex-wrap">
+                <button class="btn btn-primary">Primary Action</button>
+                <button class="btn btn-success">Save Changes</button>
+                <button class="btn btn-secondary">Cancel</button>
+                <button class="btn btn-danger">Delete</button>
+                <button class="btn btn-warning">Warning</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- === Enhanced UI System JavaScript (Add in this order) === -->
+    <!-- Bootstrap JS (if using) -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <!-- 1. Theme Switcher (loads first to apply theme immediately) -->
+    <script src="/js/theme-switcher.js"></script>
+
+    <!-- 2. Interactions (ripple effects, etc.) -->
+    <script src="/js/interactions.js"></script>
+
+    <!-- 3. Your existing scripts -->
+    <script src="/js/your-app.js"></script>
+</body>
+
+</html>

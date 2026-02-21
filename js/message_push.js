@@ -142,10 +142,23 @@ function setupUI() {
     }
 }
 
+let isLoadingInitialData = false;
+
 /**
+ * loadInitialData
  * 載入初始資料
+ * 
+ * Why:
+ * - 避免在初始化期間使用者切換頁籤或連點導致發出多倍的 API 請求，造成畫面列表重複或渲染錯誤。
+ * 
+ * Pre-conditions: 無
+ * Post-conditions:
+ * - 會員清單、標籤清單、Flex 與 Imagemap 資料載入全域快取。
+ * - 觸發 `renderTagFilter`, `initMessageEditorUI`, `renderMemberList`。
  */
 async function loadInitialData() {
+    if (isLoadingInitialData) return;
+    isLoadingInitialData = true;
     try {
         LoadingManager.show('msg-push-init', '載入會員與標籤...');
 
@@ -180,6 +193,8 @@ async function loadInitialData() {
         console.error("❌ 載入資料失敗:", err);
         toast.error('無法載入部分資料');
         LoadingManager.hide('msg-push-init');
+    } finally {
+        isLoadingInitialData = false;
     }
 }
 
@@ -486,10 +501,27 @@ function renderTagFilter() {
     });
 }
 
+let isSendingMessage = false;
+
 /**
+ * startSendingProcess
  * 開始發送流程
+ * 
+ * Why:
+ * - 發送推播是非常敏感且昂貴的操作（牽涉到 LINE Message API 計費與配額）。必須嚴格封鎖傳送按鈕，直到目前批次全部傳送或失敗結束為止。防範手抖連點造成災難。
+ * 
+ * Pre-conditions:
+ * - `selectedMemberIds` 裡面至少有一人
+ * - `currentPushMessages` 裡面至少有一則訊息
+ * - 使用者同意確認發送框
+ * 
+ * Post-conditions:
+ * - 鎖住傳送按鈕 (`isSendingMessage = true`)
+ * - 顯示進度條並逐一呼叫後端 API
+ * - 成功/失敗計數，並輸出日誌
  */
 async function startSendingProcess() {
+    if (isSendingMessage) return;
     if (selectedMemberIds.size === 0) {
         toast.error('請先選擇接收會員');
         return;
@@ -508,6 +540,7 @@ async function startSendingProcess() {
     const progressBar = document.getElementById('send-progress-bar');
     const sendBtn = document.getElementById('btn-send-message');
 
+    isSendingMessage = true;
     statusCard.classList.remove('d-none');
     logContainer.innerHTML = '🚀 準備發送...<br>';
     sendBtn.disabled = true;
@@ -548,6 +581,7 @@ async function startSendingProcess() {
     toast.success(`任務完成！成功: ${successCount}, 失敗: ${failCount}`);
     sendBtn.disabled = false;
     logContainer.innerHTML += `🏁 任務結束。<br>`;
+    isSendingMessage = false;
 }
 
 /**

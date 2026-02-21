@@ -20,6 +20,11 @@ import * as logger from '../utils/logger.js';
  * - 依據事件類型非同步分發至 EventHandler
  */
 export async function handleWebhookRequest(request, env, ctx) {
+    if (!request || !env) {
+        logger.error('WEBHOOK', '缺少 request 或 env 物件，放棄處理');
+        return new Response('Bad Request', { status: 400 });
+    }
+
     const startTime = Date.now();
     try {
         if (request.method !== 'POST') {
@@ -106,6 +111,10 @@ export async function handleWebhookRequest(request, env, ctx) {
  * Post-conditions: 回傳 { accessToken, projectName }
  */
 async function resolveProjectDetails(env, userId, destination) {
+    if (!env || !userId || !destination) {
+        return { accessToken: null, projectName: null };
+    }
+
     const tokenMap = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: 'json' }) || {};
 
     // 優先精確配置匹配
@@ -138,6 +147,11 @@ async function resolveProjectDetails(env, userId, destination) {
  * Pre-conditions: 事件類型、環境變數與 Token 已就緒
  */
 async function routeEvent(event, env, userId, accessToken, ctx) {
+    if (!event || !event.type || !env || !userId) {
+        logger.error('EVENT', 'routeEvent 收到無效的事件結構');
+        return null;
+    }
+
     switch (event.type) {
         case 'message':
             return EventHandler.handleMessageEvent(event, env, userId, accessToken, ctx);
@@ -158,6 +172,10 @@ async function routeEvent(event, env, userId, accessToken, ctx) {
  * 外部路由進入點
  */
 export function route(request, env, userId, pathname, ctx) {
+    if (!request || !env || !pathname) {
+        return null;
+    }
+
     if (pathname === "/api/webhook" && request.method === "POST") {
         return handleWebhookRequest(request, env, ctx);
     }

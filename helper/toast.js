@@ -3,10 +3,16 @@
  */
 
 /**
- * showToast
  * 顯示 Toast 通知
  * 
- * Pre-conditions: 需在 DOM 中存在 #toast-container
+ * @param {string} message - 要顯示的訊息內容
+ * @param {string} [type='info'] - 通知類型 ('success', 'error', 'warning', 'info')
+ * @param {number} [duration=4000] - 顯示時間 (毫秒)
+ * 
+ * Pre-conditions:
+ * - 需在 DOM 中存在 #toast-container
+ * Post-conditions:
+ * - 成功在畫面上暫時顯示一個 Toast，並在設定時間後自動銷毀
  */
 export function showToast(message, type = 'info', duration = 4000) {
     const container = document.getElementById('toast-container');
@@ -50,18 +56,36 @@ export const toast = {
 };
 
 /**
- * ButtonLoader
+ * ButtonLoader 類別
  * 管理按鈕的 Loading 狀態（旋轉圖示與停用）
+ * 
+ * Pre-conditions:
+ * - 傳入的 element 必須是一個有效的 HTMLButtonElement
  */
 export class ButtonLoader {
     constructor(element) {
+        if (!element) throw new Error('ButtonLoader requires a valid DOM element');
         this.btn = element;
         this.oldHTML = element.innerHTML;
     }
+    /**
+     * 啟動 Loading 狀態
+     * @param {string} [text='處理中...'] - Loading 時顯示的文字
+     * 
+     * Post-conditions:
+     * - 按鈕被停用 (disabled = true) 且內容被替換為 Spinner
+     */
     start(text = '處理中...') {
         this.btn.disabled = true;
         this.btn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span> ${text}`;
     }
+
+    /**
+     * 停止 Loading 狀態並還原按鈕
+     * 
+     * Post-conditions:
+     * - 按鈕被啟用 (disabled = false) 且內容還原為原始狀態
+     */
     stop() {
         this.btn.disabled = false;
         this.btn.innerHTML = this.oldHTML;

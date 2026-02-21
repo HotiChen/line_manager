@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Empty State Examples - 空狀態示例</title>
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+
+    <!-- Empty State CSS -->
+    <link rel="stylesheet" href="../css/empty-state.css">
+    <link rel="stylesheet" href="../css/theme-system.css">
+
+    <style>
+        body {
+            background: #f8f9fa;
+            padding: 40px 20px;
+        }
+
+        .example-section {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        .example-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #333;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #06C755;
+        }
+
+        .code-preview {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 15px;
+            font-family: monospace;
+            font-size: 0.875rem;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="text-center mb-5">
+            <h1 class="mb-2">🎨 Empty State Components</h1>
+            <p class="text-muted">空狀態組件展示 - LINE 管理後台</p>
+        </div>
+
+        <!-- Example 1: Dashboard -->
+        <div class="example-section">
+            <h2 class="example-title">1. Dashboard（儀表板）空狀態</h2>
+
+            <div class="empty-state dashboard">
+                <div class="empty-state-illustration">
+                    <img src="../css/assets/empty-states/dashboard.svg" alt="Empty dashboard">
+                </div>
+                <h3 class="empty-state-title">開始使用 LINE 管理後台</h3>
+                <p class="empty-state-description">
+                    目前尚無統計數據。連接您的 LINE 官方帳號後，數據將會開始累積。
+                </p>
+                <button class="btn btn-primary empty-state-action">
+                    <i class="bi bi-plus-circle me-2"></i>快速開始
+                </button>
+            </div>
+        </div>
+
+        <!-- Example 2: Members -->
+        <div class="example-section">
+            <h2 class="example-title">2. 會員管理空狀態</h2>
+
+            <div class="empty-state members">
+                <div class="empty-state-illustration">
+                    <img src="../css/assets/empty-states/members.svg" alt="Empty members">
+                </div>
+                <h3 class="empty-state-title">尚無會員資料</h3>
+                <p class="empty-state-description">
+                    當用戶加入您的 LINE 官方帳號後，會員資料將自動顯示在這裡。
+                </p>
+                <div class="empty-state-hint">
+                    <p class="empty-state-hint-title">💡 提示</p>
+                    <p class="empty-state-hint-text">
+                        您可以透過邀請碼功能快速邀請會員加入
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Example 3: Richmenu -->
+        <div class="example-section">
+            <h2 class="example-title">3. 圖文選單空狀態</h2>
+
+            <div class="empty-state richmenu">
+                <div class="empty-state-illustration">
+                    <img src="../css/assets/empty-states/richmenu.svg" alt="Empty richmenu">
+                </div>
+                <h3 class="empty-state-title">開始創建您的第一個圖文選單</h3>
+                <p class="empty-state-description">
+                    圖文選單可以讓用戶快速存取常用功能，提升互動體驗。
+                </p>
+                <div class="empty-state-actions">
+                    <button class="btn btn-primary empty-state-action">
+                        <i class="bi bi-plus-lg me-2"></i>創建圖文選單
+                    </button>
+                    <button class="btn empty-state-secondary-action">
+                        <i class="bi bi-book me-2"></i>查看教學
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Example 4: Tags -->
+        <div class="example-section">
+            <h2 class="example-title">4. 標籤管理空狀態</h2>
+
+            <div class="empty-state tags">
+                <div class="empty-state-illustration">
+                    <img src="../css/assets/empty-states/tags.svg" alt="Empty tags">
+                </div>
+                <h3 class="empty-state-title">建立標籤以管理會員分群</h3>
+                <p class="empty-state-description">
+                    使用標籤可以輕鬆分類會員，實現精準的訊息推送。
+                </p>
+                <button class="btn btn-primary empty-state-action">
+                    <i class="bi bi-tag me-2"></i>新增標籤
+                </button>
+            </div>
+        </div>
+
+        <!-- Example 5: Flex Builder -->
+        <div class="example-section">
+            <h2 class="example-title">5. Flex Builder 空狀態</h2>
+
+            <div class="empty-state flex-builder">
+                <div class="empty-state-illustration">
+                    <img src="../css/assets/empty-states/flex-builder.svg" alt="Empty flex builder">
+                </div>
+                <h3 class="empty-state-title">開始設計您的 Flex Message</h3>
+                <p class="empty-state-description">
+                    Flex Message 讓您創建豐富、互動的訊息卡片。從左側選擇組件開始設計。
+                </p>
+                <button class="btn btn-primary empty-state-action">
+                    <i class="bi bi-palette me-2"></i>開始設計
+                </button>
+            </div>
+        </div>
+
+        <!-- Example 6: Imagemap Builder -->
+        <div class="example-section">
+            <h2 class="example-title">6. Imagemap Builder 空狀態</h2>
+
+            <div class="empty-state imagemap">
+                <div class="empty-state-illustration">
+                    <img src="../css/assets/empty-states/imagemap.svg" alt="Empty imagemap">
+                </div>
+                <h3 class="empty-state-title">上傳圖片開始創建 Imagemap</h3>
+                <p class="empty-state-description">
+                    Imagemap 讓圖片特定區域可以被點擊，實現互動式圖片訊息。
+                </p>
+                <button class="btn btn-primary empty-state-action">
+                    <i class="bi bi-cloud-upload me-2"></i>選擇圖片
+                </button>
+            </div>
+        </div>
+
+        <!-- Usage Example -->
+        <div class="example-section" style="background: #f8f9fa;">
+            <h2 class="example-title">使用方式</h2>
+
+            <h4>HTML 基本結構：</h4>
+            <div class="code-preview">
+                &lt;div class="empty-state"&gt;
+                &lt;div class="empty-state-illustration"&gt;
+                &lt;img src../css/assets/empty-states/[name].svg" alt="Empty state"&gt;
+                &lt;/div&gt;
+                &lt;h3 class="empty-state-title"&gt;標題文字&lt;/h3&gt;
+                &lt;p class="empty-state-description"&gt;描述文字&lt;/p&gt;
+                &lt;button class="btn btn-primary empty-state-action"&gt;
+                行動按鈕
+                &lt;/button&gt;
+                &lt;/div&gt;
+            </div>
+
+            <h4 class="mt-4">JavaScript 顯示/隱藏：</h4>
+            <div class="code-preview">
+                // 顯示空狀態
+                function showEmptyState(container) {
+                container.classList.add('show-empty-state');
+                }
+
+                // 隱藏空狀態（顯示內容）
+                function hideEmptyState(container) {
+                container.classList.remove('show-empty-state');
+                }
+
+                // 檢查資料並決定是否顯示空狀態
+                if (dataArray.length === 0) {
+                showEmptyState(containerElement);
+                } else {
+                hideEmptyState(containerElement);
+                }
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>

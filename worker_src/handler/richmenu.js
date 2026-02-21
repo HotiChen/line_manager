@@ -11,6 +11,8 @@ import { jsonResponse } from "../lib/utils.js";
  * - 回傳包含 richmenus 陣列的物件，每個選單皆包含 richMenuAliasId
  */
 export async function handleGetRichMenuList(env, userId) {
+  if (!env || !userId) return jsonResponse({ error: "Missing env or userId" }, 400);
+
   const project = await env.KV_LINE_STORAGE.get(`current_token_${userId}`);
   if (!project) return jsonResponse({ error: "No current project set" }, 404);
 
@@ -77,6 +79,8 @@ export async function handleGetRichMenuList(env, userId) {
  * Post-conditions: 回傳 image/png 二進制數據
  */
 export async function handleGetRichMenuImage(env, userId, richMenuId) {
+  if (!env || !userId || !richMenuId) return jsonResponse({ error: "Missing required parameters" }, 400);
+
   const token = await getActiveToken(env, userId);
   if (!token) return jsonResponse({ error: "No active token" }, 404);
 
@@ -106,6 +110,8 @@ export async function handleGetRichMenuImage(env, userId, richMenuId) {
  * Post-conditions: 回傳選單定義 JSON
  */
 export async function handleGetRichMenuMetadata(env, userId, richMenuId) {
+  if (!env || !userId || !richMenuId) return jsonResponse({ error: "Missing required parameters" }, 400);
+
   const token = await getActiveToken(env, userId);
   if (!token) return jsonResponse({ error: "No active token" }, 404);
 
@@ -128,6 +134,8 @@ export async function handleGetRichMenuMetadata(env, userId, richMenuId) {
  * Post-conditions: 回傳 { richMenuId: string }
  */
 export async function handleGetDefaultRichMenuId(env, userId) {
+  if (!env || !userId) return jsonResponse({ error: "Missing env or userId" }, 400);
+
   const token = await getActiveToken(env, userId);
   if (!token) return jsonResponse({ error: "No active token" }, 404);
 
@@ -149,6 +157,8 @@ export async function handleGetDefaultRichMenuId(env, userId) {
  * Post-conditions: 執行批次操作並回傳結果報告結果
  */
 export async function handleSyncRichmenus(request, env, userId) {
+  if (!request || !env || !userId) return jsonResponse({ error: "Missing required parameters" }, 400);
+
   try {
     const token = await getActiveToken(env, userId);
     if (!token) return jsonResponse({ error: "No active token" }, 404);

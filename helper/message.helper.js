@@ -91,8 +91,14 @@ async function apiClient(endpoint, options = {}) {
   return response;
 }
 
+const inflightRequests = new Map();
+
 /**
  * Wrapper function to handle caching logic for API calls.
+ * 
+ * Why:
+ * - 加入 `inflightRequests` 鎖定機制，防止同時間多個 UI 元件要求相同的 API 資源時（例如同時打開多個標籤下拉選單），引發網路請求風暴。
+ * 
  * @param {string} cacheKey - The key to use for caching.
  * @param {Function} apiCallFunction - An async function that performs the API call.
  * @returns {Promise<any>} Cached or fresh data.
@@ -102,14 +108,25 @@ async function fetchWithCache(cacheKey, apiCallFunction) {
   if (cachedData) {
     return cachedData;
   }
-  try {
-    const data = await retryOperation(apiCallFunction);
-    messageCache.set(cacheKey, data);
-    return data;
-  } catch (err) {
-    console.error(`❌ [API] Failed to fetch ${cacheKey}:`, err);
-    return []; // Return empty array on failure for consistency
+  if (inflightRequests.has(cacheKey)) {
+    return inflightRequests.get(cacheKey);
   }
+
+  const requestPromise = (async () => {
+    try {
+      const data = await retryOperation(apiCallFunction);
+      messageCache.set(cacheKey, data);
+      return data;
+    } catch (err) {
+      console.error(`❌ [API] Failed to fetch ${cacheKey}:`, err);
+      return []; // Return empty array on failure for consistency
+    } finally {
+      inflightRequests.delete(cacheKey);
+    }
+  })();
+
+  inflightRequests.set(cacheKey, requestPromise);
+  return requestPromise;
 }
 
 // 🔄 重試機制 (unchanged)
@@ -160,14 +177,25 @@ export async function fetchWelcomeMessage(userId) {
   if (cachedData) {
     return cachedData;
   }
-  try {
-    const message = await retryOperation(() => apiClient('/welcome/get'));
-    messageCache.set(cacheKey, message.data || null);
-    return message.data || null;
-  } catch (err) {
-    console.error(`❌ 讀取歡迎訊息發生錯誤:`, err);
-    return null;
+  if (inflightRequests.has(cacheKey)) {
+    return inflightRequests.get(cacheKey);
   }
+
+  const requestPromise = (async () => {
+    try {
+      const message = await retryOperation(() => apiClient('/welcome/get'));
+      messageCache.set(cacheKey, message.data || null);
+      return message.data || null;
+    } catch (err) {
+      console.error(`❌ 讀取歡迎訊息發生錯誤:`, err);
+      return null;
+    } finally {
+      inflightRequests.delete(cacheKey);
+    }
+  })();
+
+  inflightRequests.set(cacheKey, requestPromise);
+  return requestPromise;
 }
 
 // ☁️ 載入總標籤列表

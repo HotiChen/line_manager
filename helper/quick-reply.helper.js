@@ -30,6 +30,11 @@ const MAX_QUICK_REPLY_ITEMS = 13;
  * @param {Array} options.initialItems - 初始 Quick Reply 項目
  * @param {Function} options.onChange - 當項目變更時的回調
  * @returns {HTMLElement} - Quick Reply 編輯器容器
+ * 
+ * Pre-conditions:
+ * - 無特別限制，但需要在 DOM 渲染環境使用
+ * Post-conditions:
+ * - 回傳建構完成且綁定事件的編輯器 DOM 節點
  */
 export function createQuickReplyEditor(options = {}) {
     const { initialItems = [], onChange } = options;
@@ -227,6 +232,11 @@ export function createQuickReplyEditor(options = {}) {
  * 取得 Quick Reply JSON 格式
  * @param {Array} items - Quick Reply 項目陣列
  * @returns {Object|null} - LINE API 格式的 quickReply 物件，或 null（無項目時）
+ * 
+ * Pre-conditions:
+ * - 無特別限制
+ * Post-conditions:
+ * - 將 UI state 轉換符合 Messaging API 的格式回傳，無資料時回傳 null
  */
 export function getQuickReplyData(items) {
     if (!items || items.length === 0) return null;
@@ -276,6 +286,11 @@ export function getQuickReplyData(items) {
  * 從 LINE API 格式轉換為編輯器格式
  * @param {Object} quickReply - LINE API 格式的 quickReply 物件
  * @returns {Array} - 編輯器項目陣列
+ * 
+ * Pre-conditions:
+ * - 無特別限制
+ * Post-conditions:
+ * - 回傳轉換為供 UI render 所需的 state 陣列
  */
 export function parseQuickReplyData(quickReply) {
     if (!quickReply || !quickReply.items) return [];

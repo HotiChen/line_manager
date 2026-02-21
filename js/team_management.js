@@ -26,7 +26,24 @@ export async function pageInit(pageData) {
     await loadTeamData();
 }
 
+let isLoadingTeam = false;
+
+/**
+ * loadTeamData
+ * 載入團隊成員資料
+ * 
+ * Why:
+ * - 團隊成員名單讀取包含權限驗證，避免頻繁發送 API 請求造成效能瓶頸，加入 `isLoadingTeam` 鎖。
+ * 
+ * Pre-conditions:
+ * - 必須有有效的使用者 ID `userId`。
+ * 
+ * Post-conditions:
+ * - 從 API 取得成員列表後，呼叫 `renderMemberList` 更新畫面。
+ */
 async function loadTeamData() {
+    if (isLoadingTeam) return;
+    isLoadingTeam = true;
     try {
 
         const data = await api.get('/team/members');
@@ -46,10 +63,11 @@ async function loadTeamData() {
         if (tbody) {
             setInnerHTML(tbody, `
                 <tr><td colspan="5" class="text-center text-danger py-4">
-                    <i class="bi bi-exclamation-circle me-2"></i>載入失敗：${err.message}
                 </td></tr>
             `);
         }
+    } finally {
+        isLoadingTeam = false;
     }
 }
 
@@ -183,7 +201,24 @@ function renderMemberList(members, myRole) {
 
 }
 
+let isRemovingMember = false;
+
+/**
+ * handleRemoveMember
+ * 處理移除成員
+ * 
+ * Why:
+ * - 移除成員是一項不可逆的高風險操作。為了避免滑鼠連點導致重複傳送 DELETE API，必須加上 `isRemovingMember` 作為防護鎖。
+ * 
+ * Pre-conditions:
+ * - `targetUserId` 必須存在
+ * - 操作者必須是 owner
+ * 
+ * Post-conditions:
+ * - 確認 Modal 同意後呼叫後端刪除 API，並重新載入團隊列表。
+ */
 async function handleRemoveMember(targetUserId) {
+    if (isRemovingMember) return;
     const confirmed = await showConfirm({
         title: '移除成員',
         message: '確定要移除這位成員嗎？此動作無法復原。',
@@ -194,14 +229,16 @@ async function handleRemoveMember(targetUserId) {
 
     if (!confirmed) return;
 
+    isRemovingMember = true;
     try {
         await api.delete('/team/members', { targetUserId });
         toast.success('成員已移除');
         loadTeamData(); // Reload list
-
     } catch (err) {
         console.error(err);
         toast.error(err.message);
+    } finally {
+        isRemovingMember = false;
     }
 }
 
@@ -240,9 +277,12 @@ function initEventListeners() {
         });
     }
 
+    let isGeneratingLink = false;
+
     const generateBtn = document.getElementById('btn-generate-link');
     if (generateBtn) {
         generateBtn.addEventListener('click', async () => {
+            if (isGeneratingLink) return;
             const role = document.getElementById('invite-role').value;
             const btn = document.getElementById('btn-generate-link');
             const loading = document.getElementById('invite-loading');
@@ -259,6 +299,7 @@ function initEventListeners() {
                 return;
             }
 
+            isGeneratingLink = true;
             btn.classList.add('d-none');
             loading.classList.remove('d-none');
 
@@ -337,6 +378,8 @@ function initEventListeners() {
                 toast.error(err.message);
                 btn.classList.remove('d-none');
                 loading.classList.add('d-none');
+            } finally {
+                isGeneratingLink = false;
             }
         });
     }
@@ -424,9 +467,24 @@ function initEventListeners() {
     }
 }
 
+let isLoadingProjects = false;
+
+/**
+ * loadUserProjects
+ * 載入使用者的管理專案清單
+ * 
+ * Why:
+ * - 邀請會員時會讓 owner 選擇他要邀請進「哪些專案」(Bots)。加入 `isLoadingProjects` 防止開啟 Modal 時重複打 API。
+ */
 async function loadUserProjects() {
+    if (isLoadingProjects) return;
+    isLoadingProjects = true;
+
     const container = document.getElementById('project-selection-area');
-    if (!container) return;
+    if (!container) {
+        isLoadingProjects = false;
+        return;
+    }
 
     setInnerHTML(container, '<div class="text-center text-muted small">載入專案中...</div>');
 
@@ -454,5 +512,7 @@ async function loadUserProjects() {
     } catch (err) {
         console.error('Load projects error:', err);
         setInnerHTML(container, `<div class="text-center text-danger small">載入失敗: ${err.message}</div>`);
+    } finally {
+        isLoadingProjects = false;
     }
 }

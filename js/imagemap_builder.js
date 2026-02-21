@@ -80,10 +80,26 @@ class ImageMap {
   }
 }
 
-// ImageMap 編輯器主程式
+let isFetchingImagemaps = false;
+
+/**
+ * pageInit
+ * ImageMap 編輯器主程式初始化。
+ * 
+ * Why (為什麼要這樣寫):
+ * - 將伺服器讀取與 UI 繪製封裝在初始化階段，並掛上 `isFetchingImagemaps` 防止連點或多次觸發載入，導致全域陣列 (`window.imagemaps`) 重複塞入相同資料。
+ * 
+ * Pre-conditions:
+ * - pageData 必須包含 userId。
+ * Post-conditions:
+ * - 從後端拉回最新的 imagemap 清單並渲染預覽。
+ */
 export async function pageInit(pageData) {
   setUserId(pageData.userId);
   const userId = getUserId();
+
+  if (isFetchingImagemaps) return;
+  isFetchingImagemaps = true;
 
   // 🔄 顯示 loading 動畫
   const thumbnailArea = document.getElementById("imagemap-thumbnails");
@@ -99,7 +115,6 @@ export async function pageInit(pageData) {
 
   // 讀取 Cloudflare Worker 上的 imagemap 資料
   try {
-
     // 使用 helper 中的函數載入 imagemap 清單
     const imagemapData = await fetchMessageListByType("imagemap", userId);
 
@@ -112,6 +127,8 @@ export async function pageInit(pageData) {
   } catch (err) {
     console.error("❌ 讀取 imagemaps 發生錯誤:", err);
     window.imagemaps = [];
+  } finally {
+    isFetchingImagemaps = false;
   }
 
   // 清除 loading 並顯示縮圖
@@ -784,8 +801,26 @@ export async function pageInit(pageData) {
     });
   }
 }
-// 新增：上傳所有 imagemaps 到 Cloudflare Worker
+let isUploadingImagemap = false;
+
+/**
+ * 處理 "upload-imagemap" 上傳事件
+ * 
+ * Why (為什麼要這樣寫):
+ * - Imagemap 在發送時會同時夾帶高清晰度的本機圖檔，這是非常耗費網路頻寬的操作。若使用者不慎雙擊或連點，會導致多張相同圖片上傳塞爆 Worker 記憶體，因此必須使用 `isUploadingImagemap` 作為防護鎖。
+ * 
+ * Pre-conditions:
+ * - userId 必須存在，且 window.imagemaps 陣列內有資料。
+ * Post-conditions:
+ * - 每張含有 base64 (`data:image/`) 的圖片都會被送上 WordPress 轉換成真實 URL。
+ * - 全部批次送往後端 Worker 存檔後解除鎖定。
+ */
 document.getElementById("upload-imagemap")?.addEventListener("click", async function () {
+  if (isUploadingImagemap) {
+    toast.warning("上傳正在進行中，請稍候...");
+    return;
+  }
+
   const btn = this;
   const userId = getUserId();
   if (!userId) {
@@ -797,6 +832,8 @@ document.getElementById("upload-imagemap")?.addEventListener("click", async func
     toast.warning("⚠️ 尚無任何 ImageMap 可上傳");
     return;
   }
+
+  isUploadingImagemap = true;
 
   await withButtonLoading(btn, async () => {
     // 1. 先檢查 baseUrl 是否為 base64，若是則上傳到 WordPress Worker 並替換
@@ -835,6 +872,8 @@ document.getElementById("upload-imagemap")?.addEventListener("click", async func
     } catch (err) {
       console.error("[upload-imagemap] 上傳錯誤：", err);
       // API Client 已經會攔截錯誤並彈出 Toast，這邊不用再彈出一次，除非你確信沒有 catch
+    } finally {
+      isUploadingImagemap = false;
     }
   }, "上傳中...");
 });

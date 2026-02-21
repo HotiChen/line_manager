@@ -1,0 +1,107 @@
+/* ========================================
+   Header & Title Compression System
+   Reduces vertical space for page headers
+   ======================================== */
+
+/* === PAGE TITLE COMPRESSION === */
+
+/* Reduce top margin on containers */
+.container-fluid.py-4 {
+    padding-top: 0.5rem !important;
+    /* 8px instead of 24px */
+    padding-bottom: 0.5rem !important;
+}
+
+.container-fluid.mt-4 {
+    margin-top: 0.5rem !important;
+    /* 8px instead of 24px */
+}
+
+.container.py-4 {
+    padding-top: 0.5rem !important;
+    padding-bottom: 0.5rem !important;
+}
+
+/* Reduce margins for page title rows */
+.row.mb-4 {
+    margin-bottom: 0.75rem !important;
+    /* 12px instead of 24px */
+}
+
+/* Compress H2 page titles */
+h2.mb-4,
+h2.fw-bold {
+    font-size: 1.5rem !important;
+    /* Smaller from default 2rem */
+    margin-bottom: 0.5rem !important;
+    /* 8px instead of 24px */
+    font-weight: 600 !important;
+}
+
+/* Compress H1 page titles */
+h1.mb-4,
+h1.fw-bold {
+    font-size: 1.5rem !important;
+    /* Unified with H2 at 24px */
+    margin-bottom: 0.5rem !important;
+    /* 8px instead of 24px */
+    font-weight: 600 !important;
+}
+
+/* Companion subtitle text */
+h2+p.text-muted {
+    margin-bottom: 0.5rem !important;
+    font-size: 0.875rem !important;
+}
+
+/* === SPECIFIC PAGE OPTIMIZATIONS === */
+
+/* Universal H1/H2 compression for pages without Bootstrap classes */
+.header-section h1,
+.container h1 {
+    font-size: 1.5rem !important;
+    /* Unified at 24px */
+    margin-bottom: 0.5rem !important;
+    font-weight: 600 !important;
+}
+
+.header-section h2,
+.container h2 {
+    font-size: 1.5rem !important;
+    /* Compress from 2rem */
+    margin-bottom: 0.5rem !important;
+    font-weight: 600 !important;
+}
+
+/* Compress subtitle paragraphs in header sections */
+.header-section p,
+.header-section h1+p,
+.header-section h2+p {
+    margin-bottom: 0.5rem !important;
+    font-size: 0.875rem !important;
+}
+
+/* Member Builder & similar pages */
+.container-fluid .row.mb-4:first-child h2 {
+    margin-top: 0;
+}
+
+/* Tag page & Welcome page */
+body .container h2.mb-4 {
+    margin-top: 0;
+}
+
+/* === DASHBOARD SPECIFIC === */
+/* Already handled in dashboard.html with inline changes */
+/* This ensures consistency if dashboard structure changes */
+
+/* === RESPONSIVE ADJUSTMENTS === */
+
+@media (max-width: 768px) {
+
+    h2.mb-4,
+    h2.fw-bold {
+        font-size: 1.25rem !important;
+        /* Even smaller on mobile */
+    }
+}
