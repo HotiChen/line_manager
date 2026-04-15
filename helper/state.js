@@ -24,6 +24,8 @@ export function setUserId(id) {
         return;
     }
     state.userId = id;
+    // 持久化到 sessionStorage，讓新分頁（如流程設計器）也能讀取
+    try { sessionStorage.setItem('linebot_userId', id); } catch (e) {}
 }
 
 /**
@@ -45,10 +47,22 @@ export function getUserId() {
         return userId;
     }
 
+    // 從 sessionStorage 讀取（支援新分頁，如流程設計器）
+    if (!state.userId) {
+        try {
+            const stored = sessionStorage.getItem('linebot_userId');
+            if (stored) { state.userId = stored; return stored; }
+        } catch (e) {}
+    }
+
     if (!state.userId && ['localhost', '127.0.0.1'].includes(window.location.hostname)) {
-        const defaultTestUserId = 'Ud66f9caf44c4d927ca4f9361d66ccc18';
-        console.warn('⚠️ [State] 本地開發模式，使用預設 ID:', defaultTestUserId);
-        return defaultTestUserId;
+        const devUserId = config.testUserId || localStorage.getItem('dev_test_userId') || '';
+        if (devUserId) {
+            console.warn('⚠️ [State] 本地開發模式，使用 dev userId:', devUserId);
+            return devUserId;
+        }
+        console.warn('⚠️ [State] 本地開發模式但未設定 dev userId。請在 localStorage 設定 dev_test_userId 或透過 LIFF 登入。');
+        return null;
     }
     return state.userId;
 }

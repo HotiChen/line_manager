@@ -56,7 +56,7 @@ export async function handleSaveFlow(request, env, userId) {
     const now = new Date().toISOString();
     const flowData = {
         id: flowId,
-        name: name || "未命名流程",
+        name: (name || "未命名流程").replace(/<[^>]*>/g, ''),
         botId,
         nodes: nodes || [],
         edges: edges || [],
@@ -64,11 +64,25 @@ export async function handleSaveFlow(request, env, userId) {
         createdAt: body.createdAt || now,
     };
 
+    // 加入基本驗證 (防負載攻擊)
+    if (JSON.stringify(body).length > 1024 * 512) {
+        return jsonResponse({ error: "Flow data too large (max 512KB)" }, 400);
+    }
+    if ((nodes || []).length > 200) {
+        return jsonResponse({ error: "Too many nodes (max 200)" }, 400);
+    }
+
     // Save the flow data
     await env.KV_LINE_STORAGE.put(
         flowKey(userId, botId, flowId),
         JSON.stringify(flowData)
     );
+
+    // ✅ 保存版本歷史 (保留 30 天)
+    const versionKey = `flow_version_${userId}_${botId}_${flowId}_${Date.now()}`;
+    await env.KV_LINE_STORAGE.put(versionKey, JSON.stringify(flowData), {
+        expirationTtl: 60 * 60 * 24 * 30
+    });
 
     // Update the list index
     const listRaw = await env.KV_LINE_STORAGE.get(listKey(userId, botId));
@@ -149,6 +163,32 @@ export async function handleDeleteFlow(request, env, userId, flowId) {
 }
 
 /**
+ * GET /flow/versions/:flowId
+ * Returns version history for a flow
+ */
+export async function handleListVersions(request, env, userId, flowId) {
+    const botId = await getActiveBotId(request, env, userId);
+    const prefix = `flow_version_${userId}_${botId}_${flowId}_`;
+    const list = await env.KV_LINE_STORAGE.list({ prefix });
+    
+    const versions = await Promise.all(
+        list.keys.map(async (key) => {
+            const raw = await env.KV_LINE_STORAGE.get(key.name);
+            if (!raw) return null;
+            const data = JSON.parse(raw);
+            return {
+                timestamp: key.name.replace(prefix, ''),
+                name: data.name,
+                nodeCount: (data.nodes || []).length,
+                updatedAt: data.updatedAt
+            };
+        })
+    );
+    
+    return jsonResponse({ success: true, versions: versions.filter(Boolean) });
+}
+
+/**
  * Router
  */
 export function route(request, env, userId, pathname) {
@@ -172,6 +212,12 @@ export function route(request, env, userId, pathname) {
     const deleteMatch = pathname.match(/^\/flow\/delete\/(.+)$/);
     if (deleteMatch && request.method === "DELETE") {
         return handleDeleteFlow(request, env, userId, deleteMatch[1]);
+    }
+
+    // GET /flow/versions/:id
+    const versionsMatch = pathname.match(/^\/flow\/versions\/(.+)$/);
+    if (versionsMatch && request.method === "GET") {
+        return handleListVersions(request, env, userId, versionsMatch[1]);
     }
 
     return jsonResponse({ error: "Invalid flow route" }, 404);

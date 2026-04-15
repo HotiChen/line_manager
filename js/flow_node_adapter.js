@@ -5,9 +5,18 @@ import { generateReplyInputUI, MessageFactory } from '../helper/message.helper.j
 import { getUserId, apiBase } from '../helper/state.js';
 import { toast } from '../helper/toast.js';
 import { setInnerHTML } from '../helper/security.js';
+import { dataLoader } from './flow_designer_data_loader.js';
+
+function escapeHtml(str) {
+    if (typeof str !== 'string') return str;
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
 
 /**
  * FlowNodeAdapter - 橋接 Flow Designer 節點與現有 Builder 功能
+
  * 
  * 主要用途：
  * 1. 重用現有的 Richmenu、Imagemap、Flex 等編輯介面
@@ -56,6 +65,11 @@ export class FlowNodeAdapter {
 
             case 'keyword':
                 this.openKeywordEditor(node, onSave);
+                break;
+
+            case 'action_condition':
+            case 'action_api':
+                this.openSidebarEditor(node, onSave);
                 break;
 
             default:
@@ -110,6 +124,12 @@ export class FlowNodeAdapter {
                 break;
             case 'action_delay':
                 this.createDelayEditor(form, node, onSave);
+                break;
+            case 'action_condition':
+                this.createConditionEditor(form, node, onSave);
+                break;
+            case 'action_api':
+                this.createAPIEditor(form, node, onSave);
                 break;
         }
 
@@ -339,31 +359,283 @@ export class FlowNodeAdapter {
     }
 
     /**
-     * Richmenu 选择器 - 占位符
+     * Richmenu 選擇器
      */
     static async openRichmenuSelector(node, onSave) {
-        toast.info('请从主选单的 "Richmenu 管理" 编辑 Richmenu');
+        const list = await dataLoader.loadRichmenus();
+        if (list.length === 0) {
+            toast.warning('尚未建立任何 Richmenu，請先前往 Richmenu 管理新增');
+            return;
+        }
+
+        this.showResourceModal('選擇 Richmenu', list, 'richMenuId', 'name', async (selectedId) => {
+            const details = await dataLoader.loadRichmenuDetails(selectedId);
+            if (details) {
+                node.data.richmenuId = details.richMenuId;
+                node.data.name = details.name;
+                node.data.imageUrl = details.imageUrl;
+                node.data.buttons = details.buttons;
+                onSave(node);
+                toast.success('Richmenu 已選取');
+            }
+        });
     }
 
     /**
      * Flex Message 選擇器
      */
     static async openFlexSelector(node, onSave) {
-        toast.info('Flex 選擇器開發中...');
+        const list = await dataLoader.loadFlexMessages();
+        if (list.length === 0) {
+            toast.warning('尚未建立任何 Flex Message，請先前往 Flex Message 管理新增');
+            return;
+        }
+
+        this.showResourceModal('選擇 Flex Message', list, 'id', 'title', async (selectedId) => {
+            const details = await dataLoader.loadFlexMessageDetails(selectedId);
+            if (details) {
+                node.data.flexId = details.flexId;
+                node.data.title = details.title;
+                node.data.altText = details.altText;
+                node.data.contents = details.contents;
+                onSave(node);
+                toast.success('Flex Message 已選取');
+            }
+        });
     }
 
     /**
      * Imagemap 選擇器
      */
     static async openImagemapSelector(node, onSave) {
-        toast.info('Imagemap 選擇器開發中...');
+        const list = await dataLoader.loadImagemaps();
+        if (list.length === 0) {
+            toast.warning('尚未建立任何 Imagemap，請先前往 Imagemap 管理新增');
+            return;
+        }
+
+        this.showResourceModal('選擇 Imagemap', list, 'baseUrl', 'altText', async (selectedId) => {
+            const item = list.find(i => i.baseUrl === selectedId);
+            if (item) {
+                node.data.imagemapId = item.id;
+                node.data.baseUrl = item.baseUrl;
+                node.data.imageUrl = item.baseUrl; // 通常是一樣的
+                node.data.altText = item.altText;
+                node.data.actions = item.actions;
+                onSave(node);
+                toast.success('Imagemap 已選取');
+            }
+        });
     }
 
     /**
      * Keyword 編輯器
      */
     static async openKeywordEditor(node, onSave) {
-        toast.info('Keyword 編輯器開發中...');
+        const list = await dataLoader.loadKeywords();
+        if (list.length === 0) {
+            toast.warning('尚未建立任何關鍵字回覆，請先前往關鍵字管理新增');
+            return;
+        }
+
+        this.showResourceModal('選擇關鍵字回覆', list, 'keyword', 'keyword', (selectedId) => {
+            const item = list.find(i => i.keyword === selectedId);
+            if (item) {
+                node.data.keyword = item.keyword;
+                node.data.matchType = item.matchType || 'exact';
+                onSave(node);
+                toast.success('關鍵字已連結');
+            }
+        });
+    }
+
+    /**
+     * 通用資源選擇 Modal
+     */
+    static showResourceModal(title, list, idField, nameField, onSelect) {
+        const modalId = `modal-${Date.now()}`;
+        const modalHtml = `
+            <div class="modal fade" id="${modalId}" tabindex="-1">
+                <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">${title}</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="list-group">
+                                ${list.map(item => `
+                                    <button class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
+                                            data-id="${item[idField]}">
+                                        <div>
+                                            <div class="fw-bold">${escapeHtml(item[nameField] || '未命名')}</div>
+                                            <small class="text-muted">${item[idField]}</small>
+                                        </div>
+                                        <i class="bi bi-chevron-right text-muted"></i>
+                                    </button>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        const modalEl = document.getElementById(modalId);
+        const bsModal = new bootstrap.Modal(modalEl);
+
+        modalEl.querySelectorAll('.list-group-item').forEach(btn => {
+            btn.onclick = () => {
+                onSelect(btn.dataset.id);
+                bsModal.hide();
+            };
+        });
+
+        modalEl.addEventListener('hidden.bs.modal', () => {
+            modalEl.remove();
+        });
+
+        bsModal.show();
+    }
+
+    /**
+     * 條件編輯器
+     */
+    static createConditionEditor(form, node, onSave) {
+        const container = document.createElement('div');
+        container.className = 'mb-3';
+
+        if (!node.data.conditions) node.data.conditions = [{ field: 'text', operator: 'equals', value: '' }];
+
+        const renderConditions = () => {
+            container.innerHTML = '<label class="form-label">判斷條件</label>';
+            node.data.conditions.forEach((cond, index) => {
+                const row = document.createElement('div');
+                row.className = 'card p-2 mb-2 bg-light';
+                row.innerHTML = `
+                    <div class="mb-2">
+                        <select class="form-select form-select-sm cond-field" data-index="${index}">
+                            <option value="text" ${cond.field === 'text' ? 'selected' : ''}>文字內容</option>
+                            <option value="userId" ${cond.field === 'userId' ? 'selected' : ''}>使用者 ID</option>
+                            <option value="tag" ${cond.field === 'tag' ? 'selected' : ''}>標籤</option>
+                        </select>
+                    </div>
+                    <div class="mb-2">
+                        <select class="form-select form-select-sm cond-op" data-index="${index}">
+                            <option value="equals" ${cond.operator === 'equals' ? 'selected' : ''}>等於</option>
+                            <option value="contains" ${cond.operator === 'contains' ? 'selected' : ''}>包含</option>
+                            <option value="regex" ${cond.operator === 'regex' ? 'selected' : ''}>正則匹配</option>
+                        </select>
+                    </div>
+                    <div class="mb-2">
+                        <input type="text" class="form-control form-control-sm cond-val" 
+                               placeholder="值..." value="${cond.value}" data-index="${index}">
+                    </div>
+                    <button class="btn btn-sm btn-outline-danger w-100 btn-del-cond" data-index="${index}">
+                        <i class="bi bi-trash"></i> 刪除
+                    </button>
+                `;
+                container.appendChild(row);
+            });
+
+            const addBtn = document.createElement('button');
+            addBtn.className = 'btn btn-sm btn-outline-primary w-100 mb-3';
+            addBtn.innerHTML = '<i class="bi bi-plus"></i> 新增條件';
+            addBtn.onclick = () => {
+                node.data.conditions.push({ field: 'text', operator: 'equals', value: '' });
+                renderConditions();
+            };
+            container.appendChild(addBtn);
+
+            const saveBtn = document.createElement('button');
+            saveBtn.className = 'btn btn-primary w-100';
+            saveBtn.innerHTML = '<i class="bi bi-check-lg"></i> 儲存條件';
+            saveBtn.onclick = () => {
+                // 收集資料
+                container.querySelectorAll('.cond-field').forEach(el => {
+                    const idx = el.dataset.index;
+                    node.data.conditions[idx].field = el.value;
+                });
+                container.querySelectorAll('.cond-op').forEach(el => {
+                    const idx = el.dataset.index;
+                    node.data.conditions[idx].operator = el.value;
+                });
+                container.querySelectorAll('.cond-val').forEach(el => {
+                    const idx = el.dataset.index;
+                    node.data.conditions[idx].value = el.value;
+                });
+                onSave(node);
+                toast.success('過濾條件已更新');
+            };
+            container.appendChild(saveBtn);
+
+            // 綁定刪除事件
+            container.querySelectorAll('.btn-del-cond').forEach(btn => {
+                btn.onclick = () => {
+                    node.data.conditions.splice(btn.dataset.index, 1);
+                    renderConditions();
+                };
+            });
+        };
+
+        renderConditions();
+        form.appendChild(container);
+    }
+
+    /**
+     * API 節點編輯器
+     */
+    static createAPIEditor(form, node, onSave) {
+        const group = document.createElement('div');
+        group.className = 'mb-3';
+
+        if (!node.data.url) node.data.url = '';
+        if (!node.data.method) node.data.method = 'GET';
+        if (!node.data.headers) node.data.headers = '{}';
+        if (!node.data.body) node.data.body = '{}';
+
+        group.innerHTML = `
+            <div class="mb-3">
+                <label class="form-label">API URL</label>
+                <input type="text" id="api-url" class="form-control" placeholder="https://..." value="${node.data.url}">
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Method</label>
+                <select id="api-method" class="form-select">
+                    <option value="GET" ${node.data.method === 'GET' ? 'selected' : ''}>GET</option>
+                    <option value="POST" ${node.data.method === 'POST' ? 'selected' : ''}>POST</option>
+                    <option value="PUT" ${node.data.method === 'PUT' ? 'selected' : ''}>PUT</option>
+                </select>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Headers (JSON)</label>
+                <textarea id="api-headers" class="form-control" rows="3">${node.data.headers}</textarea>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Body (JSON)</label>
+                <textarea id="api-body" class="form-control" rows="5">${node.data.body}</textarea>
+            </div>
+            <button class="btn btn-primary w-100" id="btn-save-api">
+                <i class="bi bi-check-lg"></i> 儲存 API 配置
+            </button>
+        `;
+
+        form.appendChild(group);
+
+        form.querySelector('#btn-save-api').onclick = () => {
+            const url = form.querySelector('#api-url').value;
+            if (!url) {
+                toast.error('請輸入 API URL');
+                return;
+            }
+            node.data.url = url;
+            node.data.method = form.querySelector('#api-method').value;
+            node.data.headers = form.querySelector('#api-headers').value;
+            node.data.body = form.querySelector('#api-body').value;
+            onSave(node);
+            toast.success('API 配置已更新');
+        };
     }
 }
 

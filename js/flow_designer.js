@@ -9,6 +9,13 @@ import { dataLoader } from './flow_designer_data_loader.js';
 import FlowNodeAdapter from './flow_node_adapter.js';
 import { ApiClient as api } from '../helper/api.client.js';
 
+function escapeHtml(str) {
+    if (typeof str !== 'string') return str;
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
 /**
  * 節點類型定義
  */
@@ -142,6 +149,14 @@ export const NodeTypeConfig = {
  */
 export class FlowDesigner {
     constructor(containerId) {
+        this.isDirty = false;
+        this._autoSaveTimer = null;
+        window.addEventListener('beforeunload', (e) => {
+            if (this.isDirty) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
         this.container = document.getElementById(containerId);
         this.nodes = [];
         this.edges = [];
@@ -564,7 +579,10 @@ export class FlowDesigner {
         // 鍵盤快捷鍵
         document.addEventListener('keydown', (e) => {
             // Z 鍵：進入 focus 模式
-            if (e.key === 'z' || e.key === 'Z') {
+            if ((e.key === 'z' || e.key === 'Z') && !e.ctrlKey && !e.metaKey) {
+                // 忽略在輸入框中的按鍵
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+                
                 if (!this.focusMode) {
                     this.focusMode = true;
                     document.body.style.cursor = 'crosshair';
@@ -589,6 +607,9 @@ export class FlowDesigner {
             }
             // Delete 刪除選中節點
             if (e.key === 'Delete' && this.selectedNode) {
+                // 忽略在輸入框中的按鍵
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+                
                 this.deleteNode(this.selectedNode);
             }
             // Ctrl + + 放大
@@ -795,6 +816,24 @@ export class FlowDesigner {
         }, 0);
     }
 
+    findOpenPosition(baseX, baseY) {
+        const SPACING = 40;
+        let x = baseX, y = baseY;
+        let attempts = 0;
+        
+        while (attempts < 50) {
+            const overlap = this.nodes.some(n =>
+                Math.abs(n.position.x - x) < 200 &&
+                Math.abs(n.position.y - y) < 100
+            );
+            if (!overlap) break;
+            x += SPACING;
+            y += SPACING;
+            attempts++;
+        }
+        return { x, y };
+    }
+
     /**
      * 新增節點
      */
@@ -802,6 +841,9 @@ export class FlowDesigner {
         // 改進的 ID 生成：時間戳 + 隨機數，避免快速創建時的衝突
         const nodeId = `node_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         const config = NodeTypeConfig[type];
+
+        // 碰撞避免
+        const openPosition = this.findOpenPosition(position.x, position.y);
 
         // ✅ 防護：如果找不到配置，提供默認值
         if (!config) {
@@ -814,7 +856,7 @@ export class FlowDesigner {
         const node = {
             id: nodeId,
             type: type,
-            position: position,
+            position: openPosition,
             data: this.getDefaultNodeData(type),
             config: config
         };
@@ -1041,6 +1083,7 @@ export class FlowDesigner {
                      title="拖曳以連接到下一個節點">
                 </div>
             `;
+        } else {
             // 其他節點類型的預覽
             innerHTML += `
                 <div class="node-preview" style="font-size: 12px; color: #666;">
@@ -1049,18 +1092,20 @@ export class FlowDesigner {
             `;
 
             // 添加單一輸出點
-            innerHTML += `
-                <div class="node-output-point" 
-                     data-node-id="${node.id}" 
-                     data-output="default"
-                     onclick="flowDesigner.startConnection('${node.id}', 'default'); event.stopPropagation();"
-                     style="position: absolute; right: -8px; top: 50%; transform: translateY(-50%); 
-                            width: 16px; height: 16px; background: ${node.config.color};
-                            border: 2px solid white; border-radius: 50%; cursor: pointer;
-                            box-shadow: 0 2px 4px rgba(0,0,0,0.2);"
-                     title="拖曳以連接到下一個節點">
-                </div>
-            `;
+            if (node.type !== NodeTypes.END) {
+                innerHTML += `
+                    <div class="node-output-point" 
+                         data-node-id="${node.id}" 
+                         data-output="default"
+                         onclick="flowDesigner.startConnection('${node.id}', 'default'); event.stopPropagation();"
+                         style="position: absolute; right: -8px; top: 50%; transform: translateY(-50%); 
+                                width: 16px; height: 16px; background: ${node.config.color};
+                                border: 2px solid white; border-radius: 50%; cursor: pointer;
+                                box-shadow: 0 2px 4px rgba(0,0,0,0.2);"
+                         title="拖曳以連接到下一個節點">
+                    </div>
+                `;
+            }
         }
 
         nodeElement.innerHTML = innerHTML;
@@ -1424,12 +1469,12 @@ export class FlowDesigner {
             return;
         }
 
-        // 檢查是否會形成循環（暫時禁用，稍後改進）
-        // if (this.wouldCreateCycle(sourceId, targetId)) {
-        //     console.warn(`[createEdge] 會形成循環`);
-        //     toast.error('無法創建循環連線');
-        //     return;
-        // }
+        // 檢查是否會形成循環
+        if (this.wouldCreateCycle(sourceId, targetId)) {
+            console.warn(`[createEdge] 會形成循環`);
+            toast.error('無法創建循環連線');
+            return;
+        }
 
         const edgeId = `edge_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         const edge = {
@@ -1603,6 +1648,9 @@ export class FlowDesigner {
         let isDragging = false;
         let startX, startY;
 
+        const controller = new AbortController();
+        edge._abortController = controller; // 記在 edge 上以便刪除時清理
+
         controlPoint.addEventListener('mousedown', (e) => {
             e.stopPropagation();
             isDragging = true;
@@ -1611,7 +1659,7 @@ export class FlowDesigner {
             controlPoint.dataset.dragging = 'true';
             controlPoint.style.opacity = '1';
             document.body.style.cursor = 'move';
-        });
+        }, { signal: controller.signal });
 
         document.addEventListener('mousemove', (e) => {
             if (!isDragging) return;
@@ -1673,6 +1721,11 @@ export class FlowDesigner {
      * 刪除連線
      */
     deleteEdge(edgeId) {
+        const edge = this.edges.find(e => e.id === edgeId);
+        if (edge && edge._abortController) {
+            edge._abortController.abort();
+        }
+
         this.edges = this.edges.filter(e => e.id !== edgeId);
 
         const pathElement = document.getElementById(edgeId);
@@ -1746,9 +1799,20 @@ export class FlowDesigner {
         const startX = sourceRect.right - svgRect.left;
         const startY = sourceRect.top + sourceRect.height / 2 - svgRect.top;
 
+        // 移除之前的高亮
+        document.querySelectorAll('.flow-node.connect-target').forEach(n => 
+            n.classList.remove('connect-target'));
+
         // 更新臨時線的路徑
         const path = this.createCurvePath(startX, startY, endX, endY);
         this.connectionDragState.tempLine.setAttribute('d', path);
+
+        // 高亮提示目標
+        const el = document.elementFromPoint(event.clientX, event.clientY);
+        const targetNode = el?.closest('.flow-node');
+        if (targetNode && targetNode.id !== this.connectionDragState.sourceNodeId) {
+            targetNode.classList.add('connect-target');
+        }
     }
 
     /**
@@ -1757,26 +1821,23 @@ export class FlowDesigner {
     endConnectionDrag(event) {
         if (!this.connectionDragState.isDragging) return;
 
-
-        // 檢查是否釋放在輸入點上
-        const target = event.target;
-        if (target.classList.contains('node-connector') &&
-            target.dataset.type === 'input') {
-
-            const targetNodeId = target.dataset.nodeId;
-            const sourceNodeId = this.connectionDragState.sourceNodeId;
-
-
-            // 創建連接
-            this.createEdge(sourceNodeId, null, targetNodeId, null);
-        }
-
         // 清理臨時線
         if (this.connectionDragState.tempLine) {
             this.connectionDragState.tempLine.remove();
         }
 
-        // 重置狀態
+        // 移除高亮
+        document.querySelectorAll('.flow-node.connect-target').forEach(n => 
+            n.classList.remove('connect-target'));
+
+        const el = document.elementFromPoint(event.clientX, event.clientY);
+        const targetNode = el?.closest('.flow-node');
+
+        if (targetNode && targetNode.id !== this.connectionDragState.sourceNodeId) {
+            this.createEdge(this.connectionDragState.sourceNodeId, 'default', targetNode.id, 'input');
+        }
+
+        // 重置狀態 //////////////////////////////////////////
         this.connectionDragState.isDragging = false;
         this.connectionDragState.sourceNodeId = null;
         this.connectionDragState.sourceType = null;
@@ -1825,7 +1886,7 @@ export class FlowDesigner {
         if (contents.type === 'bubble') {
             // Hero (圖片/影片)
             if (contents.hero) {
-                preview += `< div style = "font-size: 9px; color: #6c757d; padding: 2px 0;" >📷 Hero 圖片</div > `;
+                preview += `<div style="font-size: 9px; color: #6c757d; padding: 2px 0;">📷 Hero 圖片</div>`;
             }
 
             // Body
@@ -1834,12 +1895,13 @@ export class FlowDesigner {
                 const previewItems = bodyContents.slice(0, 2).map(item => {
                     if (item.type === 'text') {
                         const text = item.text || '';
-                        return text.length > 20 ? text.substring(0, 20) + '...' : text;
+                        const truncated = text.length > 20 ? text.substring(0, 20) + '...' : text;
+                        return escapeHtml(truncated);
                     }
                     return `[${item.type}]`;
                 });
                 if (previewItems.length > 0) {
-                    preview += `< div style = "font-size: 9px; color: #495057; padding: 2px 0;" >📝 ${previewItems.join(' ')}</div > `;
+                    preview += `<div style="font-size: 9px; color: #495057; padding: 2px 0;">📝 ${previewItems.join(' ')}</div>`;
                 }
             }
 
@@ -1848,7 +1910,7 @@ export class FlowDesigner {
                 const buttons = contents.footer.contents || [];
                 const buttonCount = buttons.length;
                 if (buttonCount > 0) {
-                    preview += `< div style = "font-size: 9px; color: #6c757d; padding: 2px 0;" >🔘 ${buttonCount} 個按鈕</div > `;
+                    preview += `<div style="font-size: 9px; color: #6c757d; padding: 2px 0;">🔘 ${buttonCount} 個按鈕</div>`;
                 }
             }
         }
@@ -1856,7 +1918,7 @@ export class FlowDesigner {
         // Carousel 類型
         else if (contents.type === 'carousel') {
             const bubbles = contents.contents || [];
-            preview += `< div style = "font-size: 9px; color: #6c757d; padding: 2px 0;" >🎠 ${bubbles.length} 個卡片</div > `;
+            preview += `<div style="font-size: 9px; color: #6c757d; padding: 2px 0;">🎠 ${bubbles.length} 個卡片</div>`;
         }
 
         return preview || '<div style="font-size: 9px; color: #adb5bd;">無預覽</div>';
@@ -1887,10 +1949,10 @@ export class FlowDesigner {
             position: absolute;
             top: 0;
             left: 0;
-            width: 100 %;
-            height: 100 %;
-            pointer - events: none;
-            `;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        `;
 
         const ctx = canvas.getContext('2d');
 
@@ -3873,43 +3935,21 @@ export class FlowDesigner {
         const node = this.nodes.find(n => n.id === nodeId);
         if (!node) return;
 
-        const nodeElement = document.getElementById(nodeId);
-        if (!nodeElement) return;
-
-        // 獲取畫布和節點的尺寸
-        const containerRect = this.container.getBoundingClientRect();
-        const nodeWidth = nodeElement.offsetWidth;
-        const nodeHeight = nodeElement.offsetHeight;
-
-        // 計算需要的平移量，使節點居中
-        const centerX = containerRect.width / 2;
-        const centerY = containerRect.height / 2;
-
-        // 節點當前位置
-        const nodeCenterX = node.position.x + nodeWidth / 2;
-        const nodeCenterY = node.position.y + nodeHeight / 2;
-
-        // 計算需要移動的距離
-        const deltaX = centerX - nodeCenterX;
-        const deltaY = centerY - nodeCenterY;
-
-        // 平移所有節點
-        this.nodes.forEach(n => {
-            n.position.x += deltaX;
-            n.position.y += deltaY;
-        });
-
-        //設置縮放為 1.5x
+        // 設置縮放為 1.5x
         this.canvasZoom = 1.5;
+        this.applyCanvasZoom();
 
-        // 重新渲染
-        this.renderAll();
-        this.saveToLocalStorage();
+        // 獲取容器尺寸
+        const containerW = this.container.clientWidth;
+        const containerH = this.container.clientHeight;
+
+        // 直接調整容器的滾動位置 (考慮縮放後的座標)
+        this.container.scrollLeft = node.position.x * this.canvasZoom - containerW / 2 + (100 * this.canvasZoom);
+        this.container.scrollTop = node.position.y * this.canvasZoom - containerH / 2 + (50 * this.canvasZoom);
 
         // 選中該節點
         this.selectNode(nodeId);
         this.showNodeProperties(nodeId);
-
     }
 
     /**
@@ -4231,6 +4271,7 @@ export class FlowDesigner {
             this.flowId = result.flowId;
 
             this.saveToLocalStorage();
+            this.isDirty = false;
             toast.success('✅ 流程已儲存');
         } catch (err) {
             console.error('儲存失敗:', err);
@@ -4400,6 +4441,53 @@ export class FlowDesigner {
             flowName: this.flowName
         };
         localStorage.setItem('flow_designer_draft', JSON.stringify(data));
+        this.isDirty = true;
+        this.scheduleAutoSave();
+    }
+
+    scheduleAutoSave() {
+        if (this._autoSaveTimer) clearTimeout(this._autoSaveTimer);
+        this._autoSaveTimer = setTimeout(() => {
+            if (this.flowId) {
+                this.saveFlow();
+            }
+        }, 30000); // 30 秒無操作後自動儲存
+    }
+
+    exportFlow() {
+        const data = JSON.stringify({
+            name: this.flowName,
+            nodes: this.nodes,
+            edges: this.edges,
+            exportedAt: new Date().toISOString()
+        }, null, 2);
+        
+        const blob = new Blob([data], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${this.flowName || 'flow'}_${Date.now()}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    importFlow() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json';
+        input.onchange = async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const text = await file.text();
+            const data = JSON.parse(text);
+            this.flowName = data.name;
+            this.nodes = data.nodes || [];
+            this.edges = data.edges || [];
+            this.flowId = null; // 匯入為新流程
+            this.renderAll();
+            toast.success('流程已匯入');
+        };
+        input.click();
     }
 
     /**
@@ -4548,6 +4636,103 @@ export class FlowDesigner {
                     ${error.message}
                 </div>
             `;
+        }
+    }
+
+    /**
+     * 顯示流程列表 (✅ 已實作)
+     */
+    async showFlowList() {
+        showLoader();
+        try {
+            const data = await api.get('/flow/list');
+            const flows = data.flows || [];
+
+            const modalId = `flow-list-modal-${Date.now()}`;
+            document.querySelectorAll('[id^="flow-list-modal-"]').forEach(el => el.remove());
+            document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+            const modalHtml = `
+                <div class="modal fade" id="${modalId}" tabindex="-1">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title"><i class="bi bi-list-stars me-2"></i>我的流程列表</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                ${flows.length === 0 ? '<div class="text-center p-5 text-muted">目前暫無儲存的流程</div>' : `
+                                <div class="table-responsive">
+                                    <table class="table table-hover align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th>流程名稱</th>
+                                                <th>節點數</th>
+                                                <th>更新時間</th>
+                                                <th class="text-end">操作</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${flows.map(f => `
+                                                <tr>
+                                                    <td>
+                                                        <div class="fw-bold">${escapeHtml(f.name)}</div>
+                                                        <small class="text-muted font-monospace">${escapeHtml(f.id)}</small>
+                                                    </td>
+                                                    <td><span class="badge bg-info">${f.nodeCount}</span></td>
+                                                    <td><small>${new Date(f.updatedAt).toLocaleString()}</small></td>
+                                                    <td class="text-end">
+                                                        <button class="btn btn-sm btn-primary btn-load-flow" data-id="${f.id}">
+                                                            <i class="bi bi-folder2-open"></i> 載入
+                                                        </button>
+                                                        <button class="btn btn-sm btn-outline-danger btn-del-flow" data-id="${escapeHtml(f.id)}" data-name="${escapeHtml(f.name)}">
+                                                            <i class="bi bi-trash"></i>
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                `}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            const modalEl = document.getElementById(modalId);
+            const bsModal = new bootstrap.Modal(modalEl);
+
+            // 綁定載入事件
+            modalEl.querySelectorAll('.btn-load-flow').forEach(btn => {
+                btn.onclick = async () => {
+                    const id = btn.dataset.id;
+                    bsModal.hide();
+                    await this.loadFlow(id);
+                };
+            });
+
+            // 綁定刪除事件
+            modalEl.querySelectorAll('.btn-del-flow').forEach(btn => {
+                btn.onclick = async () => {
+                    const id = btn.dataset.id;
+                    if (confirm(`確定要刪除流程「${btn.dataset.name}」嗎？此動作無法復原。`)) {
+                        await api.delete(`/flow/delete/${id}`);
+                        toast.success('流程已刪除');
+                        bsModal.hide();
+                        this.showFlowList(); // 重新整理
+                    }
+                };
+            });
+
+            modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
+            bsModal.show();
+        } catch (err) {
+            console.error('載入流程列表失敗:', err);
+            toast.error('無法取得流程列表');
+        } finally {
+            hideLoader();
         }
     }
 }
