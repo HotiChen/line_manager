@@ -102,7 +102,7 @@ async function updateUserInfo(userId, profileData = null) {
   if (!nameEl) return;
 
   const urlParams = new URLSearchParams(window.location.search);
-  const displayName = profileData?.name || urlParams.get('displayName') || (userId === 'Ud66f9caf44c4d927ca4f9361d66ccc18' ? 'Owner' : 'User');
+  const displayName = profileData?.name || urlParams.get('displayName') || 'User';
 
   nameEl.textContent = displayName;
   if (avatarEl) avatarEl.textContent = displayName.charAt(0).toUpperCase();
@@ -165,7 +165,9 @@ window.addEventListener("DOMContentLoaded", () => {
     loadPage("profile", { userId });
   };
 
-  if (!debug) {
+  // Force local mode when running on localhost regardless of module-cached debug value
+  const isLocalHostname = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  if (!debug && !isLocalHostname) {
     initLiff(config.liffId).then(async profile => {
       if (!profile?.userId) throw new Error("LIFF 載入失敗");
       setUserId(profile.userId);
@@ -173,7 +175,7 @@ window.addEventListener("DOMContentLoaded", () => {
       data.exists ? startApp(profile.userId, data.profile) : handleNoProfile(profile.userId);
     }).catch(e => ErrorHandler.handle(e, 'LIFF 初始化失敗'));
   } else {
-    const uid = getUserId() || config.testUserId;
+    const uid = getUserId() || config.testUserId || localStorage.getItem('dev_test_userId') || null;
     setUserId(uid);
     updateUserInfo(uid);
     api.post('/profile/check').then(data => {
@@ -184,6 +186,12 @@ window.addEventListener("DOMContentLoaded", () => {
       } else {
         startApp(uid, data.profile);
       }
+    }).catch(err => {
+      console.warn('⚠️ [Dev] /profile/check 失敗，以 dev 模式繼續啟動:', err?.message || err);
+      LoadingManager.hide('app-init');
+      initializeBotSelector().catch(console.error);
+      initializeLogoutButton();
+      loadPage(currentPageName, { userId: uid });
     });
   }
 });

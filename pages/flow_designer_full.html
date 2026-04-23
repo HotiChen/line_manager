@@ -370,6 +370,133 @@
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
             border: 1px solid #e0e0e0 !important;
         }
+
+        /* ── Node Palette ── */
+        #node-palette {
+            position: fixed;
+            left: 0;
+            top: 60px;
+            bottom: 0;
+            width: 200px;
+            background: #1e293b;
+            border-right: 1px solid rgba(255,255,255,0.08);
+            z-index: 1500;
+            display: flex;
+            flex-direction: column;
+            transition: width 0.22s ease;
+            overflow: hidden;
+        }
+
+        #node-palette.collapsed {
+            width: 44px;
+        }
+
+        #node-palette.collapsed .palette-title-text,
+        #node-palette.collapsed .palette-cat-label,
+        #node-palette.collapsed .palette-item span {
+            display: none;
+        }
+
+        #node-palette.collapsed .palette-item {
+            justify-content: center;
+            padding: 10px 0;
+        }
+
+        #node-palette.collapsed .palette-toggle i {
+            transform: rotate(180deg);
+        }
+
+        .palette-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 10px 10px 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            flex-shrink: 0;
+        }
+
+        .palette-title {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: #94a3b8;
+            font-size: 0.78rem;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .palette-title i { color: #60a5fa; }
+
+        .palette-toggle {
+            background: none;
+            border: none;
+            color: #64748b;
+            cursor: pointer;
+            padding: 2px 5px;
+            border-radius: 4px;
+            line-height: 1;
+            flex-shrink: 0;
+            transition: color 0.15s, background 0.15s;
+        }
+
+        .palette-toggle:hover {
+            color: #f1f5f9;
+            background: rgba(255,255,255,0.08);
+        }
+
+        .palette-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px 6px;
+        }
+
+        .palette-content::-webkit-scrollbar { width: 3px; }
+        .palette-content::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
+
+        .palette-category { margin-bottom: 10px; }
+
+        .palette-cat-label {
+            font-size: 0.62rem;
+            font-weight: 700;
+            color: #475569;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 6px 6px 3px;
+            white-space: nowrap;
+        }
+
+        .palette-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px;
+            border-radius: 6px;
+            cursor: grab;
+            color: #cbd5e1;
+            font-size: 0.78rem;
+            transition: background 0.13s, color 0.13s;
+            user-select: none;
+            white-space: nowrap;
+        }
+
+        .palette-item:hover {
+            background: rgba(255,255,255,0.09);
+            color: #f1f5f9;
+        }
+
+        .palette-item:active { cursor: grabbing; }
+
+        .palette-item i {
+            font-size: 0.95rem;
+            flex-shrink: 0;
+            width: 18px;
+            text-align: center;
+        }
+
+        /* Drop-zone highlight when dragging from palette */
+        #flow-canvas.palette-drag-over {
+            box-shadow: inset 0 0 0 3px rgba(52, 152, 219, 0.5);
+        }
     </style>
 </head>
 
@@ -408,21 +535,101 @@
                 <button class="btn btn-sm btn-outline-light" onclick="flowDesigner.clearFlow()">
                     <i class="bi bi-file-earmark"></i> 新建
                 </button>
-                <button class="btn btn-sm btn-outline-light" onclick="flowDesigner.loadFlow()" style="display: none;">
-                    <i class="bi bi-folder-open"></i> 載入
+                <!-- 分隔 -->
+                <div style="width:1px; background:rgba(255,255,255,0.3); margin:0 2px;"></div>
+                <button class="btn btn-sm btn-outline-light" onclick="flowDesigner.undo()" title="還原 (Ctrl+Z)">
+                    <i class="bi bi-arrow-counterclockwise"></i>
                 </button>
-                <button class="btn btn-sm btn-light" onclick="flowDesigner.saveFlow()" style="display: none;">
-                    <i class="bi bi-save"></i> 儲存
+                <button class="btn btn-sm btn-outline-light" onclick="flowDesigner.redo()" title="重做 (Ctrl+Y)">
+                    <i class="bi bi-arrow-clockwise"></i>
                 </button>
+                <button class="btn btn-sm btn-outline-light" onclick="flowDesigner.copySelected()" title="複製選取節點 (Ctrl+C)">
+                    <i class="bi bi-clipboard"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-light" onclick="flowDesigner.pasteNodes()" title="貼上 (Ctrl+V)">
+                    <i class="bi bi-clipboard-check"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-light" onclick="flowDesigner.showSearch()" title="搜尋節點 (Ctrl+P)">
+                    <i class="bi bi-search"></i>
+                </button>
+                <!-- 分隔 -->
+                <div style="width:1px; background:rgba(255,255,255,0.3); margin:0 2px;"></div>
                 <button class="btn btn-sm btn-info" onclick="flowDesigner.reloadFlow()" title="重新載入最新流程資料">
-                    <i class="bi bi-arrow-clockwise"></i> 重新載入
-                </button>
-                <button class="btn btn-sm btn-success" onclick="flowDesigner.testFlow()" style="display: none;">
-                    <i class="bi bi-play-circle"></i> 測試
+                    <i class="bi bi-arrow-repeat"></i> 重新載入
                 </button>
                 <button class="btn btn-sm btn-outline-light" onclick="flowDesigner.toggleSidebar()" title="顯示/隱藏屬性面板">
                     <i class="bi bi-layout-sidebar-reverse"></i>
                 </button>
+            </div>
+        </div>
+
+        <!-- Node Palette -->
+        <div id="node-palette">
+            <div class="palette-header">
+                <div class="palette-title">
+                    <i class="bi bi-grid-1x2-fill"></i>
+                    <span class="palette-title-text">節點面板</span>
+                </div>
+                <button class="palette-toggle" onclick="document.getElementById('node-palette').classList.toggle('collapsed')" title="收合/展開">
+                    <i class="bi bi-chevron-left"></i>
+                </button>
+            </div>
+            <div class="palette-content">
+                <!-- 觸發器 -->
+                <div class="palette-category">
+                    <div class="palette-cat-label">觸發器</div>
+                    <div class="palette-item" draggable="true" data-type="richmenu" title="Richmenu 選單">
+                        <i class="bi bi-menu-button" style="color:#9b59b6"></i><span>Richmenu</span>
+                    </div>
+                    <div class="palette-item" draggable="true" data-type="keyword" title="關鍵字觸發">
+                        <i class="bi bi-key" style="color:#3498db"></i><span>關鍵字觸發</span>
+                    </div>
+                </div>
+                <!-- 訊息 -->
+                <div class="palette-category">
+                    <div class="palette-cat-label">訊息</div>
+                    <div class="palette-item" draggable="true" data-type="message_text" title="文字訊息">
+                        <i class="bi bi-chat-text" style="color:#3498db"></i><span>文字訊息</span>
+                    </div>
+                    <div class="palette-item" draggable="true" data-type="message_image" title="圖片訊息">
+                        <i class="bi bi-image-fill" style="color:#3498db"></i><span>圖片訊息</span>
+                    </div>
+                    <div class="palette-item" draggable="true" data-type="message_flex" title="Flex Message">
+                        <i class="bi bi-phone" style="color:#3498db"></i><span>Flex Message</span>
+                    </div>
+                    <div class="palette-item" draggable="true" data-type="message_imagemap" title="Imagemap">
+                        <i class="bi bi-image" style="color:#3498db"></i><span>Imagemap</span>
+                    </div>
+                    <div class="palette-item" draggable="true" data-type="message_sequence" title="訊息序列">
+                        <i class="bi bi-chat-left-dots" style="color:#16a085"></i><span>訊息序列</span>
+                    </div>
+                </div>
+                <!-- 動作 -->
+                <div class="palette-category">
+                    <div class="palette-cat-label">動作</div>
+                    <div class="palette-item" draggable="true" data-type="action_delay" title="延遲">
+                        <i class="bi bi-clock" style="color:#f39c12"></i><span>延遲</span>
+                    </div>
+                    <div class="palette-item" draggable="true" data-type="action_condition" title="條件判斷">
+                        <i class="bi bi-code-square" style="color:#f39c12"></i><span>條件判斷</span>
+                    </div>
+                    <div class="palette-item" draggable="true" data-type="action_tag" title="標籤操作">
+                        <i class="bi bi-tag" style="color:#f39c12"></i><span>標籤操作</span>
+                    </div>
+                    <div class="palette-item" draggable="true" data-type="url" title="URL 連結">
+                        <i class="bi bi-link-45deg" style="color:#16a085"></i><span>URL 連結</span>
+                    </div>
+                    <div class="palette-item" draggable="true" data-type="postback" title="Postback">
+                        <i class="bi bi-arrow-return-left" style="color:#d35400"></i><span>Postback</span>
+                    </div>
+                </div>
+                <!-- 結束 -->
+                <div class="palette-category">
+                    <div class="palette-cat-label">結束</div>
+                    <div class="palette-item" draggable="true" data-type="end" title="結束節點">
+                        <i class="bi bi-x-circle" style="color:#e74c3c"></i><span>結束</span>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -503,6 +710,23 @@
 
     <!-- Toast Container -->
     <div id="toast-container" class="position-fixed top-0 end-0 p-3" style="z-index: 9999;"></div>
+
+    <!-- LIFF SDK（正式環境載入，localhost 使用 stub） -->
+    <script>
+        if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+            document.write('<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"><\/script>');
+        } else {
+            window.liff = {
+                init: () => Promise.resolve(),
+                isLoggedIn: () => false,
+                getAccessToken: () => null,
+                getProfile: () => Promise.resolve(null),
+                logout: () => {},
+                isInClient: () => false,
+                login: () => {}
+            };
+        }
+    </script>
 
     <!-- React & React Flow (CDN) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>

@@ -1,8 +1,8 @@
 // js/flow_designer.js
 // LINE Bot 視覺化流程設計器
 
-import { apiBase } from '../env/config.js';
-import { getUserId } from '../helper/state.js';
+import { apiBase, liffId as configLiffId } from '../env/config.js';
+import { getUserId, setUserId } from '../helper/state.js';
 import { toast } from '../helper/toast.js';
 import { showLoader, hideLoader } from './shared/loader.js';
 import { dataLoader } from './flow_designer_data_loader.js';
@@ -174,6 +174,7 @@ export class FlowDesigner {
             isDragging: false,
             sourceNodeId: null,
             sourceType: null, // 'output'
+            sourceHandle: 'default',
             tempLine: null,
             mouseX: 0,
             mouseY: 0
@@ -189,6 +190,21 @@ export class FlowDesigner {
         this.keywordList = null;
         this.keywordListLoadTime = null;
 
+        // Undo / Redo history
+        this.history = [];
+        this.historyIndex = -1;
+        this.maxHistory = 50;
+
+        // Copy / Paste clipboard
+        this.clipboard = null;
+
+        // Search panel reference
+        this.searchPanel = null;
+
+        // Minimap references
+        this.minimapEl = null;
+        this.minimapCanvas = null;
+
         // 綁定事件處理函數
         this.boundUpdateConnectionDrag = this.updateConnectionDrag.bind(this);
         this.boundEndConnectionDrag = this.endConnectionDrag.bind(this);
@@ -203,6 +219,54 @@ export class FlowDesigner {
         this.createSvgLayer();
         this.setupEventListeners();
         this.loadFromLocalStorage();
+        this.createMinimap();
+        this.initNodePalette();
+        // 初始狀態推入 history
+        this.pushHistory();
+    }
+
+    initNodePalette() {
+        const palette = document.getElementById('node-palette');
+        if (!palette) return;
+
+        palette.querySelectorAll('.palette-item').forEach(item => {
+            // Drag to canvas
+            item.addEventListener('dragstart', (e) => {
+                e.dataTransfer.setData('text/plain', item.dataset.type);
+                e.dataTransfer.effectAllowed = 'copy';
+            });
+
+            // Click to add at canvas center
+            item.addEventListener('click', () => {
+                const cx = (this.container.scrollLeft + this.container.offsetWidth / 2) / this.canvasZoom;
+                const cy = (this.container.scrollTop + this.container.offsetHeight / 2) / this.canvasZoom;
+                this.addNode(item.dataset.type, { x: cx - 100, y: cy - 50 });
+            });
+        });
+
+        this.container.addEventListener('dragover', (e) => {
+            if (!e.dataTransfer.types.includes('text/plain')) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+            this.container.classList.add('palette-drag-over');
+        });
+
+        this.container.addEventListener('dragleave', (e) => {
+            if (!this.container.contains(e.relatedTarget)) {
+                this.container.classList.remove('palette-drag-over');
+            }
+        });
+
+        this.container.addEventListener('drop', (e) => {
+            e.preventDefault();
+            this.container.classList.remove('palette-drag-over');
+            const type = e.dataTransfer.getData('text/plain');
+            if (!type) return;
+            const canvasRect = this.container.getBoundingClientRect();
+            const canvasX = (e.clientX - canvasRect.left + this.container.scrollLeft) / this.canvasZoom;
+            const canvasY = (e.clientY - canvasRect.top + this.container.scrollTop) / this.canvasZoom;
+            this.addNode(type, { x: canvasX - 100, y: canvasY - 50 });
+        });
     }
 
     /**
@@ -589,15 +653,22 @@ export class FlowDesigner {
                     toast.info('🎯 Focus 模式：點擊節點以聚焦');
                 }
             }
-            // Escape：退出 focus 模式
+            // Escape：退出 focus 模式 / 取消連線拖曳
             if (e.key === 'Escape') {
                 if (this.focusMode) {
                     this.focusMode = false;
                     document.body.style.cursor = 'default';
                     toast.info('已退出 Focus 模式');
                 }
-                if (this.isDraggingConnection) {
-                    this.cancelConnection();
+                if (this.connectionDragState.isDragging) {
+                    if (this.connectionDragState.tempLine) this.connectionDragState.tempLine.remove();
+                    document.querySelectorAll('.flow-node.connect-target').forEach(n => n.classList.remove('connect-target'));
+                    this.connectionDragState.isDragging = false;
+                    this.connectionDragState.sourceNodeId = null;
+                    this.connectionDragState.sourceHandle = 'default';
+                    this.connectionDragState.tempLine = null;
+                    document.removeEventListener('mousemove', this.boundUpdateConnectionDrag);
+                    document.removeEventListener('mouseup', this.boundEndConnectionDrag);
                 }
             }
             // Ctrl+S 儲存
@@ -637,21 +708,34 @@ export class FlowDesigner {
                 e.preventDefault();
                 this.debugFlowStructure();
             }
-        });
-
-        // 滑鼠移動（用於連線拖曳）
-        document.addEventListener('mousemove', (e) => {
-            if (this.isDraggingConnection) {
-                this.updateTempConnection(e.clientX, e.clientY);
+            // Ctrl+Z 還原
+            if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
+                e.preventDefault();
+                this.undo();
+            }
+            // Ctrl+Y 或 Ctrl+Shift+Z 重做
+            if ((e.ctrlKey && e.key === 'y') || (e.ctrlKey && e.shiftKey && e.key === 'z')) {
+                e.preventDefault();
+                this.redo();
+            }
+            // Ctrl+C 複製
+            if (e.ctrlKey && e.key === 'c') {
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                this.copySelected();
+            }
+            // Ctrl+V 貼上
+            if (e.ctrlKey && e.key === 'v') {
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                e.preventDefault();
+                this.pasteNodes();
+            }
+            // Ctrl+P 搜尋節點
+            if (e.ctrlKey && e.key === 'p') {
+                e.preventDefault();
+                this.showSearch();
             }
         });
 
-        // 滑鼠放開（完成連線）
-        document.addEventListener('mouseup', (e) => {
-            if (this.isDraggingConnection) {
-                this.finishConnection(e);
-            }
-        });
     }
 
     /**
@@ -861,14 +945,15 @@ export class FlowDesigner {
             config: config
         };
 
+        this.pushHistory();
         this.nodes.push(node);
         this.renderNode(node);
+        this.updateMinimap();
         this.saveToLocalStorage();
 
         if (!silent) {
             toast.success(`已新增 ${config.label} 節點`);
         }
-
 
         return node;
     }
@@ -1032,13 +1117,13 @@ export class FlowDesigner {
 
             // 添加輸出點
             innerHTML += `
-                <div class="node-output-point" 
-                     data-node-id="${node.id}" 
+                <div class="node-output-point"
+                     data-node-id="${node.id}"
                      data-output="default"
-                     onclick="flowDesigner.startConnection('${node.id}', 'default'); event.stopPropagation();"
-                     style="position: absolute; right: -8px; top: 50%; transform: translateY(-50%); 
-                            width: 16px; height: 16px; background: ${node.config.color}; 
-                            border: 2px solid white; border-radius: 50%; cursor: pointer;
+                     onmousedown="event.stopPropagation(); flowDesigner.startConnectionDrag('${node.id}', 'output', event, 'default');"
+                     style="position: absolute; right: -8px; top: 50%; transform: translateY(-50%);
+                            width: 16px; height: 16px; background: ${node.config.color};
+                            border: 2px solid white; border-radius: 50%; cursor: crosshair;
                             box-shadow: 0 2px 4px rgba(0,0,0,0.2);"
                      title="拖曳以連接到下一個節點">
                 </div>
@@ -1072,13 +1157,13 @@ export class FlowDesigner {
 
             // 添加輸出點
             innerHTML += `
-                <div class="node-output-point" 
-                     data-node-id="${node.id}" 
+                <div class="node-output-point"
+                     data-node-id="${node.id}"
                      data-output="default"
-                     onclick="flowDesigner.startConnection('${node.id}', 'default'); event.stopPropagation();"
-                     style="position: absolute; right: -8px; top: 50%; transform: translateY(-50%); 
-                            width: 16px; height: 16px; background: ${node.config.color}; 
-                            border: 2px solid white; border-radius: 50%; cursor: pointer;
+                     onmousedown="event.stopPropagation(); flowDesigner.startConnectionDrag('${node.id}', 'output', event, 'default');"
+                     style="position: absolute; right: -8px; top: 50%; transform: translateY(-50%);
+                            width: 16px; height: 16px; background: ${node.config.color};
+                            border: 2px solid white; border-radius: 50%; cursor: crosshair;
                             box-shadow: 0 2px 4px rgba(0,0,0,0.2);"
                      title="拖曳以連接到下一個節點">
                 </div>
@@ -1094,13 +1179,13 @@ export class FlowDesigner {
             // 添加單一輸出點
             if (node.type !== NodeTypes.END) {
                 innerHTML += `
-                    <div class="node-output-point" 
-                         data-node-id="${node.id}" 
+                    <div class="node-output-point"
+                         data-node-id="${node.id}"
                          data-output="default"
-                         onclick="flowDesigner.startConnection('${node.id}', 'default'); event.stopPropagation();"
-                         style="position: absolute; right: -8px; top: 50%; transform: translateY(-50%); 
+                         onmousedown="event.stopPropagation(); flowDesigner.startConnectionDrag('${node.id}', 'output', event, 'default');"
+                         style="position: absolute; right: -8px; top: 50%; transform: translateY(-50%);
                                 width: 16px; height: 16px; background: ${node.config.color};
-                                border: 2px solid white; border-radius: 50%; cursor: pointer;
+                                border: 2px solid white; border-radius: 50%; cursor: crosshair;
                                 box-shadow: 0 2px 4px rgba(0,0,0,0.2);"
                          title="拖曳以連接到下一個節點">
                     </div>
@@ -1469,6 +1554,8 @@ export class FlowDesigner {
             return;
         }
 
+        this.pushHistory();
+
         // 檢查是否會形成循環
         if (this.wouldCreateCycle(sourceId, targetId)) {
             console.warn(`[createEdge] 會形成循環`);
@@ -1721,6 +1808,7 @@ export class FlowDesigner {
      * 刪除連線
      */
     deleteEdge(edgeId) {
+        this.pushHistory();
         const edge = this.edges.find(e => e.id === edgeId);
         if (edge && edge._abortController) {
             edge._abortController.abort();
@@ -1735,6 +1823,7 @@ export class FlowDesigner {
         const controlPoint = this.svgLayer.querySelector(`circle[data-edge-id="${edgeId}"]`);
         if (controlPoint) controlPoint.remove();
 
+        this.updateMinimap();
         this.saveToLocalStorage();
         toast.success('連線已刪除');
     }
@@ -1742,11 +1831,12 @@ export class FlowDesigner {
     /**
      * 開始連接拖拉 (n8n 風格)
      */
-    startConnectionDrag(nodeId, type, event) {
+    startConnectionDrag(nodeId, type, event, handleId = 'default') {
 
         this.connectionDragState.isDragging = true;
         this.connectionDragState.sourceNodeId = nodeId;
         this.connectionDragState.sourceType = type;
+        this.connectionDragState.sourceHandle = handleId;
 
         // 獲取起點坐標
         const connector = event.target;
@@ -1834,18 +1924,299 @@ export class FlowDesigner {
         const targetNode = el?.closest('.flow-node');
 
         if (targetNode && targetNode.id !== this.connectionDragState.sourceNodeId) {
-            this.createEdge(this.connectionDragState.sourceNodeId, 'default', targetNode.id, 'input');
+            this.createEdge(
+                this.connectionDragState.sourceNodeId,
+                this.connectionDragState.sourceHandle || 'default',
+                targetNode.id,
+                'input'
+            );
         }
 
-        // 重置狀態 //////////////////////////////////////////
+        // 重置狀態
         this.connectionDragState.isDragging = false;
         this.connectionDragState.sourceNodeId = null;
         this.connectionDragState.sourceType = null;
+        this.connectionDragState.sourceHandle = 'default';
         this.connectionDragState.tempLine = null;
 
         // 移除全局事件監聽
         document.removeEventListener('mousemove', this.boundUpdateConnectionDrag);
         document.removeEventListener('mouseup', this.boundEndConnectionDrag);
+    }
+
+    // ─────────────────────────────────────────────
+    // Undo / Redo
+    // ─────────────────────────────────────────────
+
+    pushHistory() {
+        // 捨棄「當前位置之後」的未來歷史（新操作取代 redo 路徑）
+        this.history = this.history.slice(0, this.historyIndex + 1);
+        this.history.push({
+            nodes: JSON.parse(JSON.stringify(this.nodes)),
+            edges: JSON.parse(JSON.stringify(this.edges))
+        });
+        if (this.history.length > this.maxHistory) this.history.shift();
+        else this.historyIndex++;
+    }
+
+    undo() {
+        if (this.historyIndex <= 0) { toast.info('已是最早的操作'); return; }
+        this.historyIndex--;
+        this._applyHistorySnapshot(this.history[this.historyIndex]);
+        toast.success('↩ 已還原');
+    }
+
+    redo() {
+        if (this.historyIndex >= this.history.length - 1) { toast.info('沒有可重做的操作'); return; }
+        this.historyIndex++;
+        this._applyHistorySnapshot(this.history[this.historyIndex]);
+        toast.success('↪ 已重做');
+    }
+
+    _applyHistorySnapshot(snapshot) {
+        this.nodes = JSON.parse(JSON.stringify(snapshot.nodes));
+        this.edges = JSON.parse(JSON.stringify(snapshot.edges));
+        this.renderAll();
+        this.saveToLocalStorage();
+    }
+
+    // ─────────────────────────────────────────────
+    // Copy / Paste
+    // ─────────────────────────────────────────────
+
+    copySelected() {
+        const ids = this.selectedNodes.length > 0
+            ? this.selectedNodes.map(n => n.id)
+            : (this.selectedNode ? [this.selectedNode] : []);
+
+        if (ids.length === 0) { toast.warning('請先選取節點再複製'); return; }
+
+        const nodes = this.nodes.filter(n => ids.includes(n.id));
+        const edges = this.edges.filter(e => ids.includes(e.source) && ids.includes(e.target));
+
+        this.clipboard = {
+            nodes: JSON.parse(JSON.stringify(nodes)),
+            edges: JSON.parse(JSON.stringify(edges))
+        };
+        toast.success(`已複製 ${nodes.length} 個節點`);
+    }
+
+    pasteNodes() {
+        if (!this.clipboard) { toast.warning('剪貼簿為空'); return; }
+        this.pushHistory();
+
+        const idMap = {};
+        const newNodes = this.clipboard.nodes.map(node => {
+            const newId = `node_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            idMap[node.id] = newId;
+            return { ...JSON.parse(JSON.stringify(node)), id: newId, position: { x: node.position.x + 60, y: node.position.y + 60 } };
+        });
+
+        const newEdges = this.clipboard.edges.map(edge => ({
+            ...JSON.parse(JSON.stringify(edge)),
+            id: `edge_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            source: idMap[edge.source],
+            target: idMap[edge.target]
+        }));
+
+        newNodes.forEach(node => { this.nodes.push(node); this.renderNode(node); });
+        newEdges.forEach(edge => { this.edges.push(edge); this.renderEdge(edge); });
+
+        this.updateMinimap();
+        this.saveToLocalStorage();
+        toast.success(`已貼上 ${newNodes.length} 個節點`);
+    }
+
+    // ─────────────────────────────────────────────
+    // Search  (Ctrl+P)
+    // ─────────────────────────────────────────────
+
+    showSearch() {
+        if (this.searchPanel) {
+            this.searchPanel.style.display = 'flex';
+            this.searchPanel.querySelector('#flow-search-input').focus();
+            return;
+        }
+        const panel = document.createElement('div');
+        panel.id = 'flow-search-panel';
+        panel.style.cssText = `
+            position: fixed; top: 80px; left: 50%; transform: translateX(-50%);
+            background: white; border-radius: 10px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.2); padding: 12px 16px;
+            z-index: 9999; width: 380px; display: flex; flex-direction: column; gap: 8px;
+        `;
+        panel.innerHTML = `
+            <div style="display:flex; gap:8px; align-items:center; border-bottom:1px solid #eee; padding-bottom:8px;">
+                <i class="bi bi-search" style="color:#666;"></i>
+                <input type="text" id="flow-search-input" placeholder="搜尋節點名稱、類型…"
+                    style="flex:1; border:none; outline:none; font-size:15px;">
+                <button onclick="flowDesigner.hideSearch()"
+                    style="border:none; background:none; cursor:pointer; color:#aaa; font-size:16px;">✕</button>
+            </div>
+            <div id="flow-search-results" style="max-height:280px; overflow-y:auto;"></div>
+        `;
+        document.body.appendChild(panel);
+        this.searchPanel = panel;
+
+        const input = panel.querySelector('#flow-search-input');
+        input.focus();
+        input.addEventListener('input', () => this._performSearch(input.value));
+        input.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.hideSearch(); });
+
+        // 點擊面板外關閉
+        document.addEventListener('mousedown', (e) => {
+            if (this.searchPanel && !this.searchPanel.contains(e.target)) this.hideSearch();
+        }, { once: true });
+    }
+
+    hideSearch() {
+        if (this.searchPanel) { this.searchPanel.remove(); this.searchPanel = null; }
+    }
+
+    _performSearch(query) {
+        const resultsEl = document.getElementById('flow-search-results');
+        if (!resultsEl) return;
+        if (!query.trim()) { resultsEl.innerHTML = ''; return; }
+
+        const lq = query.toLowerCase();
+        const matches = this.nodes.filter(n => {
+            const label = (n.data.label || n.data.name || n.config.label || '').toLowerCase();
+            const type  = (n.config.label || '').toLowerCase();
+            const text  = (n.data.text || n.data.keyword || '').toLowerCase();
+            return label.includes(lq) || type.includes(lq) || text.includes(lq);
+        });
+
+        if (matches.length === 0) {
+            resultsEl.innerHTML = '<div style="padding:10px; color:#999; text-align:center;">找不到節點</div>';
+            return;
+        }
+        resultsEl.innerHTML = matches.map(n => `
+            <div onclick="flowDesigner.focusOnNode('${n.id}'); flowDesigner.hideSearch();"
+                 style="padding:10px 12px; cursor:pointer; border-radius:6px; display:flex; gap:10px; align-items:center;"
+                 onmouseenter="this.style.background='#f0f4ff'" onmouseleave="this.style.background='white'">
+                <i class="bi ${n.config.icon}" style="color:${n.config.color}; font-size:18px;"></i>
+                <div>
+                    <div style="font-weight:500;">${escapeHtml(n.data.label || n.data.name || n.config.label)}</div>
+                    <div style="font-size:11px; color:#999;">${n.config.label}</div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    // ─────────────────────────────────────────────
+    // Minimap
+    // ─────────────────────────────────────────────
+
+    createMinimap() {
+        if (this.minimapEl) return;
+        const wrap = document.createElement('div');
+        wrap.id = 'flow-minimap';
+        wrap.title = '點擊導覽到該位置';
+        wrap.style.cssText = `
+            position: fixed; bottom: 20px; right: 20px;
+            width: 180px; height: 110px;
+            background: rgba(255,255,255,0.96);
+            border: 1px solid #dee2e6; border-radius: 8px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+            overflow: hidden; cursor: pointer; z-index: 1500;
+        `;
+        const canvas = document.createElement('canvas');
+        canvas.width = 180; canvas.height = 110;
+        wrap.appendChild(canvas);
+        document.body.appendChild(wrap);
+        this.minimapEl = wrap;
+        this.minimapCanvas = canvas;
+
+        wrap.addEventListener('click', (e) => {
+            const ratio = this._minimapRatio();
+            if (!ratio) return;
+            const rect = wrap.getBoundingClientRect();
+            const mx = (e.clientX - rect.left) / wrap.offsetWidth;
+            const my = (e.clientY - rect.top) / wrap.offsetHeight;
+            const tx = ratio.minX + mx * ratio.rX;
+            const ty = ratio.minY + my * ratio.rY;
+            this.container.scrollLeft = tx * this.canvasZoom - this.container.offsetWidth / 2;
+            this.container.scrollTop  = ty * this.canvasZoom - this.container.offsetHeight / 2;
+        });
+
+        // 捲動也更新 minimap viewport 框
+        this.container.addEventListener('scroll', () => this.updateMinimap());
+    }
+
+    _minimapRatio() {
+        if (this.nodes.length === 0) return null;
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        this.nodes.forEach(n => {
+            minX = Math.min(minX, n.position.x);
+            minY = Math.min(minY, n.position.y);
+            maxX = Math.max(maxX, n.position.x + 220);
+            maxY = Math.max(maxY, n.position.y + 120);
+        });
+        const pad = 60;
+        minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+        return { minX, minY, rX: maxX - minX, rY: maxY - minY };
+    }
+
+    updateMinimap() {
+        if (!this.minimapCanvas) return;
+        const canvas = this.minimapCanvas;
+        const ctx = canvas.getContext('2d');
+        const W = canvas.width, H = canvas.height;
+        ctx.clearRect(0, 0, W, H);
+
+        // 背景
+        ctx.fillStyle = '#f8f9fa';
+        ctx.fillRect(0, 0, W, H);
+
+        const r = this._minimapRatio();
+        if (!r) {
+            ctx.fillStyle = '#dee2e6';
+            ctx.font = '11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('尚無節點', W / 2, H / 2);
+            return;
+        }
+        const { minX, minY, rX, rY } = r;
+        const sx = W / rX, sy = H / rY;
+
+        // 畫連線
+        ctx.strokeStyle = '#bdc3c7';
+        ctx.lineWidth = 1;
+        this.edges.forEach(edge => {
+            const src = this.nodes.find(n => n.id === edge.source);
+            const tgt = this.nodes.find(n => n.id === edge.target);
+            if (!src || !tgt) return;
+            ctx.beginPath();
+            ctx.moveTo((src.position.x + 110 - minX) * sx, (src.position.y + 60 - minY) * sy);
+            ctx.lineTo((tgt.position.x - minX) * sx, (tgt.position.y + 60 - minY) * sy);
+            ctx.stroke();
+        });
+
+        // 畫節點
+        this.nodes.forEach(n => {
+            const x = (n.position.x - minX) * sx;
+            const y = (n.position.y - minY) * sy;
+            const nw = Math.max(220 * sx, 4);
+            const nh = Math.max(80 * sy, 3);
+            ctx.fillStyle = n.config.color + 'aa';
+            ctx.strokeStyle = n.config.color;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(x, y, nw, nh, 2);
+            else ctx.rect(x, y, nw, nh);
+            ctx.fill(); ctx.stroke();
+        });
+
+        // 畫 viewport 框
+        const vpX = (this.container.scrollLeft / this.canvasZoom - minX) * sx;
+        const vpY = (this.container.scrollTop  / this.canvasZoom - minY) * sy;
+        const vpW = (this.container.offsetWidth  / this.canvasZoom) * sx;
+        const vpH = (this.container.offsetHeight / this.canvasZoom) * sy;
+        ctx.strokeStyle = '#3498db';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([3, 3]);
+        ctx.strokeRect(vpX, vpY, vpW, vpH);
+        ctx.setLineDash([]);
     }
 
     /**
@@ -2046,19 +2417,19 @@ export class FlowDesigner {
             connectionPoint.dataset.output = button.id;
             connectionPoint.style.cssText = `
             position: absolute;
-            left: ${outputX} px;
-            top: ${outputY} px;
-            width: 16px;
-            height: 16px;
-            transform: translate(-50 %, -50 %);
+            left: ${outputX}px;
+            top: ${outputY}px;
+            width: 24px;
+            height: 24px;
+            transform: translate(-50%, -50%);
             cursor: pointer;
-            z - index: 10;
+            z-index: 10;
             `;
-            connectionPoint.title = `連接: ${button.label} `;
-            connectionPoint.onclick = (e) => {
+            connectionPoint.title = `連接: ${button.label}`;
+            connectionPoint.addEventListener('mousedown', (e) => {
                 e.stopPropagation();
-                this.startConnection(nodeId, button.id);
-            };
+                this.startConnectionDrag(nodeId, 'output', e, button.id);
+            });
 
             container.appendChild(connectionPoint);
         });
@@ -2199,10 +2570,10 @@ export class FlowDesigner {
                 z-index: 10;
             `;
             connectionPoint.title = `連接: 區域 ${index + 1}`;
-            connectionPoint.onclick = (e) => {
+            connectionPoint.addEventListener('mousedown', (e) => {
                 e.stopPropagation();
-                this.startConnection(nodeId, `action_${index}`);
-            };
+                this.startConnectionDrag(nodeId, 'output', e, `action_${index}`);
+            });
 
             container.appendChild(connectionPoint);
         });
@@ -2294,6 +2665,7 @@ export class FlowDesigner {
                 isMultiDragging = false;
                 multiDragData = [];
                 element.style.zIndex = 1;
+                this.updateMinimap();
                 this.saveToLocalStorage();
             }
         });
@@ -3991,7 +4363,7 @@ export class FlowDesigner {
      * 執行刪除節點（內部方法）
      */
     _executeDeleteNode(nodesToDelete) {
-
+        this.pushHistory();
 
         // ✅ 先刪除相關的邊的 DOM 元素（SVG path 和控制點）
         const edgesToRemove = this.edges.filter(edge =>
@@ -4027,6 +4399,7 @@ export class FlowDesigner {
 
         this.selectedNode = null;
         document.getElementById('sidebar').classList.remove('show');
+        this.updateMinimap();
         this.saveToLocalStorage();
 
         const message = nodesToDelete.length > 1
@@ -4428,6 +4801,8 @@ export class FlowDesigner {
 
         // 渲染所有連線
         this.edges.forEach(edge => this.renderEdge(edge));
+
+        this.updateMinimap();
     }
 
     /**
@@ -4765,6 +5140,29 @@ export async function pageInit() {
     }
 
     try {
+        // LIFF 初始化（取得 Bearer token 供 API 使用）
+        // ⚠️ 注意：此頁從主頁以新分頁開啟，不可呼叫 liff.login()（會重定向離開本頁）。
+        // 若在 LINE App 內且已登入：取得 profile 並更新 userId。
+        // 若在桌機瀏覽器：略過登入，依賴主頁面已存入 localStorage 的 userId。
+        if (configLiffId && typeof liff !== 'undefined') {
+            try {
+                const liffTimeout = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('LIFF init timeout')), 3000)
+                );
+                await Promise.race([liff.init({ liffId: configLiffId }), liffTimeout]);
+
+                if (liff.isLoggedIn()) {
+                    // 已登入（LINE App 環境）：取得最新 profile
+                    const profile = await liff.getProfile();
+                    if (profile?.userId) setUserId(profile.userId);
+                }
+                // 未登入（桌機瀏覽器）：不呼叫 liff.login()，讓 getUserId() 從 localStorage 讀取
+            } catch (liffErr) {
+                // 非 LIFF 環境或超時 — 繼續，依賴 localStorage userId
+                console.warn('[Flow Designer] LIFF init skipped:', liffErr.message);
+            }
+        }
+
         // 初始化選擇器
         await initializeFlowSelectors();
 
