@@ -99,6 +99,11 @@ function renderMemberList(members, myRole) {
 
 
     members.forEach((member, index) => {
+        // Normalize field names: handle both API format and mock format
+        member.displayName = member.displayName || member.name || '(未知)';
+        member.pictureUrl = member.pictureUrl || member.avatar || null;
+        member.addedAt = member.addedAt || member.createdAt || new Date().toISOString();
+
         const isMe = member.userId === currentUser.userId;
         const joinedDate = new Date(member.addedAt).toLocaleDateString();
 
@@ -124,7 +129,7 @@ function renderMemberList(members, myRole) {
             placeholder.className = 'avatar-placeholder me-3 rounded-circle bg-light d-flex align-items-center justify-content-center';
             placeholder.style.width = '40px';
             placeholder.style.height = '40px';
-            placeholder.textContent = member.displayName[0];
+            placeholder.textContent = (member.displayName || '?')[0].toUpperCase();
             flexDiv.appendChild(placeholder);
         }
 

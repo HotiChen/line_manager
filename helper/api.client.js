@@ -1,7 +1,7 @@
 /**
  * ApiClient - 統一 API 客戶端
  */
-import { getUserId, apiBase } from './state.js';
+import { getUserId, apiBase, debug } from './state.js';
 import { ErrorHandler, ErrorTypes } from './error.handler.js';
 
 const DEFAULT_CONFIG = {
@@ -56,8 +56,13 @@ export class ApiClient {
 
             if (!response.ok) {
                 await this.handleErrorResponse(response, context || endpoint, showErrorToast);
-                throw response;
+                const httpErr = new Error(`HTTP ${response.status}`);
+                httpErr._isHttpError = true; // 已由 handleErrorResponse 處理過 toast，catch 不重複顯示
+                throw httpErr;
             }
+
+            // 204 No Content（如刪除操作）不呼叫 .json()，否則會丟出 SyntaxError
+            if (response.status === 204) return null;
 
             const contentType = response.headers.get('content-type');
             return contentType?.includes('application/json') ? await response.json() : await response.text();
@@ -69,7 +74,8 @@ export class ApiClient {
                 if (showErrorToast) ErrorHandler.handle(timeoutErr, context || endpoint);
                 throw timeoutErr;
             }
-            if (!(error instanceof Response) && showErrorToast) ErrorHandler.handle(error, context || endpoint);
+            // _isHttpError 代表已由 handleErrorResponse 顯示過 toast，避免重複彈出
+            if (!error._isHttpError && showErrorToast) ErrorHandler.handle(error, context || endpoint);
             throw error;
         }
     }
@@ -90,6 +96,24 @@ export class ApiClient {
     static buildHeaders(body, customHeaders = {}, skipAuth = false) {
         const headers = (body && !(body instanceof FormData)) ? { 'Content-Type': 'application/json' } : {};
         if (!skipAuth) {
+            // 優先使用 LIFF access token（正式環境，非 debug 模式）
+            const isLocalHost = typeof window !== 'undefined' &&
+                (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+            if (!debug && !isLocalHost) { 
+                try {
+                    // eslint-disable-next-line no-undef
+                    if (typeof liff !== 'undefined' && typeof liff.isLoggedIn === 'function' && liff.isLoggedIn()) {
+                        const accessToken = liff.getAccessToken();
+                        if (accessToken) {
+                            headers['Authorization'] = `Bearer ${accessToken}`;
+                        }
+                    }
+                } catch (e) {
+                    // LIFF SDK 尚未 init 時的預期錯誤，靜默降級即可不阻擋請求
+                    console.warn('⚠️ [ApiClient] LIFF 尚未初始化，自動降級使用 X-User-Id:', e.message);
+                }
+            }
+            // 同時帶上 X-User-Id 作為回退（過渡期間）
             const userId = getUserId();
             if (userId) headers['X-User-Id'] = userId;
         }
@@ -123,7 +147,7 @@ export class ApiClient {
     static get(endpoint, options) { return this.request('GET', endpoint, null, options); }
     static post(endpoint, body, options) { return this.request('POST', endpoint, body, options); }
     static put(endpoint, body, options) { return this.request('PUT', endpoint, body, options); }
-    static delete(endpoint, options) { return this.request('DELETE', endpoint, null, options); }
+    static delete(endpoint, body, options) { return this.request('DELETE', endpoint, body || null, options); }
     static async upload(endpoint, file, fieldName = 'file', extraData = {}, options = {}) {
         const formData = new FormData();
         formData.append(fieldName, file);
@@ -160,3 +184,5 @@ export const api = {
     upload: ApiClient.upload.bind(ApiClient),
     parallel: ApiClient.parallel.bind(ApiClient)
 };
+
+export default api; // Support both named and default imports

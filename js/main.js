@@ -58,8 +58,18 @@ async function initializeBotSelector(activeBot) {
 
   try {
     const botData = await api.get('/token/list');
-    const options = ['<option value="">選擇帳號...</option>', ...Object.keys(botData).map(name => `<option value="${name}">${name}</option>`)];
-    setInnerHTML(botSelect, options.join(''));
+    // 使用 createElement + textContent 而非 innerHTML，避免 XSS
+    botSelect.innerHTML = '';
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = '選擇帳號...';
+    botSelect.appendChild(defaultOpt);
+    Object.keys(botData).forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      botSelect.appendChild(opt);
+    });
 
     let targetBot = activeBot;
     if (!targetBot || !botData[targetBot]) {
