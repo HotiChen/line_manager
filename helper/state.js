@@ -24,8 +24,9 @@ export function setUserId(id) {
         return;
     }
     state.userId = id;
-    // 持久化到 sessionStorage，讓新分頁（如流程設計器）也能讀取
-    try { sessionStorage.setItem('linebot_userId', id); } catch (e) {}
+    // 持久化到 localStorage，讓新分頁（如流程設計器）也能讀取
+    // ⚠️ 不可用 sessionStorage — 它是 per-tab，新分頁無法存取
+    try { localStorage.setItem('linebot_userId', id); } catch (e) {}
 }
 
 /**
@@ -47,10 +48,10 @@ export function getUserId() {
         return userId;
     }
 
-    // 從 sessionStorage 讀取（支援新分頁，如流程設計器）
+    // 從 localStorage 讀取（跨分頁共享，支援新分頁如流程設計器）
     if (!state.userId) {
         try {
-            const stored = sessionStorage.getItem('linebot_userId');
+            const stored = localStorage.getItem('linebot_userId');
             if (stored) { state.userId = stored; return stored; }
         } catch (e) {}
     }
@@ -85,6 +86,21 @@ export function setCurrentProject(project) {
  */
 export function getCurrentProject() {
     return state.currentProject;
+}
+
+/**
+ * 清除當前用戶 ID，同步清除 localStorage（登出時使用）
+ *
+ * Post-conditions:
+ * - state.userId 重設為 null
+ * - localStorage 中的 userId 與 bot 選擇皆被清除
+ */
+export function clearUserId() {
+    state.userId = null;
+    try {
+        localStorage.removeItem('linebot_userId');
+        localStorage.removeItem('flow_designer_bot');
+    } catch (e) {}
 }
 
 export const apiBase = config.apiBase;

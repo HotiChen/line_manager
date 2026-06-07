@@ -36,18 +36,18 @@ export async function handleWebhookRequest(request, env, ctx) {
         const body = JSON.parse(bodyText);
         logger.info('WEBHOOK', '收到 LINE Webhook 請求', { destination: body.destination });
 
-        // 1. 簽章驗證
+        // 1. 簽章驗證 — 未設定 secret 視為設定錯誤，直接拒絕
         const channelSecret = env.LINE_CHANNEL_SECRET;
-        if (channelSecret) {
-            const isValid = await verifySignature(request, bodyText, channelSecret);
-            if (!isValid) {
-                logger.error('SECURITY', '簽章驗證失敗');
-                return new Response('Unauthorized', { status: 401 });
-            }
-            logger.info('SECURITY', '簽章驗證通過');
-        } else {
-            logger.warn('CONFIG', '缺少 LINE_CHANNEL_SECRET，跳過簽章驗證');
+        if (!channelSecret) {
+            logger.error('CONFIG', '未設定 LINE_CHANNEL_SECRET，拒絕 webhook 請求');
+            return new Response('Service Misconfigured', { status: 500 });
         }
+        const isValid = await verifySignature(request, bodyText, channelSecret);
+        if (!isValid) {
+            logger.error('SECURITY', '簽章驗證失敗');
+            return new Response('Unauthorized', { status: 401 });
+        }
+        logger.info('SECURITY', '簽章驗證通過');
 
         // 2. 路由判斷：取得 destination 對應的 userId
         const destination = body.destination;

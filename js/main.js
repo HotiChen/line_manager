@@ -2,7 +2,7 @@ import * as config from '../env/config.js?v=223';
 import { initLiff } from "./liff.js";
 import { setInnerHTML } from "../helper/security.js";
 import { setupGlobalErrorHandlers, ErrorHandler } from "../helper/error.handler.js";
-import { setUserId, getUserId, apiBase, debug } from "../helper/state.js";
+import { setUserId, getUserId, clearUserId, apiBase, debug } from "../helper/state.js";
 import { toast } from "../helper/toast.js";
 import { LoadingManager } from "./shared/loader.js";
 import { api } from "../helper/api.client.js";
@@ -13,6 +13,9 @@ setupGlobalErrorHandlers();
 
 
 let currentPageName = 'dashboard';
+
+// BUG-002: AbortController 追蹤 bot selector 的 change listener，重新初始化時先取消舊的
+let botSelectAbortController = null;
 
 /**
  * loadPage
@@ -33,6 +36,7 @@ async function loadPage(pageName, pageData = {}) {
   try {
     LoadingManager.show('page-load', `載入中...`);
     const res = await fetch(`./pages/${pageName}.html?cb=${Date.now()}`);
+    if (!res.ok) throw new Error(`頁面載入失敗 (${res.status}): ${pageName}`);
     setInnerHTML(content, await res.text());
 
     const module = await import(`./${pageName}.js?cb=${Date.now()}`);
@@ -55,6 +59,10 @@ window.loadPage = loadPage;
 async function initializeBotSelector(activeBot) {
   const botSelect = document.getElementById("bot-select-global");
   if (!botSelect) return;
+
+  // 取消上次綁定的 change listener，避免重複觸發（BUG-002）
+  if (botSelectAbortController) botSelectAbortController.abort();
+  botSelectAbortController = new AbortController();
 
   try {
     const botData = await api.get('/token/list');
@@ -95,7 +103,7 @@ async function initializeBotSelector(activeBot) {
       } catch (err) {
         ErrorHandler.handle(err, '切換帳號失敗');
       }
-    });
+    }, { signal: botSelectAbortController.signal });
 
   } catch (err) {
     console.error("❌ 載入專案列表失敗:", err);
@@ -131,7 +139,7 @@ function initializeLogoutButton() {
     if (!(await showConfirm({ title: '登出', message: '確定要登出嗎？', type: 'warning' }))) return;
 
     if (!debug && window.liff?.isLoggedIn()) window.liff.logout();
-    setUserId(null);
+    clearUserId();
     window.location.reload();
   });
 }

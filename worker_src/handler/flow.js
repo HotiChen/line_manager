@@ -122,9 +122,17 @@ export async function handleListFlows(request, env, userId) {
         })
     );
 
+    const validFlows = flows.filter(Boolean);
+
+    // 自動清理孤兒 ID：若有 flowId 在 index 但 KV 已不存在，順帶更新 index
+    if (validFlows.length !== ids.length) {
+        const validIds = validFlows.map(f => f.id);
+        await env.KV_LINE_STORAGE.put(listKey(userId, botId), JSON.stringify(validIds));
+    }
+
     return jsonResponse({
         success: true,
-        flows: flows.filter(Boolean),
+        flows: validFlows,
     });
 }
 
