@@ -107,7 +107,7 @@ export async function pageInit(pageData) {
     thumbnailArea.innerHTML = `<div class="text-center my-3" id="loading-spinner">
       <div class="spinner-border text-primary" role="status"><span class="visually-hidden">載入中...</span></div>
       <div>讀取圖片選單中...</div>
-    </div>`;
+    </div>`; // safe: static loading spinner, no user input
   }
 
   // 偵測 builder 類型

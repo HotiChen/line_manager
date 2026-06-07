@@ -5,6 +5,7 @@
 import { getUserId } from "../helper/state.js";
 import { toast } from "../helper/toast.js";
 import { api } from "../helper/api.client.js";
+import { setInnerHTML } from "../helper/security.js";
 
 /**
  * pageInit
@@ -80,7 +81,14 @@ async function loadStatistics() {
             { method: 'GET', endpoint: '/stats/messages' }
         ]);
 
-        const getCount = (res, key) => (res.success && Array.isArray(res.data?.[key])) ? res.data[key].length : 0;
+        // Flexible count helper — handles { data: { key: [] } }, { key: [] }, and { data: [] } formats
+        const getCount = (res, key) => {
+            if (!res || res.error) return 0;
+            if (res.data && Array.isArray(res.data[key])) return res.data[key].length;
+            if (Array.isArray(res[key])) return res[key].length;
+            if (Array.isArray(res.data)) return res.data.length;
+            return 0;
+        };
 
         updateStatCard('stat-richmenu', getCount(richmenuRes, 'richmenus'));
         updateStatCard('stat-flex', getCount(flexRes, 'flexs'));
@@ -88,7 +96,7 @@ async function loadStatistics() {
         updateStatCard('stat-keyword', getCount(keywordRes, 'data'));
         updateStatCard('stat-member', getCount(memberRes, 'data'));
 
-        const msgData = messageRes.success ? messageRes.data.stats || {} : {};
+        const msgData = (messageRes.success && messageRes.data) ? (messageRes.data.stats || messageRes.data || {}) : {};
         const msgTotal = msgData.total || 0;
         updateStatCard('stat-message', msgTotal);
 
@@ -96,7 +104,7 @@ async function loadStatistics() {
             const detailElem = document.getElementById('stat-message-detail');
             if (detailElem) {
                 const paid = (msgData.push || 0) + (msgData.broadcast || 0);
-                detailElem.innerHTML = `(回覆: ${msgData.reply || 0}, 計費: ${paid})`;
+                detailElem.textContent = `(回覆: ${msgData.reply || 0}, 計費: ${paid})`;
             }
         }
     } catch (error) {

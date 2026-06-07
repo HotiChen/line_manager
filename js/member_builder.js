@@ -1,7 +1,7 @@
 // js/member_builder.js - 完整會員管理系統
 import { getUserId, setUserId } from "../helper/state.js";
 import { setInnerHTML } from '../helper/security.js';
-import api from '../helper/api.client.js';
+import { api } from '../helper/api.client.js';
 import { toast } from '../helper/toast.js';
 import { LoadingManager } from './shared/loader.js';
 import { confirmDanger } from '../helper/modal.helper.js';
@@ -93,53 +93,111 @@ function renderMemberTable() {
           尚無會員資料
         </td>
       </tr>
-    `;
+    `; // safe: no user input
     return;
   }
 
-  tbody.innerHTML = members.map(m => `
-    <tr>
-      <td>
-        <input type="checkbox" class="member-checkbox" value="${m.memberId}">
-      </td>
-      <td>
-        <div class="d-flex align-items-center">
-          ${m.pictureUrl ? `<img src="${m.pictureUrl}" class="rounded-circle me-2" width="32" height="32">` : ''}
-          <div>
-            <div class="fw-bold">${m.name || m.lineName || '未設定'}</div>
-            ${m.email ? `<small class="text-muted">${m.email}</small>` : ''}
-          </div>
-        </div>
-      </td>
-      <td>
-        <span class="badge" style="background-color: ${getTierColor(m.tier)}">
-          ${getTierIcon(m.tier)} ${getTierName(m.tier)}
-        </span>
-      </td>
-      <td>${m.phone || '-'}</td>
-      <td>
-        ${(m.tags || []).map(tag => `<span class="badge bg-secondary me-1">${tag}</span>`).join('') || '-'}
-      </td>
-      <td>
-        <span class="badge bg-${getTempColor(m.temperature)}">
-          ${getTempIcon(m.temperature)} ${m.temperature || 'warm'}
-        </span>
-      </td>
-      <td>
-        <span class="badge bg-${m.status === 'active' ? 'success' : 'secondary'}">
-          ${m.status || 'active'}
-        </span>
-      </td>
-      <td>
-        <button class="btn btn-sm btn-outline-primary" onclick="window.editMember('${m.memberId}')">
-          編輯
-        </button>
-        <button class="btn btn-sm btn-outline-danger" onclick="window.deleteMember('${m.memberId}')">
-          刪除
-        </button>
-      </td>
-    </tr>
-  `).join('');
+  tbody.innerHTML = ''; // safe: clear
+  members.forEach(m => {
+    const tr = document.createElement('tr');
+
+    // Checkbox cell
+    const tdCheck = document.createElement('td');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'member-checkbox';
+    cb.value = m.memberId;
+    tdCheck.appendChild(cb);
+    tr.appendChild(tdCheck);
+
+    // Avatar + name cell
+    const tdName = document.createElement('td');
+    const nameWrapper = document.createElement('div');
+    nameWrapper.className = 'd-flex align-items-center';
+    if (m.pictureUrl) {
+      const img = document.createElement('img');
+      img.src = m.pictureUrl;
+      img.className = 'rounded-circle me-2';
+      img.width = 32;
+      img.height = 32;
+      nameWrapper.appendChild(img);
+    }
+    const nameInner = document.createElement('div');
+    const nameDiv = document.createElement('div');
+    nameDiv.className = 'fw-bold';
+    nameDiv.textContent = m.name || m.lineName || '未設定';
+    nameInner.appendChild(nameDiv);
+    if (m.email) {
+      const small = document.createElement('small');
+      small.className = 'text-muted';
+      small.textContent = m.email;
+      nameInner.appendChild(small);
+    }
+    nameWrapper.appendChild(nameInner);
+    tdName.appendChild(nameWrapper);
+    tr.appendChild(tdName);
+
+    // Tier cell
+    const tdTier = document.createElement('td');
+    const tierBadge = document.createElement('span');
+    tierBadge.className = 'badge';
+    tierBadge.style.backgroundColor = getTierColor(m.tier);
+    tierBadge.textContent = `${getTierIcon(m.tier)} ${getTierName(m.tier)}`;
+    tdTier.appendChild(tierBadge);
+    tr.appendChild(tdTier);
+
+    // Phone cell
+    const tdPhone = document.createElement('td');
+    tdPhone.textContent = m.phone || '-';
+    tr.appendChild(tdPhone);
+
+    // Tags cell
+    const tdTags = document.createElement('td');
+    const tagsArr = m.tags || [];
+    if (tagsArr.length > 0) {
+      tagsArr.forEach(tag => {
+        const span = document.createElement('span');
+        span.className = 'badge bg-secondary me-1';
+        span.textContent = tag;
+        tdTags.appendChild(span);
+      });
+    } else {
+      tdTags.textContent = '-';
+    }
+    tr.appendChild(tdTags);
+
+    // Temperature cell
+    const tdTemp = document.createElement('td');
+    const tempBadge = document.createElement('span');
+    tempBadge.className = `badge bg-${getTempColor(m.temperature)}`;
+    tempBadge.textContent = `${getTempIcon(m.temperature)} ${m.temperature || 'warm'}`;
+    tdTemp.appendChild(tempBadge);
+    tr.appendChild(tdTemp);
+
+    // Status cell
+    const tdStatus = document.createElement('td');
+    const statusBadge = document.createElement('span');
+    statusBadge.className = `badge bg-${m.status === 'active' ? 'success' : 'secondary'}`;
+    statusBadge.textContent = m.status || 'active';
+    tdStatus.appendChild(statusBadge);
+    tr.appendChild(tdStatus);
+
+    // Actions cell
+    const tdActions = document.createElement('td');
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn btn-sm btn-outline-primary';
+    editBtn.textContent = '編輯';
+    editBtn.onclick = () => window.editMember(m.memberId);
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-sm btn-outline-danger';
+    delBtn.textContent = '刪除';
+    delBtn.onclick = () => window.deleteMember(m.memberId);
+    tdActions.appendChild(editBtn);
+    tdActions.appendChild(delBtn);
+    tr.appendChild(tdActions);
+
+    tbody.appendChild(tr);
+  });
 }
 
 /**
@@ -481,25 +539,37 @@ function renderTagManagementList() {
   if (!container) return;
 
   if (tags.length === 0) {
-    container.innerHTML = '<p class="text-center text-muted py-3">目前尚無標籤</p>';
+    container.innerHTML = '<p class="text-center text-muted py-3">目前尚無標籤</p>'; // safe: no user input
     return;
   }
 
-  container.innerHTML = tags.map(tagObj => {
+  container.innerHTML = ''; // safe: clear
+  tags.forEach(tagObj => {
     const name = tagObj.name || tagObj;
     const count = tagObj.total || 0;
-    return `
-      <div class="list-group-item d-flex justify-content-between align-items-center">
-        <div>
-          <span class="fw-bold">${name}</span>
-          <span class="badge bg-light text-dark ms-2">${count} bits</span>
-        </div>
-        <button class="btn btn-sm btn-outline-danger" onclick="window.removeTag('${name}')">
-          🗑️
-        </button>
-      </div>
-    `;
-  }).join('');
+
+    const item = document.createElement('div');
+    item.className = 'list-group-item d-flex justify-content-between align-items-center';
+
+    const left = document.createElement('div');
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'fw-bold';
+    nameSpan.textContent = name;
+    const countBadge = document.createElement('span');
+    countBadge.className = 'badge bg-light text-dark ms-2';
+    countBadge.textContent = `${count} bits`;
+    left.appendChild(nameSpan);
+    left.appendChild(countBadge);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-sm btn-outline-danger';
+    delBtn.textContent = '🗑️';
+    delBtn.onclick = () => window.removeTag(name);
+
+    item.appendChild(left);
+    item.appendChild(delBtn);
+    container.appendChild(item);
+  });
 }
 
 /**
@@ -617,51 +687,103 @@ function filterMembers() {
           沒有符合條件的會員
         </td>
       </tr>
-    `;
+    `; // safe: no user input
     return;
   }
 
-  tbody.innerHTML = filtered.map(m => `
-    <tr>
-      <td><input type="checkbox" class="member-checkbox" value="${m.memberId}"></td>
-      <td>
-        <div class="d-flex align-items-center">
-          ${m.pictureUrl ? `<img src="${m.pictureUrl}" class="rounded-circle me-2" width="32" height="32">` : ''}
-          <div>
-            <div class="fw-bold">${m.name || m.lineName || '未設定'}</div>
-            ${m.email ? `<small class="text-muted">${m.email}</small>` : ''}
-          </div>
-        </div>
-      </td>
-      <td>
-        <span class="badge" style="background-color: ${getTierColor(m.tier)}">
-          ${getTierIcon(m.tier)} ${getTierName(m.tier)}
-        </span>
-      </td>
-      <td>${m.phone || '-'}</td>
-      <td>
-        ${(m.tags || []).map(tag => `<span class="badge bg-secondary me-1">${tag}</span>`).join('') || '-'}
-      </td>
-      <td>
-        <span class="badge bg-${getTempColor(m.temperature)}">
-          ${getTempIcon(m.temperature)} ${m.temperature || 'warm'}
-        </span>
-      </td>
-      <td>
-        <span class="badge bg-${m.status === 'active' ? 'success' : 'secondary'}">
-          ${m.status}
-        </span>
-      </td>
-      <td>
-        <button class="btn btn-sm btn-outline-primary" onclick="window.editMember('${m.memberId}')">
-          編輯
-        </button>
-        <button class="btn btn-sm btn-outline-danger" onclick="window.deleteMember('${m.memberId}')">
-          刪除
-        </button>
-      </td>
-    </tr>
-  `).join('');
+  tbody.innerHTML = ''; // safe: clear
+  filtered.forEach(m => {
+    const tr = document.createElement('tr');
+
+    const tdCheck = document.createElement('td');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'member-checkbox';
+    cb.value = m.memberId;
+    tdCheck.appendChild(cb);
+    tr.appendChild(tdCheck);
+
+    const tdName = document.createElement('td');
+    const nameWrapper = document.createElement('div');
+    nameWrapper.className = 'd-flex align-items-center';
+    if (m.pictureUrl) {
+      const img = document.createElement('img');
+      img.src = m.pictureUrl;
+      img.className = 'rounded-circle me-2';
+      img.width = 32;
+      img.height = 32;
+      nameWrapper.appendChild(img);
+    }
+    const nameInner = document.createElement('div');
+    const nameDiv = document.createElement('div');
+    nameDiv.className = 'fw-bold';
+    nameDiv.textContent = m.name || m.lineName || '未設定';
+    nameInner.appendChild(nameDiv);
+    if (m.email) {
+      const small = document.createElement('small');
+      small.className = 'text-muted';
+      small.textContent = m.email;
+      nameInner.appendChild(small);
+    }
+    nameWrapper.appendChild(nameInner);
+    tdName.appendChild(nameWrapper);
+    tr.appendChild(tdName);
+
+    const tdTier = document.createElement('td');
+    const tierBadge = document.createElement('span');
+    tierBadge.className = 'badge';
+    tierBadge.style.backgroundColor = getTierColor(m.tier);
+    tierBadge.textContent = `${getTierIcon(m.tier)} ${getTierName(m.tier)}`;
+    tdTier.appendChild(tierBadge);
+    tr.appendChild(tdTier);
+
+    const tdPhone = document.createElement('td');
+    tdPhone.textContent = m.phone || '-';
+    tr.appendChild(tdPhone);
+
+    const tdTags = document.createElement('td');
+    const tagsArr = m.tags || [];
+    if (tagsArr.length > 0) {
+      tagsArr.forEach(tag => {
+        const span = document.createElement('span');
+        span.className = 'badge bg-secondary me-1';
+        span.textContent = tag;
+        tdTags.appendChild(span);
+      });
+    } else {
+      tdTags.textContent = '-';
+    }
+    tr.appendChild(tdTags);
+
+    const tdTemp = document.createElement('td');
+    const tempBadge = document.createElement('span');
+    tempBadge.className = `badge bg-${getTempColor(m.temperature)}`;
+    tempBadge.textContent = `${getTempIcon(m.temperature)} ${m.temperature || 'warm'}`;
+    tdTemp.appendChild(tempBadge);
+    tr.appendChild(tdTemp);
+
+    const tdStatus = document.createElement('td');
+    const statusBadge = document.createElement('span');
+    statusBadge.className = `badge bg-${m.status === 'active' ? 'success' : 'secondary'}`;
+    statusBadge.textContent = m.status;
+    tdStatus.appendChild(statusBadge);
+    tr.appendChild(tdStatus);
+
+    const tdActions = document.createElement('td');
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn btn-sm btn-outline-primary';
+    editBtn.textContent = '編輯';
+    editBtn.onclick = () => window.editMember(m.memberId);
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-sm btn-outline-danger';
+    delBtn.textContent = '刪除';
+    delBtn.onclick = () => window.deleteMember(m.memberId);
+    tdActions.appendChild(editBtn);
+    tdActions.appendChild(delBtn);
+    tr.appendChild(tdActions);
+
+    tbody.appendChild(tr);
+  });
 }
 
 /**

@@ -593,12 +593,20 @@ function createStatCell(value, color) {
 
 async function fetchKeywordReplyList(userId) {
   const json = await api.get('/keyword/list');
-  const list = json.data || [];
+  const raw = json.data || [];
 
-  // Debug: 查看載入的資料
-  list.forEach((item, index) => {
-    if (item.quickReplyId) {
+  // Normalize: convert old { replyType, replyContent } format → new { replies: [...] } format
+  const list = raw.map(item => {
+    if (!Array.isArray(item.replies)) {
+      if (item.replyType === 'text') {
+        item.replies = [{ type: 'text', text: item.replyContent || '' }];
+      } else if (item.replyType) {
+        item.replies = [{ type: item.replyType, text: item.replyContent || '' }];
+      } else {
+        item.replies = [];
+      }
     }
+    return item;
   });
 
   return list;
@@ -626,7 +634,7 @@ async function loadQRTemplates(selectedId = null) {
   if (!select) return;
 
   // 重設下拉選單
-  select.innerHTML = '<option value="">-- 不附加 Quick Reply --</option>';
+  select.innerHTML = '<option value="">-- 不附加 Quick Reply --</option>'; // safe: static placeholder option
   if (previewArea) previewArea.style.display = 'none';
 
   try {
@@ -701,7 +709,7 @@ function showQRPreview(qrId) {
   }
 
   // 清空並渲染按鈕預覽
-  buttonsContainer.innerHTML = '';
+  buttonsContainer.innerHTML = ''; // safe: clear
   qr.items.forEach(item => {
     const btn = document.createElement('span');
     btn.className = 'badge bg-primary';

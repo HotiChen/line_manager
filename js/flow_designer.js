@@ -8,6 +8,7 @@ import { showLoader, hideLoader } from './shared/loader.js';
 import { dataLoader } from './flow_designer_data_loader.js';
 import FlowNodeAdapter from './flow_node_adapter.js';
 import { ApiClient as api } from '../helper/api.client.js';
+import { setInnerHTML } from '../helper/security.js';
 
 function escapeHtml(str) {
     if (typeof str !== 'string') return str;
@@ -775,7 +776,7 @@ export class FlowDesigner {
         <i class="bi bi-1-square" style="color: #27ae60"></i>
         <span>100%</span>
         ${this.canvasZoom === 1.0 ? '<i class="bi bi-check-lg" style="color: #27ae60; margin-left: auto;"></i>' : ''}
-    `;
+    `; // safe: static icons; canvasZoom is a numeric JS float
         zoom100Item.onclick = () => {
             this.setZoom(1.0, x, y);
             menu.remove();
@@ -789,7 +790,7 @@ export class FlowDesigner {
         <i class="bi bi-app" style="color: #16a085"></i>
         <span>75%</span>
         ${this.canvasZoom === 0.75 ? '<i class="bi bi-check-lg" style="color: #27ae60; margin-left: auto;"></i>' : ''}
-    `;
+    `; // safe: static icons; canvasZoom is a numeric JS float
         zoom75Item.onclick = () => {
             this.setZoom(0.75, x, y);
             menu.remove();
@@ -803,7 +804,7 @@ export class FlowDesigner {
         <i class="bi bi-zoom-out" style="color: #3498db"></i>
         <span>50%</span>
         ${this.canvasZoom === 0.5 ? '<i class="bi bi-check-lg" style="color: #27ae60; margin-left: auto;"></i>' : ''}
-    `;
+    `; // safe: static icons; canvasZoom is a numeric JS float
         zoom50Item.onclick = () => {
             this.setZoom(0.5, x, y);
             menu.remove();
@@ -817,7 +818,7 @@ export class FlowDesigner {
         <i class="bi bi-dash-square" style="color: #e67e22"></i>
         <span>25%</span>
         ${this.canvasZoom === 0.25 ? '<i class="bi bi-check-lg" style="color: #27ae60; margin-left: auto;"></i>' : ''}
-    `;
+    `; // safe: static icons; canvasZoom is a numeric JS float
         zoom25Item.onclick = () => {
             this.setZoom(0.25, x, y);
             menu.remove();
@@ -830,7 +831,7 @@ export class FlowDesigner {
         fitScreenItem.innerHTML = `
         <i class="bi bi-arrows-fullscreen" style="color: #9b59b6"></i>
         <span>適應畫布</span>
-    `;
+    `; // safe: static icon + hardcoded text
         fitScreenItem.onclick = () => {
             this.fitScreen();
             menu.remove();
@@ -868,7 +869,7 @@ export class FlowDesigner {
                     item.innerHTML = `
                         <i class="bi ${config.icon}" style="color: ${config.color}"></i>
                         <span>${config.label}</span>
-                    `;
+                    `; // safe: config.icon, config.color, config.label are all from NodeTypeConfig constant
                     item.onclick = () => {
                         // ✅ 考慮縮放：將螢幕座標轉換為畫布座標
                         const actualCanvasX = canvasX / this.canvasZoom;
@@ -1193,7 +1194,7 @@ export class FlowDesigner {
             }
         }
 
-        nodeElement.innerHTML = innerHTML;
+        setInnerHTML(nodeElement, innerHTML);
 
         // 點擊選中
         nodeElement.onclick = (e) => {
@@ -1305,7 +1306,7 @@ export class FlowDesigner {
                         console.error('[Flex Render] createNameCardComponent 尚未載入');
                         const container = document.getElementById(flexContainerId);
                         if (container) {
-                            container.innerHTML = '<div style="color: orange; font-size: 10px;">等待模組載入...</div>';
+                            container.innerHTML = '<div style="color: orange; font-size: 10px;">等待模組載入...</div>'; // safe: static message, no user input
                         }
                         // 重試一次
                         setTimeout(() => {
@@ -1325,7 +1326,7 @@ export class FlowDesigner {
                     }
 
                     // 清空容器
-                    container.innerHTML = '';
+                    container.innerHTML = ''; // safe: clear before appending flex rendered components
 
                     // 如果是 carousel，使用正確的 Carousel 結構
                     if (node.data.contents.type === 'carousel' && Array.isArray(node.data.contents.contents)) {
@@ -1380,7 +1381,11 @@ export class FlowDesigner {
                     console.error('[Flex Render] Error stack:', error.stack);
                     const container = document.getElementById(flexContainerId);
                     if (container) {
-                        container.innerHTML = '<div style="color: red; font-size: 10px;">渲染失敗: ' + error.message + '</div>';
+                        const errDiv = document.createElement('div');
+                        errDiv.style.color = 'red';
+                        errDiv.style.fontSize = '10px';
+                        errDiv.textContent = '渲染失敗: ' + error.message;
+                        container.appendChild(errDiv);
                     }
                 }
             }, 10);
@@ -2054,7 +2059,7 @@ export class FlowDesigner {
                     style="border:none; background:none; cursor:pointer; color:#aaa; font-size:16px;">✕</button>
             </div>
             <div id="flow-search-results" style="max-height:280px; overflow-y:auto;"></div>
-        `;
+        `; // safe: static search panel skeleton, no user input
         document.body.appendChild(panel);
         this.searchPanel = panel;
 
@@ -2076,7 +2081,7 @@ export class FlowDesigner {
     _performSearch(query) {
         const resultsEl = document.getElementById('flow-search-results');
         if (!resultsEl) return;
-        if (!query.trim()) { resultsEl.innerHTML = ''; return; }
+        if (!query.trim()) { resultsEl.innerHTML = ''; return; } // safe: clear
 
         const lq = query.toLowerCase();
         const matches = this.nodes.filter(n => {
@@ -2087,20 +2092,35 @@ export class FlowDesigner {
         });
 
         if (matches.length === 0) {
-            resultsEl.innerHTML = '<div style="padding:10px; color:#999; text-align:center;">找不到節點</div>';
+            resultsEl.innerHTML = '<div style="padding:10px; color:#999; text-align:center;">找不到節點</div>'; // safe: static message, no user input
             return;
         }
-        resultsEl.innerHTML = matches.map(n => `
-            <div onclick="flowDesigner.focusOnNode('${n.id}'); flowDesigner.hideSearch();"
-                 style="padding:10px 12px; cursor:pointer; border-radius:6px; display:flex; gap:10px; align-items:center;"
-                 onmouseenter="this.style.background='#f0f4ff'" onmouseleave="this.style.background='white'">
-                <i class="bi ${n.config.icon}" style="color:${n.config.color}; font-size:18px;"></i>
-                <div>
-                    <div style="font-weight:500;">${escapeHtml(n.data.label || n.data.name || n.config.label)}</div>
-                    <div style="font-size:11px; color:#999;">${n.config.label}</div>
-                </div>
-            </div>
-        `).join('');
+        resultsEl.innerHTML = ''; // safe: clear
+        matches.forEach(n => {
+            const itemDiv = document.createElement('div');
+            itemDiv.style.cssText = 'padding:10px 12px; cursor:pointer; border-radius:6px; display:flex; gap:10px; align-items:center;';
+            itemDiv.onclick = () => { flowDesigner.focusOnNode(n.id); flowDesigner.hideSearch(); };
+            itemDiv.onmouseenter = () => { itemDiv.style.background = '#f0f4ff'; };
+            itemDiv.onmouseleave = () => { itemDiv.style.background = 'white'; };
+
+            const icon = document.createElement('i');
+            icon.className = `bi ${n.config.icon}`; // safe: from NodeTypeConfig constant
+            icon.style.cssText = `color:${n.config.color}; font-size:18px;`; // safe: NodeTypeConfig constant
+
+            const textDiv = document.createElement('div');
+            const nameDiv = document.createElement('div');
+            nameDiv.style.fontWeight = '500';
+            nameDiv.textContent = n.data.label || n.data.name || n.config.label;
+            const typeDiv = document.createElement('div');
+            typeDiv.style.cssText = 'font-size:11px; color:#999;';
+            typeDiv.textContent = n.config.label; // safe: from NodeTypeConfig constant
+
+            textDiv.appendChild(nameDiv);
+            textDiv.appendChild(typeDiv);
+            itemDiv.appendChild(icon);
+            itemDiv.appendChild(textDiv);
+            resultsEl.appendChild(itemDiv);
+        });
     }
 
     // ─────────────────────────────────────────────
@@ -2766,15 +2786,15 @@ export class FlowDesigner {
         const properties = document.getElementById('node-properties');
 
         sidebar.classList.add('show');
-        properties.innerHTML = `
-                < h6 > <i class="bi ${node.config.icon}"></i> ${node.config.label}</h6 >
+        setInnerHTML(properties, `
+                <h6><i class="bi ${node.config.icon}"></i> ${node.config.label}</h6>
             <p class="text-muted small">${node.config.description}</p>
             <hr>
             ${this.renderNodeProperties(node)}
             <button class="btn btn-sm btn-danger w-100 mt-3" onclick="flowDesigner.deleteNode('${nodeId}')">
                 <i class="bi bi-trash"></i> 刪除節點
             </button>
-        `;
+        `);
     }
 
     /**
@@ -4564,7 +4584,7 @@ export class FlowDesigner {
             overflow: auto;
             z-index: 10000;
         `;
-        modal.innerHTML = htmlOutput;
+        setInnerHTML(modal, htmlOutput);
 
         // 添加關閉按鈕
         const closeBtn = document.createElement('button');
@@ -4924,7 +4944,7 @@ export class FlowDesigner {
 
         // 設置內容
         modalTitle.textContent = title;
-        modalBody.innerHTML = `<p class="mb-0">${message}</p>`;
+        setInnerHTML(modalBody, `<p class="mb-0">${message}</p>`);
 
         // 建立 Bootstrap Modal 實例
         const bsModal = new bootstrap.Modal(modal);
@@ -4972,7 +4992,7 @@ export class FlowDesigner {
         const content = document.getElementById('flexPreviewContent');
 
         // 清空內容
-        content.innerHTML = '';
+        content.innerHTML = ''; // safe: clear
 
         try {
             // 檢查 flex2html 是否已載入
@@ -4991,7 +5011,7 @@ export class FlowDesigner {
 
             // 建立一個唯一的容器 ID
             const containerId = `flex-preview-${Date.now()}`;
-            content.innerHTML = `<div id="${containerId}"></div>`;
+            content.innerHTML = `<div id="${containerId}"></div>`; // safe: containerId = 'flex-preview-' + Date.now(), no user input
 
             // 使用 flex2html 渲染
             flex2html(containerId, flexMessage);
@@ -5005,12 +5025,15 @@ export class FlowDesigner {
         } catch (error) {
             console.error('Flex Message 渲染錯誤:', error);
             toast.error('Flex Message 渲染失敗: ' + error.message);
-            content.innerHTML = `
-                <div class="alert alert-danger">
-                    <strong>渲染錯誤</strong><br>
-                    ${error.message}
-                </div>
-            `;
+            {
+                const errAlert = document.createElement('div');
+                errAlert.className = 'alert alert-danger';
+                errAlert.innerHTML = '<strong>渲染錯誤</strong><br>'; // safe: static text only
+                const errMsg = document.createTextNode(error.message);
+                errAlert.appendChild(errMsg);
+                content.innerHTML = ''; // safe: clear
+                content.appendChild(errAlert);
+            }
         }
     }
 
@@ -5216,7 +5239,7 @@ async function initializeFlowSelectors() {
         const botData = await api.get('/token/list');
 
         // 填充 Bot 下拉選單
-        botSelect.innerHTML = '<option value="">選擇帳號...</option>';
+        botSelect.innerHTML = '<option value="">選擇帳號...</option>'; // safe: static placeholder option
         Object.keys(botData).forEach(botName => {
             const option = document.createElement('option');
             option.value = botName;

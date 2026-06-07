@@ -200,9 +200,10 @@ export async function handlePreviewInvite(request, env) {
 
 /**
  * 接受邀請 (不需要 withPermission，因為是新成員)
+ * userId 由 router 從認證 context 傳入，body 的 userId 欄位被忽略（SEC-001）
  */
-export async function handleAcceptInvite(request, env) {
-    const { token, userId, displayName, pictureUrl } = await request.json();
+export async function handleAcceptInvite(request, env, userId) {
+    const { token, displayName, pictureUrl } = await request.json();
 
     if (!token || !userId) {
         return jsonResponse({ error: "Missing token or userId" }, 400);
@@ -399,9 +400,9 @@ export function route(request, env, userId, pathname) {
         return handlePreviewInvite(request, env);
     }
 
-    // 接受邀請 (公開 API，不需要 checkPermission，但需要 userId)
+    // 接受邀請 (需要認證，userId 由 router 傳入，body 的 userId 被忽略)
     if (pathname === "/team/invite/accept" && request.method === "POST") {
-        return handleAcceptInvite(request, env);
+        return handleAcceptInvite(request, env, userId);
     }
 
     return jsonResponse({ error: "Not found" }, 404);

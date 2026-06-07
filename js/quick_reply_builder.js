@@ -8,6 +8,7 @@ import { toast } from '../helper/toast.js';
 import { LoadingManager } from './shared/loader.js';
 import { showConfirm } from '../helper/modal.helper.js';
 import { createQuickReplyEditor, getQuickReplyData, parseQuickReplyData } from '../helper/quick-reply.helper.js';
+import { setInnerHTML } from '../helper/security.js';
 
 // 當前編輯的 Quick Reply
 let currentEditId = null;
@@ -65,45 +66,65 @@ function renderQuickReplyList() {
         <i class="bi bi-lightning-charge" style="font-size: 3rem;"></i>
         <p class="mt-2">尚無快速回覆，點擊上方按鈕新增</p>
       </div>
-    `;
+    `; // safe: no user input — static empty state UI
         return;
     }
 
-    container.innerHTML = quickReplyList.map((item, index) => {
-        // 生成 Reply 預覽 - 正確處理 LINE QR 格式
-        const replyPreviewHTML = item.items && item.items.length > 0
-            ? `<div class="quick-reply-preview mt-2">
-                ${item.items.map(reply => {
-                // LINE Quick Reply 格式: reply.action 包含實際的動作資料
+    container.innerHTML = ''; // safe: clear
+    quickReplyList.forEach((item, index) => {
+        const itemDiv = document.createElement('div');
+        itemDiv.className = 'quick-reply-list-item';
+        itemDiv.dataset.id = item.id;
+
+        const leftDiv = document.createElement('div');
+        leftDiv.style.flex = '1';
+
+        const nameStrong = document.createElement('strong');
+        nameStrong.textContent = item.name;
+        leftDiv.appendChild(nameStrong);
+
+        const metaDiv = document.createElement('div');
+        metaDiv.className = 'text-muted small';
+        metaDiv.textContent = `${item.items?.length || 0} 個按鈕`;
+        const dateSpan = document.createElement('span');
+        dateSpan.className = 'ms-2';
+        dateSpan.textContent = formatDate(item.updatedAt || item.createdAt);
+        metaDiv.appendChild(dateSpan);
+        leftDiv.appendChild(metaDiv);
+
+        // Reply preview buttons
+        if (item.items && item.items.length > 0) {
+            const previewDiv = document.createElement('div');
+            previewDiv.className = 'quick-reply-preview mt-2';
+            item.items.forEach(reply => {
                 const action = reply.action || reply;
                 const icon = action.type === 'message' ? '💬' : (action.type === 'uri' ? '🔗' : '📦');
                 const displayText = action.label || action.text || action.uri || action.data || '按鈕';
-                return `<span class="qr-preview-btn" title="${displayText}">${icon} ${displayText}</span>`;
-            }).join('')}
-            </div>`
-            : '';
+                const btnSpan = document.createElement('span');
+                btnSpan.className = 'qr-preview-btn';
+                btnSpan.title = displayText;
+                btnSpan.textContent = `${icon} ${displayText}`;
+                previewDiv.appendChild(btnSpan);
+            });
+            leftDiv.appendChild(previewDiv);
+        }
 
-        return `
-        <div class="quick-reply-list-item" data-id="${item.id}">
-          <div style="flex: 1;">
-            <strong>${item.name}</strong>
-            <div class="text-muted small">
-              ${item.items?.length || 0} 個按鈕
-              <span class="ms-2">${formatDate(item.updatedAt || item.createdAt)}</span>
-            </div>
-            ${replyPreviewHTML}
-          </div>
-          <div>
-            <button class="btn btn-sm btn-outline-primary edit-btn me-1" data-index="${index}">
-              <i class="bi bi-pencil"></i>
-            </button>
-            <button class="btn btn-sm btn-outline-danger delete-btn" data-index="${index}">
-              <i class="bi bi-trash"></i>
-            </button>
-          </div>
-        </div>
-    `;
-    }).join('');
+        const rightDiv = document.createElement('div');
+        const editBtn = document.createElement('button');
+        editBtn.className = 'btn btn-sm btn-outline-primary edit-btn me-1';
+        editBtn.dataset.index = String(index);
+        editBtn.innerHTML = '<i class="bi bi-pencil"></i>'; // safe: static icon only
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn btn-sm btn-outline-danger delete-btn';
+        deleteBtn.dataset.index = String(index);
+        deleteBtn.innerHTML = '<i class="bi bi-trash"></i>'; // safe: static icon only
+        rightDiv.appendChild(editBtn);
+        rightDiv.appendChild(deleteBtn);
+
+        itemDiv.appendChild(leftDiv);
+        itemDiv.appendChild(rightDiv);
+        container.appendChild(itemDiv);
+    });
 
     // 綁定編輯和刪除事件
     container.querySelectorAll('.edit-btn').forEach(btn => {
@@ -164,7 +185,7 @@ function openEditModal(item) {
 
     // 建立編輯器
     const editorContainer = document.getElementById('quick-reply-editor-container');
-    editorContainer.innerHTML = '';
+    editorContainer.innerHTML = ''; // safe: clear before building editor
 
     quickReplyEditor = createQuickReplyEditor({
         initialItems: item?.items ? parseQuickReplyData({ items: item.items }) : [],
@@ -188,22 +209,28 @@ function updatePreview(items) {
     const preview = document.getElementById('quick-reply-preview');
 
     if (!items || items.length === 0) {
-        preview.innerHTML = '<div class="text-muted text-center">新增按鈕後這裡會顯示預覽</div>';
+        preview.innerHTML = '<div class="text-muted text-center">新增按鈕後這裡會顯示預覽</div>'; // safe: no user input
         return;
     }
 
-    const buttons = items.map(item => {
+    preview.innerHTML = ''; // safe: clear
+    const wrapper = document.createElement('div');
+    wrapper.className = 'text-center';
+    const label = document.createElement('div');
+    label.className = 'text-muted small mb-2';
+    label.textContent = 'Quick Reply 預覽';
+    wrapper.appendChild(label);
+    const btnRow = document.createElement('div');
+    items.forEach(item => {
         const action = item.action || item;
-        const label = action.label || action.text || action.type;
-        return `<span class="quick-reply-preview-btn">${label}</span>`;
-    }).join('');
-
-    preview.innerHTML = `
-    <div class="text-center">
-      <div class="text-muted small mb-2">Quick Reply 預覽</div>
-      <div>${buttons}</div>
-    </div>
-  `;
+        const btnLabel = action.label || action.text || action.type;
+        const span = document.createElement('span');
+        span.className = 'quick-reply-preview-btn';
+        span.textContent = btnLabel;
+        btnRow.appendChild(span);
+    });
+    wrapper.appendChild(btnRow);
+    preview.appendChild(wrapper);
 }
 
 /**
@@ -278,7 +305,7 @@ async function deleteQuickReply(index) {
 
     // 嘗試從後端刪除
     try {
-        await api.delete(`/quickreply/delete/${item.id}`);
+        await api.post(`/quickreply/delete`, { id: item.id });
     } catch (error) {
         console.warn('後端刪除失敗');
     }

@@ -2,7 +2,9 @@ import { getAssetFromKV } from "@cloudflare/kv-asset-handler";
 import manifestJSON from "__STATIC_CONTENT_MANIFEST";
 const assetManifest = JSON.parse(manifestJSON);
 
-import { jsonResponse } from "./lib/utils.js";
+import { jsonResponse, getCorsHeaders } from "./lib/utils.js";
+import { authenticate } from "./middleware/auth.js";
+import { rateLimitMiddleware } from "./middleware/rate_limiter.js";
 import * as KeywordReplyHandler from "./handler/keyword_reply.js";
 import * as TagHandler from "./handler/tag.js";
 import * as routeMember from "./handler/member.js";
@@ -24,6 +26,7 @@ import * as webhookHandlers from "./handler/webhook.js";
 import * as segmentedRichMenuHandlers from "./handler/segmented_richmenu.js";
 import { handleTagQueue } from "./queue/tag_consumer.js";
 import * as TierHandler from "./handler/tier.js";
+import * as FlowHandler from "./handler/flow.js";
 
 
 export default {
@@ -36,9 +39,7 @@ export default {
       return new Response(null, {
         status: 204,
         headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, X-User-Id, X-Bot-Id, Authorization",
+          ...getCorsHeaders(request, env),
           "Access-Control-Max-Age": "86400",
         },
       });
@@ -62,6 +63,7 @@ export default {
       pathname.startsWith("/quick_reply") ||
       pathname.startsWith("/admin") ||
       pathname.startsWith("/tier") ||
+      pathname.startsWith("/flow") ||
       pathname.startsWith("/stats") ||
       pathname.startsWith("/debug") ||
       pathname.startsWith("/api") ||
@@ -87,30 +89,43 @@ export default {
       }
     }
 
-    // 2️⃣ API 請求處理
-    // 🔹 取得 `userId`（優先從 Header X-User-Id，次之從 Query Param userId）
-    let userId = request.headers.get("X-User-Id") || url.searchParams.get("userId");
+    // 2️⃣ API 請求處理 — 使用 auth middleware 驗證身份
+    // /team/invite/preview は公開エンドポイント（認証不要）、それ以外の /team/* は認証必須（SEC-001）
+    const requiresAuth = pathname.startsWith("/token") || pathname.startsWith("/richmenu") || pathname.startsWith("/alias") ||
+      pathname.startsWith("/flex") || pathname.startsWith("/imagemap") || pathname.startsWith("/profile") ||
+      pathname.startsWith("/member") || pathname.startsWith("/keyword") ||
+      pathname.startsWith("/tag") || pathname.startsWith("/quickreply") || pathname.startsWith("/quick_reply") ||
+      pathname.startsWith("/tier") || pathname.startsWith("/flow") || pathname.startsWith("/stats") ||
+      pathname.startsWith("/user/bot") || pathname.startsWith("/image") ||
+      // /team routes — exclude /team/invite/preview which is public
+      (pathname.startsWith("/team") && pathname !== "/team/invite/preview");
 
-    // 🔹 統一 API 路由模組化處理
-    if (!userId) {
-      if (pathname.startsWith("/token") || pathname.startsWith("/richmenu") || pathname.startsWith("/alias") ||
-        pathname.startsWith("/flex") || pathname.startsWith("/imagemap") || pathname.startsWith("/profile") ||
-        pathname.startsWith("/member") || pathname.startsWith("/team") || pathname.startsWith("/keyword") ||
-        pathname.startsWith("/tag") || pathname.startsWith("/quickreply") ||
-        pathname.startsWith("/tier") || pathname.startsWith("/stats")) {
-        return jsonResponse({ error: "Missing User ID (X-User-Id header or userId param)" }, 401);
+    let userId = null;
+
+    if (requiresAuth) {
+      const auth = await authenticate(request, env);
+      if (!auth.authenticated) {
+        return jsonResponse({ error: auth.error || "Unauthorized" }, 401, request, env);
       }
+      userId = auth.userId;
+
+      // Rate limiting（已驗證的用戶）
+      const rateLimitResponse = await rateLimitMiddleware(env, userId);
+      if (rateLimitResponse) return rateLimitResponse;
+    } else {
+      // 非認證 API（如 webhook、debug、admin），從 header 取得 userId（可選）
+      userId = request.headers.get("X-User-Id") || url.searchParams.get("userId");
     }
 
     // 🆕 等級系統 API (最優先處理)
     if (pathname.startsWith("/tier")) {
       if (request.method === "OPTIONS") return jsonResponse({}, 200);
       if (pathname === "/tier/config") {
-        if (request.method === "GET") return TierHandler.handleGetTierConfig(request, env);
-        if (request.method === "POST") return TierHandler.handleUpdateTierConfig(request, env);
+        if (request.method === "GET") return TierHandler.handleGetTierConfig(request, env, userId);
+        if (request.method === "POST") return TierHandler.handleUpdateTierConfig(request, env, userId);
       }
-      if (pathname === "/tier/set") return TierHandler.handleSetMemberTier(request, env);
-      if (pathname === "/tier/stats") return TierHandler.handleGetTierStats(request, env);
+      if (pathname === "/tier/set") return TierHandler.handleSetMemberTier(request, env, userId);
+      if (pathname === "/tier/stats") return TierHandler.handleGetTierStats(request, env, userId);
     }
 
     // 統計相關 API (Support legacy path and new path)
@@ -134,6 +149,7 @@ export default {
     if (pathname.startsWith("/image")) return imageHandler.route(request, env, userId, pathname, url);
     if (pathname.startsWith("/team")) return TeamHandler.route(request, env, userId, pathname);
     if (pathname.startsWith("/user/bot")) return BotHandler.route(request, env, userId, pathname);
+    if (pathname.startsWith("/flow")) return FlowHandler.route(request, env, userId, pathname);
     if (pathname.startsWith("/quickreply")) return QuickReplyHandler.route(request, env, userId, pathname);
     if (pathname === "/api/webhook") return webhookHandlers.handleWebhookRequest(request, env, ctx);
     if (pathname.startsWith("/api")) return pushMessageHandlers.route(request, env, userId, pathname);

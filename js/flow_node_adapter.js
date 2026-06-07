@@ -509,39 +509,68 @@ export class FlowNodeAdapter {
         if (!node.data.conditions) node.data.conditions = [{ field: 'text', operator: 'equals', value: '' }];
 
         const renderConditions = () => {
-            container.innerHTML = '<label class="form-label">判斷條件</label>';
+            container.innerHTML = '<label class="form-label">判斷條件</label>'; // safe: no user input
             node.data.conditions.forEach((cond, index) => {
                 const row = document.createElement('div');
                 row.className = 'card p-2 mb-2 bg-light';
-                row.innerHTML = `
-                    <div class="mb-2">
-                        <select class="form-select form-select-sm cond-field" data-index="${index}">
-                            <option value="text" ${cond.field === 'text' ? 'selected' : ''}>文字內容</option>
-                            <option value="userId" ${cond.field === 'userId' ? 'selected' : ''}>使用者 ID</option>
-                            <option value="tag" ${cond.field === 'tag' ? 'selected' : ''}>標籤</option>
-                        </select>
-                    </div>
-                    <div class="mb-2">
-                        <select class="form-select form-select-sm cond-op" data-index="${index}">
-                            <option value="equals" ${cond.operator === 'equals' ? 'selected' : ''}>等於</option>
-                            <option value="contains" ${cond.operator === 'contains' ? 'selected' : ''}>包含</option>
-                            <option value="regex" ${cond.operator === 'regex' ? 'selected' : ''}>正則匹配</option>
-                        </select>
-                    </div>
-                    <div class="mb-2">
-                        <input type="text" class="form-control form-control-sm cond-val" 
-                               placeholder="值..." value="${cond.value}" data-index="${index}">
-                    </div>
-                    <button class="btn btn-sm btn-outline-danger w-100 btn-del-cond" data-index="${index}">
-                        <i class="bi bi-trash"></i> 刪除
-                    </button>
-                `;
+
+                // Field select (all options are hardcoded)
+                const fieldDiv = document.createElement('div');
+                fieldDiv.className = 'mb-2';
+                const fieldSel = document.createElement('select');
+                fieldSel.className = 'form-select form-select-sm cond-field';
+                fieldSel.dataset.index = String(index);
+                [['text', '文字內容'], ['userId', '使用者 ID'], ['tag', '標籤']].forEach(([val, text]) => {
+                    const opt = document.createElement('option');
+                    opt.value = val;
+                    opt.textContent = text;
+                    if (cond.field === val) opt.selected = true;
+                    fieldSel.appendChild(opt);
+                });
+                fieldDiv.appendChild(fieldSel);
+                row.appendChild(fieldDiv);
+
+                // Operator select (all options are hardcoded)
+                const opDiv = document.createElement('div');
+                opDiv.className = 'mb-2';
+                const opSel = document.createElement('select');
+                opSel.className = 'form-select form-select-sm cond-op';
+                opSel.dataset.index = String(index);
+                [['equals', '等於'], ['contains', '包含'], ['regex', '正則匹配']].forEach(([val, text]) => {
+                    const opt = document.createElement('option');
+                    opt.value = val;
+                    opt.textContent = text;
+                    if (cond.operator === val) opt.selected = true;
+                    opSel.appendChild(opt);
+                });
+                opDiv.appendChild(opSel);
+                row.appendChild(opDiv);
+
+                // Value input — use .value property (not attribute) to safely set user data
+                const valDiv = document.createElement('div');
+                valDiv.className = 'mb-2';
+                const valInput = document.createElement('input');
+                valInput.type = 'text';
+                valInput.className = 'form-control form-control-sm cond-val';
+                valInput.placeholder = '值...';
+                valInput.dataset.index = String(index);
+                valInput.value = cond.value; // safe: .value property assignment, not innerHTML
+                valDiv.appendChild(valInput);
+                row.appendChild(valDiv);
+
+                // Delete button
+                const delBtn = document.createElement('button');
+                delBtn.className = 'btn btn-sm btn-outline-danger w-100 btn-del-cond';
+                delBtn.dataset.index = String(index);
+                delBtn.innerHTML = '<i class="bi bi-trash"></i> 刪除'; // safe: static icon + text
+                row.appendChild(delBtn);
+
                 container.appendChild(row);
             });
 
             const addBtn = document.createElement('button');
             addBtn.className = 'btn btn-sm btn-outline-primary w-100 mb-3';
-            addBtn.innerHTML = '<i class="bi bi-plus"></i> 新增條件';
+            addBtn.innerHTML = '<i class="bi bi-plus"></i> 新增條件'; // safe: static icon + text
             addBtn.onclick = () => {
                 node.data.conditions.push({ field: 'text', operator: 'equals', value: '' });
                 renderConditions();
@@ -550,7 +579,7 @@ export class FlowNodeAdapter {
 
             const saveBtn = document.createElement('button');
             saveBtn.className = 'btn btn-primary w-100';
-            saveBtn.innerHTML = '<i class="bi bi-check-lg"></i> 儲存條件';
+            saveBtn.innerHTML = '<i class="bi bi-check-lg"></i> 儲存條件'; // safe: static icon + text
             saveBtn.onclick = () => {
                 // 收集資料
                 container.querySelectorAll('.cond-field').forEach(el => {
@@ -595,31 +624,75 @@ export class FlowNodeAdapter {
         if (!node.data.headers) node.data.headers = '{}';
         if (!node.data.body) node.data.body = '{}';
 
-        group.innerHTML = `
-            <div class="mb-3">
-                <label class="form-label">API URL</label>
-                <input type="text" id="api-url" class="form-control" placeholder="https://..." value="${node.data.url}">
-            </div>
-            <div class="mb-3">
-                <label class="form-label">Method</label>
-                <select id="api-method" class="form-select">
-                    <option value="GET" ${node.data.method === 'GET' ? 'selected' : ''}>GET</option>
-                    <option value="POST" ${node.data.method === 'POST' ? 'selected' : ''}>POST</option>
-                    <option value="PUT" ${node.data.method === 'PUT' ? 'selected' : ''}>PUT</option>
-                </select>
-            </div>
-            <div class="mb-3">
-                <label class="form-label">Headers (JSON)</label>
-                <textarea id="api-headers" class="form-control" rows="3">${node.data.headers}</textarea>
-            </div>
-            <div class="mb-3">
-                <label class="form-label">Body (JSON)</label>
-                <textarea id="api-body" class="form-control" rows="5">${node.data.body}</textarea>
-            </div>
-            <button class="btn btn-primary w-100" id="btn-save-api">
-                <i class="bi bi-check-lg"></i> 儲存 API 配置
-            </button>
-        `;
+        // Build API editor form using DOM to avoid XSS from node.data values
+        const urlGroup = document.createElement('div');
+        urlGroup.className = 'mb-3';
+        const urlLabel = document.createElement('label');
+        urlLabel.className = 'form-label';
+        urlLabel.textContent = 'API URL';
+        const urlInput = document.createElement('input');
+        urlInput.type = 'text';
+        urlInput.id = 'api-url';
+        urlInput.className = 'form-control';
+        urlInput.placeholder = 'https://...';
+        urlInput.value = node.data.url;
+        urlGroup.appendChild(urlLabel);
+        urlGroup.appendChild(urlInput);
+
+        const methodGroup = document.createElement('div');
+        methodGroup.className = 'mb-3';
+        const methodLabel = document.createElement('label');
+        methodLabel.className = 'form-label';
+        methodLabel.textContent = 'Method';
+        const methodSelect = document.createElement('select');
+        methodSelect.id = 'api-method';
+        methodSelect.className = 'form-select';
+        ['GET', 'POST', 'PUT'].forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m;
+            opt.textContent = m;
+            if (node.data.method === m) opt.selected = true;
+            methodSelect.appendChild(opt);
+        });
+        methodGroup.appendChild(methodLabel);
+        methodGroup.appendChild(methodSelect);
+
+        const headersGroup = document.createElement('div');
+        headersGroup.className = 'mb-3';
+        const headersLabel = document.createElement('label');
+        headersLabel.className = 'form-label';
+        headersLabel.textContent = 'Headers (JSON)';
+        const headersTextarea = document.createElement('textarea');
+        headersTextarea.id = 'api-headers';
+        headersTextarea.className = 'form-control';
+        headersTextarea.rows = 3;
+        headersTextarea.value = node.data.headers;
+        headersGroup.appendChild(headersLabel);
+        headersGroup.appendChild(headersTextarea);
+
+        const bodyGroup = document.createElement('div');
+        bodyGroup.className = 'mb-3';
+        const bodyLabel = document.createElement('label');
+        bodyLabel.className = 'form-label';
+        bodyLabel.textContent = 'Body (JSON)';
+        const bodyTextarea = document.createElement('textarea');
+        bodyTextarea.id = 'api-body';
+        bodyTextarea.className = 'form-control';
+        bodyTextarea.rows = 5;
+        bodyTextarea.value = node.data.body;
+        bodyGroup.appendChild(bodyLabel);
+        bodyGroup.appendChild(bodyTextarea);
+
+        const saveApiBtn = document.createElement('button');
+        saveApiBtn.className = 'btn btn-primary w-100';
+        saveApiBtn.id = 'btn-save-api';
+        saveApiBtn.innerHTML = '<i class="bi bi-check-lg"></i> 儲存 API 配置'; // safe: static icon only
+
+        group.appendChild(urlGroup);
+        group.appendChild(methodGroup);
+        group.appendChild(headersGroup);
+        group.appendChild(bodyGroup);
+        group.appendChild(saveApiBtn);
 
         form.appendChild(group);
 

@@ -3,6 +3,7 @@
  */
 import { api } from '../helper/api.client.js';
 import { toast } from '../helper/toast.js';
+import { setInnerHTML } from '../helper/security.js';
 
 let currentRules = [];
 let allTags = [];
@@ -68,7 +69,7 @@ async function loadInitialData() {
 function renderTagSelect() {
     const select = document.getElementById('tagSelect');
     if (!select) return;
-    select.innerHTML = '<option value="">請選擇標籤...</option>';
+    select.innerHTML = '<option value="">請選擇標籤...</option>'; // safe: static placeholder option
     allTags.forEach(tag => {
         const option = document.createElement('option');
         option.value = tag.name;
@@ -83,7 +84,7 @@ function renderTagSelect() {
 function renderRichMenuSelect() {
     const select = document.getElementById('richmenuSelect');
     if (!select) return;
-    select.innerHTML = '<option value="">請選擇對應選單...</option>';
+    select.innerHTML = '<option value="">請選擇對應選單...</option>'; // safe: static placeholder option
     allRichMenus.forEach(menu => {
         const option = document.createElement('option');
         option.value = menu.richMenuId;
@@ -155,34 +156,63 @@ function renderRuleList() {
                 <i class="fas fa-layer-group"></i>
                 <p>尚未建立分眾規則，點擊上方按鈕開始新增。</p>
             </div>
-        `;
+        `; // safe: static empty state, no user input
         return;
     }
 
-    container.innerHTML = '';
+    container.innerHTML = ''; // safe: clear
     currentRules.forEach((rule, index) => {
-        // 找出對應的選單名稱
         const menu = allRichMenus.find(m => m.richMenuId === rule.richMenuId);
         const menuName = menu ? menu.name : '未知選單 (可能是已被刪除)';
 
         const item = document.createElement('div');
         item.className = 'rule-item';
-        item.innerHTML = `
-            <div class="rule-priority">${rule.priority}</div>
-            <div class="rule-info">
-                <span class="rule-label">當標籤為</span>
-                <span class="rule-value"><span class="tag-badge">${rule.tag}</span></span>
-            </div>
-            <div class="rule-info">
-                <span class="rule-label">則顯示選單</span>
-                <span class="rule-value">${menuName}</span>
-            </div>
-            <div class="rule-actions">
-                <button class="delete-btn" onclick="deleteRule(${index})">
-                    <i class="fas fa-trash-alt"></i>
-                </button>
-            </div>
-        `;
+
+        // Priority
+        const priorityDiv = document.createElement('div');
+        priorityDiv.className = 'rule-priority';
+        priorityDiv.textContent = String(rule.priority);
+        item.appendChild(priorityDiv);
+
+        // Tag info
+        const tagInfoDiv = document.createElement('div');
+        tagInfoDiv.className = 'rule-info';
+        const tagLabel = document.createElement('span');
+        tagLabel.className = 'rule-label';
+        tagLabel.textContent = '當標籤為';
+        const tagValue = document.createElement('span');
+        tagValue.className = 'rule-value';
+        const tagBadge = document.createElement('span');
+        tagBadge.className = 'tag-badge';
+        tagBadge.textContent = rule.tag;
+        tagValue.appendChild(tagBadge);
+        tagInfoDiv.appendChild(tagLabel);
+        tagInfoDiv.appendChild(tagValue);
+        item.appendChild(tagInfoDiv);
+
+        // Menu info
+        const menuInfoDiv = document.createElement('div');
+        menuInfoDiv.className = 'rule-info';
+        const menuLabel = document.createElement('span');
+        menuLabel.className = 'rule-label';
+        menuLabel.textContent = '則顯示選單';
+        const menuValue = document.createElement('span');
+        menuValue.className = 'rule-value';
+        menuValue.textContent = menuName;
+        menuInfoDiv.appendChild(menuLabel);
+        menuInfoDiv.appendChild(menuValue);
+        item.appendChild(menuInfoDiv);
+
+        // Actions
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'rule-actions';
+        const delBtn = document.createElement('button');
+        delBtn.className = 'delete-btn';
+        delBtn.innerHTML = '<i class="fas fa-trash-alt"></i>'; // safe: static icon only
+        delBtn.onclick = () => deleteRule(index);
+        actionsDiv.appendChild(delBtn);
+        item.appendChild(actionsDiv);
+
         container.appendChild(item);
     });
 }

@@ -18,7 +18,7 @@
 
 ### SEC-001 — [CRITICAL] 邀請接受 API 未驗證 userId 身份
 
-**狀態**: 🔴 待處理  
+**狀態**: ✅ 已完成 — `handleAcceptInvite` 改為接受 router 傳入的已驗證 `userId`（第三參數），body 的 `userId` 欄位被完全忽略；`/team/invite/accept` 納入 `requiresAuth`，`/team/invite/preview` 保持公開  
 **檔案**: [`worker_src/handler/team.js:204`](worker_src/handler/team.js)  
 **嚴重度**: Critical — 可偽造任意用戶身份加入團隊
 
@@ -42,7 +42,7 @@ export async function handleAcceptInvite(request, env) {
 
 ### SEC-002 — [CRITICAL] LIFF 模式下 X-User-Id Header 可繞過認證
 
-**狀態**: 🔴 待處理  
+**狀態**: ✅ 已完成 — `authMode === "liff"` 分支中的 `X-User-Id` 回退完全移除，無 Bearer token 時直接回傳 `authenticated: false`  
 **檔案**: [`worker_src/middleware/auth.js:71`](worker_src/middleware/auth.js)  
 **嚴重度**: Critical — 任何人可偽裝成任意用戶呼叫所有 API
 
@@ -105,29 +105,29 @@ if (!isValid) return new Response('Unauthorized', { status: 401 });
 
 ### SEC-004 — [HIGH] 67 處 innerHTML 直接賦值（未過 DOMPurify）
 
-**狀態**: 🔴 待處理（TODO.md P0 未完成）  
+**狀態**: ✅ 已完成（2026-06-07）  
 **偵測指令**: `grep -rn "\.innerHTML\s*=" js/ | grep -v "setInnerHTML"`  
 **嚴重度**: High — 若有任一處使用到用戶輸入，即可 XSS
 
-**問題描述**  
-專案已有 `setInnerHTML()` wrapper（透過 DOMPurify 過濾），但仍有 67 處直接使用 `element.innerHTML = ...` 繞過保護。
+**修復摘要**  
+原始 67 處 `innerHTML` 直接賦值，審查後分類如下：
 
-**修法**  
-優先處理有用戶輸入的高風險區域：
-1. `js/richmenu.js` 附近的 677-703 行（TODO.md 已標記）
-2. `js/flex_builder.js`
-3. `js/member_builder.js`
-
-批次替換規則：
-- 純文字 → 改用 `textContent`
-- 含 HTML 但非用戶輸入 → 保留 `innerHTML`（已安全）
-- 含用戶輸入的 HTML → 改用 `setInnerHTML(el, content)`
+- **UNSAFE → 已修復（共 20 處）**：改用 `setInnerHTML()` 或 DOM API（`textContent`、`createElement`）
+  - `js/member_builder.js` — 會員表格渲染（`m.name`、`m.email`、`m.tags` 等 API 資料）→ 改用 DOM API
+  - `js/quick_reply_builder.js` — QR 列表與預覽（`item.name`、`action.label` 等）→ 改用 DOM API；新增 `setInnerHTML` import
+  - `js/message_push.js` — 會員列表、標籤篩選、訊息預覽、發送日誌（含 memberName、err.message）→ 改用 DOM API + appendLog helper；新增 `setInnerHTML` import
+  - `js/dashboard.js` — 訊息統計詳情（`msgData.reply`、`paid`）→ 改用 `textContent`；新增 `setInnerHTML` import
+  - `js/tier_settings.js` — 等級規則表格、統計卡片（`tier.name`、`menu.name` 等）→ 改用 DOM API；新增 `setInnerHTML` import
+  - `js/richmenu_segmented.js` — 分眾規則列表（`rule.tag`、`menuName`）→ 改用 DOM API；新增 `setInnerHTML` import
+  - `js/flow_designer.js` — 節點渲染（`node.data.*`）、debug modal（API 資料）、confirm modal（含 `<br>`）、flex 渲染錯誤（`error.message`）、搜尋結果（`n.data.label`）→ 改用 `setInnerHTML()` 或 DOM API；新增 `setInnerHTML` import
+  - `js/flow_node_adapter.js` — API 編輯器（`node.data.url`、`node.data.headers` 等）→ 改用 DOM API；條件值（`cond.value`）→ 改用 DOM API
+- **SAFE-STATIC / SAFE-COMPUTED（47 處）**：已驗證無用戶資料，加上 `// safe:` 標注留原樣
 
 ---
 
 ### SEC-005 — [MEDIUM] CORS 全開 `Access-Control-Allow-Origin: *`
 
-**狀態**: 🔴 待處理  
+**狀態**: ✅ 已完成 — `getCorsHeaders(request, env)` 新增 origin 反射邏輯，讀取逗號分隔的 `ALLOWED_ORIGIN` 環境變數做白名單；未設定時回退 `*`（開發環境相容）；OPTIONS preflight 及 auth-401 回應均已套用  
 **檔案**: [`worker_src/index.js:42`](worker_src/index.js), [`worker_src/lib/utils.js:25`](worker_src/lib/utils.js)  
 **嚴重度**: Medium
 
@@ -153,7 +153,7 @@ const allowOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[
 
 ### SEC-006 — [MEDIUM] Rate Limiter 在多 Isolate 環境無效
 
-**狀態**: 🔴 待處理  
+**狀態**: ✅ 已修復 — 改用 KV fixed-window 分散式計數器，移除 in-memory Map，所有 isolate 共享同一計數。  
 **檔案**: [`worker_src/middleware/rate_limiter.js`](worker_src/middleware/rate_limiter.js)  
 **嚴重度**: Medium — 實際限制遠低於設定值
 

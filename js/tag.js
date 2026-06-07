@@ -58,7 +58,7 @@ function renderTags() {
   const tagList = document.getElementById("tag-list");
   if (!tagList) return; // 如果不在 tag.html 頁面，則不執行
 
-  tagList.innerHTML = ""; // 清空舊內容
+  tagList.innerHTML = ""; // safe: clear before building rows via insertRow/insertCell
   tags.forEach((tag, index) => {
     const row = tagList.insertRow();
 

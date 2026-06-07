@@ -1,8 +1,9 @@
 // js/tier_settings.js
 import { getUserId, setUserId } from "../helper/state.js";
-import api from '../helper/api.client.js';
+import { api } from "../helper/api.client.js";
 import { toast } from '../helper/toast.js';
 import { LoadingManager } from './shared/loader.js';
+import { setInnerHTML } from '../helper/security.js';
 
 let tierConfig = null;
 let tierStats = null;
@@ -94,57 +95,108 @@ function renderTierRules() {
 
     // 確保 tiers 存在且是陣列
     if (!tierConfig.tiers || !Array.isArray(tierConfig.tiers) || tierConfig.tiers.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-muted">目前沒有等級規則。請點擊「重設為預設值」或「儲存變更」來初始化。</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-muted">目前沒有等級規則。請點擊「重設為預設值」或「儲存變更」來初始化。</td></tr>`; // safe: static message, no user input
         return;
     }
 
-    tbody.innerHTML = tierConfig.tiers.map((tier, index) => {
-        // 取得對應的規則，增加防呆
+    tbody.innerHTML = ''; // safe: clear
+    tierConfig.tiers.forEach((tier, index) => {
         const intRules = tierConfig.upgradeRules?.interactions?.rules || [];
         const timeRules = tierConfig.upgradeRules?.timeBased?.rules || [];
-
         const intRule = intRules.find(r => r.tier === tier.id) || { interactions: 0 };
         const timeRule = timeRules.find(r => r.tier === tier.id) || { days: 0 };
 
-        return `
-            <tr class="tier-row" data-tier-id="${tier.id}">
-                <td>
-                    <div class="d-flex align-items-center">
-                        <span class="fs-4 me-2">${tier.icon || '🌱'}</span>
-                        <span class="fw-bold">等級 ${tier.id}</span>
-                    </div>
-                </td>
-                <td>
-                    <input type="text" class="form-control tier-name-input" value="${tier.name || ''}">
-                </td>
-                <td>
-                    <input type="text" class="form-control tier-title-input" value="${tier.title || ''}">
-                </td>
-                <td>
-                    <div class="input-group">
-                        <input type="number" class="form-control tier-int-input" value="${intRule.interactions || 0}" ${tier.id === 0 ? 'disabled' : ''}>
-                        <span class="input-group-text">次</span>
-                    </div>
-                </td>
-                <td>
-                    <div class="input-group">
-                        <input type="number" class="form-control tier-days-input" value="${timeRule.days || 0}" ${tier.id === 0 ? 'disabled' : ''}>
-                        <span class="input-group-text">天</span>
-                    </div>
-                </td>
-                <td>
-                    <select class="form-select tier-richmenu-select">
-                        <option value="">-- 不變動 / 預設 --</option>
-                        ${richMenuList.map(menu => `
-                            <option value="${menu.richMenuId}" ${tier.richMenuId === menu.richMenuId ? 'selected' : ''}>
-                                ${menu.name} ${menu.richMenuAliasId ? `(${menu.richMenuAliasId})` : ''}
-                            </option>
-                        `).join('')}
-                    </select>
-                </td>
-            </tr>
-        `;
-    }).join('');
+        const tr = document.createElement('tr');
+        tr.className = 'tier-row';
+        tr.dataset.tierId = tier.id;
+
+        // Icon + level label cell
+        const tdIcon = document.createElement('td');
+        const iconWrapper = document.createElement('div');
+        iconWrapper.className = 'd-flex align-items-center';
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'fs-4 me-2';
+        iconSpan.textContent = tier.icon || '🌱';
+        const levelSpan = document.createElement('span');
+        levelSpan.className = 'fw-bold';
+        levelSpan.textContent = `等級 ${tier.id}`;
+        iconWrapper.appendChild(iconSpan);
+        iconWrapper.appendChild(levelSpan);
+        tdIcon.appendChild(iconWrapper);
+        tr.appendChild(tdIcon);
+
+        // Name input cell
+        const tdName = document.createElement('td');
+        const nameInput = document.createElement('input');
+        nameInput.type = 'text';
+        nameInput.className = 'form-control tier-name-input';
+        nameInput.value = tier.name || '';
+        tdName.appendChild(nameInput);
+        tr.appendChild(tdName);
+
+        // Title input cell
+        const tdTitle = document.createElement('td');
+        const titleInput = document.createElement('input');
+        titleInput.type = 'text';
+        titleInput.className = 'form-control tier-title-input';
+        titleInput.value = tier.title || '';
+        tdTitle.appendChild(titleInput);
+        tr.appendChild(tdTitle);
+
+        // Interactions input cell
+        const tdInt = document.createElement('td');
+        const intGroup = document.createElement('div');
+        intGroup.className = 'input-group';
+        const intInput = document.createElement('input');
+        intInput.type = 'number';
+        intInput.className = 'form-control tier-int-input';
+        intInput.value = String(intRule.interactions || 0);
+        if (tier.id === 0) intInput.disabled = true;
+        const intText = document.createElement('span');
+        intText.className = 'input-group-text';
+        intText.textContent = '次';
+        intGroup.appendChild(intInput);
+        intGroup.appendChild(intText);
+        tdInt.appendChild(intGroup);
+        tr.appendChild(tdInt);
+
+        // Days input cell
+        const tdDays = document.createElement('td');
+        const daysGroup = document.createElement('div');
+        daysGroup.className = 'input-group';
+        const daysInput = document.createElement('input');
+        daysInput.type = 'number';
+        daysInput.className = 'form-control tier-days-input';
+        daysInput.value = String(timeRule.days || 0);
+        if (tier.id === 0) daysInput.disabled = true;
+        const daysText = document.createElement('span');
+        daysText.className = 'input-group-text';
+        daysText.textContent = '天';
+        daysGroup.appendChild(daysInput);
+        daysGroup.appendChild(daysText);
+        tdDays.appendChild(daysGroup);
+        tr.appendChild(tdDays);
+
+        // Richmenu select cell
+        const tdMenu = document.createElement('td');
+        const menuSelect = document.createElement('select');
+        menuSelect.className = 'form-select tier-richmenu-select';
+        const defaultOpt = document.createElement('option');
+        defaultOpt.value = '';
+        defaultOpt.textContent = '-- 不變動 / 預設 --';
+        menuSelect.appendChild(defaultOpt);
+        richMenuList.forEach(menu => {
+            const opt = document.createElement('option');
+            opt.value = menu.richMenuId;
+            opt.textContent = menu.name + (menu.richMenuAliasId ? ` (${menu.richMenuAliasId})` : '');
+            if (tier.richMenuId === menu.richMenuId) opt.selected = true;
+            menuSelect.appendChild(opt);
+        });
+        tdMenu.appendChild(menuSelect);
+        tr.appendChild(tdMenu);
+
+        tbody.appendChild(tr);
+    });
 
     // 初始化自動升級開關
     const autoUpgradeEnabled = (tierConfig.upgradeRules?.interactions?.enabled || tierConfig.upgradeRules?.timeBased?.enabled);
@@ -161,20 +213,46 @@ function renderTierStats() {
 
     const tiers = tierConfig?.tiers || [];
 
-    container.innerHTML = tiers.map(t => `
-        <div class="col-md-3">
-            <div class="card tier-card tier-${t.id} shadow-sm border-0">
-                <div class="card-body">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="fs-4">${t.icon}</span>
-                        <span class="badge rounded-pill bg-light text-dark">${t.name}</span>
-                    </div>
-                    <h3 class="mb-0 fw-bold">${tierStats.tiers[t.id] || 0}</h3>
-                    <p class="text-muted small mb-0">總計會員數</p>
-                </div>
-            </div>
-        </div>
-    `).join('');
+    container.innerHTML = ''; // safe: clear
+    tiers.forEach(t => {
+        const col = document.createElement('div');
+        col.className = 'col-md-3';
+
+        const card = document.createElement('div');
+        card.className = `card tier-card tier-${t.id} shadow-sm border-0`;
+
+        const body = document.createElement('div');
+        body.className = 'card-body';
+
+        const topRow = document.createElement('div');
+        topRow.className = 'd-flex justify-content-between align-items-center mb-2';
+
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'fs-4';
+        iconSpan.textContent = t.icon;
+
+        const nameBadge = document.createElement('span');
+        nameBadge.className = 'badge rounded-pill bg-light text-dark';
+        nameBadge.textContent = t.name;
+
+        topRow.appendChild(iconSpan);
+        topRow.appendChild(nameBadge);
+
+        const countH3 = document.createElement('h3');
+        countH3.className = 'mb-0 fw-bold';
+        countH3.textContent = String(tierStats.tiers[t.id] || 0);
+
+        const totalP = document.createElement('p');
+        totalP.className = 'text-muted small mb-0';
+        totalP.textContent = '總計會員數';
+
+        body.appendChild(topRow);
+        body.appendChild(countH3);
+        body.appendChild(totalP);
+        card.appendChild(body);
+        col.appendChild(card);
+        container.appendChild(col);
+    });
 }
 
 /**

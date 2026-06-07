@@ -213,12 +213,12 @@ async function openEditModal(area, index) {
   if (areaInfoDisplay && area.bounds) {
     const bounds = area.bounds;
     areaInfoDisplay.innerHTML = `
-      <i class="bi bi-geo-alt text-primary"></i> 區域 ${index + 1} | 
-      座標: (${bounds.x}, ${bounds.y}) | 
+      <i class="bi bi-geo-alt text-primary"></i> 區域 ${index + 1} |
+      座標: (${bounds.x}, ${bounds.y}) |
       尺寸: ${bounds.width} × ${bounds.height}
-    `;
+    `; // safe: only numeric geometric values from canvas interaction, no user text
   } else if (areaInfoDisplay) {
-    areaInfoDisplay.innerHTML = `<i class="bi bi-plus-circle text-success"></i> 新增區域`;
+    areaInfoDisplay.innerHTML = `<i class="bi bi-plus-circle text-success"></i> 新增區域`; // safe: static icon + hardcoded text
   }
 
   // 1. 準備並產生 UI

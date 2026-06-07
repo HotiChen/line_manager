@@ -11,6 +11,7 @@ import {
     getMessageTypeIcon,
     formatMessagePreview
 } from "../helper/message.helper.js";
+import { setInnerHTML } from "../helper/security.js";
 
 let allMembers = [];
 let allTags = [];
@@ -213,7 +214,7 @@ async function initMessageEditorUI() {
                 // 選取時的 callback，我們主要靠 handleAddMessage 裡的 getCurrentReplyInput
             }
         });
-        container.innerHTML = '';
+        container.innerHTML = ''; // safe: clear before appending helper UI
         container.appendChild(ui);
     } catch (error) {
         console.error('❌ 初始化訊息編輯器失敗:', error);
@@ -302,23 +303,32 @@ function renderPushMessageDisplay() {
                 <i class="bi bi-inbox fs-2 d-block mb-2"></i>
                 尚未加入任何訊息
             </div>
-        `;
+        `; // safe: no user input
         return;
     }
 
-    container.innerHTML = '';
+    container.innerHTML = ''; // safe: clear
     currentPushMessages.forEach((msg, index) => {
         const div = document.createElement('div');
         div.className = 'push-msg-item';
-        div.innerHTML = `
-            <span class="badge bg-secondary">${getMessageTypeIcon(msg.type)}</span>
-            <div class="flex-grow-1 small text-truncate">
-                ${formatMessagePreview(msg.type, msg)}
-            </div>
-            <button type="button" class="btn btn-sm btn-outline-danger remove-btn" onclick="removePushMessage(${index})">
-                <i class="bi bi-trash"></i>
-            </button>
-        `;
+
+        const iconSpan = document.createElement('span');
+        iconSpan.className = 'badge bg-secondary';
+        iconSpan.textContent = getMessageTypeIcon(msg.type);
+
+        const previewDiv = document.createElement('div');
+        previewDiv.className = 'flex-grow-1 small text-truncate';
+        previewDiv.textContent = formatMessagePreview(msg.type, msg);
+
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'btn btn-sm btn-outline-danger remove-btn';
+        removeBtn.innerHTML = '<i class="bi bi-trash"></i>'; // safe: static icon only
+        removeBtn.onclick = () => removePushMessage(index);
+
+        div.appendChild(iconSpan);
+        div.appendChild(previewDiv);
+        div.appendChild(removeBtn);
         container.appendChild(div);
     });
 }
@@ -344,7 +354,7 @@ function renderMemberList() {
 
     if (!container) return;
 
-    container.innerHTML = '';
+    container.innerHTML = ''; // safe: clear
 
     const filtered = allMembers.filter(m => {
         // 搜尋
@@ -395,7 +405,7 @@ function renderMemberList() {
     document.getElementById('loaded-count').textContent = filtered.length;
 
     if (filtered.length === 0) {
-        container.innerHTML = '<li class="list-group-item text-center py-4 text-muted">查無匹配會員</li>';
+        container.innerHTML = '<li class="list-group-item text-center py-4 text-muted">查無匹配會員</li>'; // safe: no user input
         return;
     }
 
@@ -406,18 +416,50 @@ function renderMemberList() {
         const name = m.name || m.lineName || '未命名';
         const isChecked = selectedMemberIds.has(m.memberId);
 
-        li.innerHTML = `
-            <div class="d-flex align-items-center">
-                <input class="form-check-input member-item-checkbox me-3" type="checkbox" value="${m.memberId}" ${isChecked ? 'checked' : ''}>
-                <div class="d-flex align-items-center flex-grow-1" style="cursor: pointer;">
-                    ${m.pictureUrl ? `<img src="${m.pictureUrl}" class="rounded-circle me-2" width="24" height="24">` : '<div class="bg-light rounded-circle me-2 d-flex align-items-center justify-content-center" style="width: 24px; height: 24px;"><i class="bi bi-person text-secondary" style="font-size: 12px;"></i></div>'}
-                    <div class="small">
-                        <div class="fw-bold">${name}</div>
-                        <div class="text-muted" style="font-size: 0.7rem;">${(m.tags || []).slice(0, 2).join(', ') || '無標籤'}</div>
-                    </div>
-                </div>
-            </div>
-        `;
+        const outerDiv = document.createElement('div');
+        outerDiv.className = 'd-flex align-items-center';
+
+        const checkbox = document.createElement('input');
+        checkbox.className = 'form-check-input member-item-checkbox me-3';
+        checkbox.type = 'checkbox';
+        checkbox.value = m.memberId;
+        checkbox.checked = isChecked;
+
+        const innerDiv = document.createElement('div');
+        innerDiv.className = 'd-flex align-items-center flex-grow-1';
+        innerDiv.style.cursor = 'pointer';
+
+        if (m.pictureUrl) {
+            const img = document.createElement('img');
+            img.src = m.pictureUrl;
+            img.className = 'rounded-circle me-2';
+            img.width = 24;
+            img.height = 24;
+            innerDiv.appendChild(img);
+        } else {
+            const avatarDiv = document.createElement('div');
+            avatarDiv.className = 'bg-light rounded-circle me-2 d-flex align-items-center justify-content-center';
+            avatarDiv.style.cssText = 'width: 24px; height: 24px;';
+            avatarDiv.innerHTML = '<i class="bi bi-person text-secondary" style="font-size: 12px;"></i>'; // safe: static icon only
+            innerDiv.appendChild(avatarDiv);
+        }
+
+        const textDiv = document.createElement('div');
+        textDiv.className = 'small';
+        const nameDiv = document.createElement('div');
+        nameDiv.className = 'fw-bold';
+        nameDiv.textContent = name;
+        const tagsDiv = document.createElement('div');
+        tagsDiv.className = 'text-muted';
+        tagsDiv.style.fontSize = '0.7rem';
+        tagsDiv.textContent = (m.tags || []).slice(0, 2).join(', ') || '無標籤';
+        textDiv.appendChild(nameDiv);
+        textDiv.appendChild(tagsDiv);
+        innerDiv.appendChild(textDiv);
+
+        outerDiv.appendChild(checkbox);
+        outerDiv.appendChild(innerDiv);
+        li.appendChild(outerDiv);
 
         li.addEventListener('click', (e) => {
             if (e.target.type === 'checkbox') return;
@@ -480,23 +522,33 @@ function renderTagFilter() {
     const list = document.getElementById('tag-filter-list');
     if (!list) return;
 
-    list.innerHTML = '';
+    list.innerHTML = ''; // safe: clear
     if (allTags.length === 0) {
-        list.innerHTML = '<li class="small text-muted mb-1 text-center">目前無標籤</li>';
+        list.innerHTML = '<li class="small text-muted mb-1 text-center">目前無標籤</li>'; // safe: no user input
         return;
     }
 
     allTags.forEach((tag, index) => {
         const id = `tag-filter-${index}`;
         const li = document.createElement('li');
-        li.innerHTML = `
-            <div class="form-check">
-                <input class="form-check-input tag-filter-checkbox" type="checkbox" value="${tag.name}" id="${id}">
-                <label class="form-check-label small" for="${id}">
-                    ${tag.name} (${tag.total})
-                </label>
-            </div>
-        `;
+
+        const formCheck = document.createElement('div');
+        formCheck.className = 'form-check';
+
+        const input = document.createElement('input');
+        input.className = 'form-check-input tag-filter-checkbox';
+        input.type = 'checkbox';
+        input.value = tag.name;
+        input.id = id;
+
+        const label = document.createElement('label');
+        label.className = 'form-check-label small';
+        label.htmlFor = id;
+        label.textContent = `${tag.name} (${tag.total})`;
+
+        formCheck.appendChild(input);
+        formCheck.appendChild(label);
+        li.appendChild(formCheck);
         list.appendChild(li);
     });
 }
@@ -542,8 +594,18 @@ async function startSendingProcess() {
 
     isSendingMessage = true;
     statusCard.classList.remove('d-none');
-    logContainer.innerHTML = '🚀 準備發送...<br>';
+    logContainer.innerHTML = '🚀 準備發送...<br>'; // safe: no user input
     sendBtn.disabled = true;
+
+    // Helper: append a log line safely using DOM (avoids innerHTML += with user data)
+    const appendLog = (icon, cssClass, text) => {
+        const span = document.createElement('span');
+        span.className = cssClass;
+        span.textContent = `${icon} ${text}`;
+        logContainer.appendChild(span);
+        logContainer.appendChild(document.createElement('br'));
+        logContainer.scrollTop = logContainer.scrollHeight;
+    };
 
     const memberIds = Array.from(selectedMemberIds);
     let successCount = 0;
@@ -562,14 +624,14 @@ async function startSendingProcess() {
 
             if (response.success) {
                 successCount++;
-                logContainer.innerHTML += `<span class="text-success small">✅ ${memberName}: 成功</span><br>`;
+                appendLog('✅', 'text-success small', `${memberName}: 成功`);
             } else {
                 failCount++;
-                logContainer.innerHTML += `<span class="text-danger small">❌ ${memberName}: 失敗 (${response.error})</span><br>`;
+                appendLog('❌', 'text-danger small', `${memberName}: 失敗 (${response.error})`);
             }
         } catch (err) {
             failCount++;
-            logContainer.innerHTML += `<span class="text-danger small">❌ ${memberName}: 錯誤 (${err.message})</span><br>`;
+            appendLog('❌', 'text-danger small', `${memberName}: 錯誤 (${err.message})`);
         }
 
         const progress = Math.round(((i + 1) / memberIds.length) * 100);
@@ -580,7 +642,7 @@ async function startSendingProcess() {
 
     toast.success(`任務完成！成功: ${successCount}, 失敗: ${failCount}`);
     sendBtn.disabled = false;
-    logContainer.innerHTML += `🏁 任務結束。<br>`;
+    logContainer.innerHTML += '🏁 任務結束。<br>'; // safe: no user input
     isSendingMessage = false;
 }
 

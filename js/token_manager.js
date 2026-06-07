@@ -89,7 +89,7 @@ async function loadInvites() {
                     <td>${isExpired ? '-' : timeLeft}</td>
                     <td>
                         ${!isUsed && !isExpired ? `
-                            <a href="/pages/invite.html?token=${invite.token}" target="_blank" class="btn btn-sm btn-outline-primary">
+                            <a href="./pages/invite.html?token=${invite.token}" target="_blank" class="btn btn-sm btn-outline-primary">
                                 <i class="bi bi-box-arrow-up-right"></i> 測試
                             </a>
                         ` : '<span class="text-muted">-</span>'}
