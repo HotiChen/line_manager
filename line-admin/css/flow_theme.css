@@ -1,0 +1,99 @@
+/* css/flow_theme.css */
+
+/* --- Main Node Styling --- */
+.flow-node {
+  border-radius: 8px !important;
+  background: #ffffff !important;
+  border: 2px solid #e0e3e8 !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+  position: absolute !important;
+  padding: 12px !important;
+  transition: box-shadow 0.2s, transform 0.2s !important;
+}
+
+.flow-node:hover {
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12) !important;
+}
+
+.flow-node.selected {
+  box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.3) !important;
+  border-color: #3498db !important;
+}
+
+/* --- Node Type Indicator --- */
+.flow-node.node-trigger { border-left-width: 6px !important; }
+.flow-node.node-message { border-left-width: 6px !important; }
+.flow-node.node-action { border-left-width: 6px !important; }
+.flow-node.node-end { border-left-width: 6px !important; }
+
+/* --- Connection Points --- */
+.node-connector {
+  width: 12px !important;
+  height: 12px !important;
+  background: white !important;
+  border: 2px solid #bdc3c7 !important;
+  border-radius: 50% !important;
+  position: absolute !important;
+  z-index: 10 !important;
+  transition: all 0.2s ease !important;
+}
+
+.node-connector:hover {
+  transform: scale(1.3) translateY(-50%) !important;
+  background: #3498db !important;
+  border-color: #3498db !important;
+}
+
+.node-input {
+  left: -8px !important;
+  border-color: #3498db !important;
+}
+
+.node-output {
+  right: -8px !important;
+  border-color: #2ecc71 !important;
+}
+
+.node-output-point {
+  transition: transform 0.2s !important;
+}
+
+.node-output-point:hover {
+  transform: translateY(-50%) scale(1.2) !important;
+}
+
+/* --- Connection Lines --- */
+.edge-path {
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+  transition: stroke-width 0.2s !important;
+}
+
+.edge-control-point {
+  transition: opacity 0.2s, r 0.2s !important;
+}
+
+.edge-control-point:hover {
+  r: 10 !important;
+  opacity: 1 !important;
+}
+
+/* --- Context Menu --- */
+.context-menu-item {
+  transition: background 0.2s !important;
+}
+
+.context-menu-item i {
+  font-size: 1.1em;
+}
+
+/* --- Misc --- */
+.node-preview {
+  max-height: 150px;
+  overflow-y: auto;
+  margin-top: 8px;
+  padding: 8px;
+  background: #f8f9fa;
+  border-radius: 4px;
+}
+

@@ -1,5 +1,8 @@
 /**
  * 會員等級設定 API Handler
+ *
+ * 注意：userId 由 index.js 的 auth middleware 驗證後傳入，
+ * 不再從 request header 自行讀取。
  */
 
 import { jsonResponse } from '../lib/utils.js';
@@ -9,11 +12,10 @@ import * as logger from '../utils/logger.js';
 /**
  * 取得等級配置
  */
-export async function handleGetTierConfig(request, env) {
+export async function handleGetTierConfig(request, env, userId) {
     try {
-        const userId = request.headers.get('x-user-id');
         if (!userId) {
-            return jsonResponse({ error: '缺少 x-user-id header' }, 400);
+            return jsonResponse({ error: '缺少使用者認證' }, 401);
         }
 
         const config = await getTierConfig(env, userId);
@@ -28,11 +30,10 @@ export async function handleGetTierConfig(request, env) {
 /**
  * 更新等級配置
  */
-export async function handleUpdateTierConfig(request, env) {
+export async function handleUpdateTierConfig(request, env, userId) {
     try {
-        const userId = request.headers.get('x-user-id');
         if (!userId) {
-            return jsonResponse({ error: '缺少 x-user-id header' }, 400);
+            return jsonResponse({ error: '缺少使用者認證' }, 401);
         }
 
         const config = await request.json();
@@ -49,11 +50,10 @@ export async function handleUpdateTierConfig(request, env) {
 /**
  * 手動設定會員等級
  */
-export async function handleSetMemberTier(request, env) {
+export async function handleSetMemberTier(request, env, userId) {
     try {
-        const userId = request.headers.get('x-user-id');
         if (!userId) {
-            return jsonResponse({ error: '缺少 x-user-id header' }, 400);
+            return jsonResponse({ error: '缺少使用者認證' }, 401);
         }
 
         const { lineUserId, tier } = await request.json();
@@ -73,7 +73,7 @@ export async function handleSetMemberTier(request, env) {
                     const currentProject = await env.KV_LINE_STORAGE.get(`current_token_${userId}`);
                     const currentData = tokenMap[currentProject];
                     const accessToken = typeof currentData === 'string' ? currentData : currentData?.token;
-                    
+
                     if (accessToken) {
                         // 不需要 await，在背景執行即可
                         applyTierRichMenu(env, userId, lineUserId, tier, accessToken);
@@ -96,11 +96,10 @@ export async function handleSetMemberTier(request, env) {
 /**
  * 取得等級統計
  */
-export async function handleGetTierStats(request, env) {
+export async function handleGetTierStats(request, env, userId) {
     try {
-        const userId = request.headers.get('x-user-id');
         if (!userId) {
-            return jsonResponse({ error: '缺少 x-user-id header' }, 400);
+            return jsonResponse({ error: '缺少使用者認證' }, 401);
         }
 
         const stats = await getTierStatistics(env, userId);

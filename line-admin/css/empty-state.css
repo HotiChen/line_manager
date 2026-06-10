@@ -1,0 +1,267 @@
+/* ========================================
+   Empty State Component System
+   Professional, friendly empty states
+   ======================================== */
+
+/* === BASE EMPTY STATE STYLES === */
+
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    max-width: 500px;
+    margin: 0 auto;
+    animation: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.empty-state-illustration {
+    margin-bottom: 30px;
+    opacity: 0;
+    animation: fadeIn 0.8s ease-out 0.2s forwards;
+}
+
+.empty-state-illustration img,
+.empty-state-illustration svg {
+    max-width: 280px;
+    width: 100%;
+    height: auto;
+    opacity: 0.95;
+    filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.05));
+}
+
+.empty-state-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--color-text-primary, #1a202c);
+    margin-bottom: 12px;
+    font-family: 'Outfit', sans-serif;
+}
+
+.empty-state-description {
+    font-size: 1rem;
+    color: var(--color-text-secondary, #718096);
+    margin-bottom: 25px;
+    line-height: 1.6;
+    max-width: 400px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.empty-state-action {
+    padding: 12px 32px;
+    font-size: 1rem;
+    font-weight: 500;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+}
+
+.empty-state-action:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(6, 199, 85, 0.3);
+}
+
+/* === ANIMATIONS === */
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 0.95;
+    }
+}
+
+/* === DARK MODE SUPPORT === */
+
+[data-theme="dark"] .empty-state-title {
+    color: var(--color-text-primary, #f9fafb);
+}
+
+[data-theme="dark"] .empty-state-description {
+    color: var(--color-text-secondary, #9ca3af);
+}
+
+[data-theme="dark"] .empty-state-illustration img,
+[data-theme="dark"] .empty-state-illustration svg {
+    filter: drop-shadow(0 4px 12px rgba(255, 255, 255, 0.03));
+    opacity: 0.9;
+}
+
+/* === RESPONSIVE DESIGN === */
+
+@media (max-width: 768px) {
+    .empty-state {
+        padding: 40px 15px;
+    }
+
+    .empty-state-illustration img,
+    .empty-state-illustration svg {
+        max-width: 220px;
+    }
+
+    .empty-state-title {
+        font-size: 1.25rem;
+    }
+
+    .empty-state-description {
+        font-size: 0.9rem;
+    }
+
+    .empty-state-action {
+        padding: 10px 24px;
+        font-size: 0.9rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .empty-state {
+        padding: 30px 10px;
+    }
+
+    .empty-state-illustration img,
+    .empty-state-illustration svg {
+        max-width: 180px;
+    }
+
+    .empty-state-title {
+        font-size: 1.1rem;
+    }
+}
+
+/* === SPECIFIC EMPTY STATE VARIANTS === */
+
+/* Dashboard empty state */
+.empty-state.dashboard {
+    /* Can add specific styling if needed */
+}
+
+/* Members list empty state */
+.empty-state.members {
+    /* Can add specific styling if needed */
+}
+
+/* Richmenu list empty state */
+.empty-state.richmenu {
+    /* Can add specific styling if needed */
+}
+
+/* Tags management empty state */
+.empty-state.tags {
+    /* Can add specific styling if needed */
+}
+
+/* Flex builder empty state */
+.empty-state.flex-builder {
+    /* Can add specific styling if needed */
+}
+
+/* Imagemap builder empty state */
+.empty-state.imagemap {
+    /* Can add specific styling if needed */
+}
+
+/* === HELPER CLASSES === */
+
+/* Hide content when showing empty state */
+.content-hidden {
+    display: none;
+}
+
+/* Show empty state */
+.show-empty-state .empty-state {
+    display: block;
+}
+
+.show-empty-state .content-area {
+    display: none;
+}
+
+/* === ACCESSIBILITY === */
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+
+    .empty-state,
+    .empty-state-illustration,
+    .empty-state-action {
+        animation: none;
+        transition: none;
+    }
+
+    .empty-state-action:hover {
+        transform: none;
+    }
+}
+
+/* Focus states */
+.empty-state-action:focus {
+    outline: 2px solid #06C755;
+    outline-offset: 2px;
+}
+
+/* === ADDITIONAL STATES === */
+
+/* Empty state with secondary action */
+.empty-state-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin-top: 20px;
+}
+
+.empty-state-secondary-action {
+    padding: 10px 24px;
+    background: transparent;
+    border: 2px solid var(--color-border, #e2e8f0);
+    color: var(--color-text-secondary, #718096);
+    border-radius: 8px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.empty-state-secondary-action:hover {
+    border-color: #06C755;
+    color: #06C755;
+    background: rgba(6, 199, 85, 0.05);
+}
+
+/* Empty state with hint/tip */
+.empty-state-hint {
+    margin-top: 20px;
+    padding: 12px 20px;
+    background: var(--color-bg-secondary, #f7fafc);
+    border-radius: 8px;
+    border-left: 4px solid #06C755;
+    max-width: 400px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+[data-theme="dark"] .empty-state-hint {
+    background: var(--color-bg-secondary, #2D3748);
+}
+
+.empty-state-hint-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #06C755;
+    margin-bottom: 4px;
+}
+
+.empty-state-hint-text {
+    font-size: 0.85rem;
+    color: var(--color-text-secondary, #718096);
+    margin: 0;
+}

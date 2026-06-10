@@ -2,10 +2,14 @@
   "name": "line-bot-worker",
   "version": "1.0.0",
   "description": "Cloudflare Worker Backend for LINE Bot",
-  "main": "src/index.js",
+  "main": "worker_src/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "deploy": "wrangler deploy"
+    "test": "node --test tests/unit/test_*.mjs",
+    "test:unit": "node --test tests/unit/test_*.mjs",
+    "test:security": "node tests/test_security.mjs",
+    "deploy:check": "node scripts/pre_deploy_check.mjs",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev --env dev"
   },
   "keywords": [],
   "author": "",

@@ -1,0 +1,24 @@
+<svg width="300" height="300" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg">
+  <!-- Members empty state - People/Community theme -->
+  <g id="empty-members">
+    <!-- Background circle -->
+    <circle cx="150" cy="150" r="120" fill="#F5F5F5" opacity="0.3"/>
+    
+    <!-- Person 1 (center, larger) -->
+    <circle cx="150" cy="120" r="25" fill="#06C755"/>
+    <path d="M 150 150 Q 130 155, 125 175 L 175 175 Q 170 155, 150 150 Z" fill="#06C755" opacity="0.9"/>
+    
+    <!-- Person 2 (left) -->
+    <circle cx="100" cy="135" r="18" fill="#E5E5E5"/>
+    <path d="M 100 157 Q 87 160, 83 175 L 117 175 Q 113 160, 100 157 Z" fill="#E5E5E5" opacity="0.9"/>
+    
+    <!-- Person 3 (right) -->
+    <circle cx="200" cy="135" r="18" fill="#667eea"/>
+    <path d="M 200 157 Q 187 160, 183 175 L 217 175 Q 213 160, 200 157 Z" fill="#667eea" opacity="0.9"/>
+    
+    <!-- Decorative dots -->
+    <circle cx="150" cy="200" r="4" fill="#06C755" opacity="0.5"/>
+    <circle cx="140" cy="205" r="3" fill="#667eea" opacity="0.5"/>
+    <circle cx="160" cy="205" r="3" fill="#E5E5E5" opacity="0.5"/>
+  </g>
+</svg>

@@ -73,7 +73,7 @@ export class FlowDataLoader {
             }
 
             // 載入所有 alias
-            const data = await api.get('/alias/getAliaslist');
+            const data = await api.get('/alias/list');
             const aliases = data.aliases || [];
 
             // 找到匹配的 alias

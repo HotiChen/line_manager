@@ -1,7 +1,11 @@
 // js/liff.js
 export async function initLiff(liffId) {
   try {
-    await liff.init({ liffId });
+    // Timeout after 3s — falls back to URL-param userId in non-LINE environments
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('LIFF init timeout')), 3000)
+    );
+    await Promise.race([liff.init({ liffId }), timeout]);
 
     if (!liff.isLoggedIn()) {
       console.warn("🟡 使用者未登入，導向 LINE Login");

@@ -212,10 +212,11 @@ export async function rollbackUser(env, userId) {
  * API Handler
  */
 export async function handleMigrate(request, env) {
-    // 簡單的安全檢查
+    // 安全檢查：從環境變數讀取 migration secret
     const url = new URL(request.url);
     const key = url.searchParams.get("key");
-    if (key !== "migration_secret_123") {
+    const migrationSecret = env.MIGRATION_SECRET;
+    if (!migrationSecret || !key || key !== migrationSecret) {
         return jsonResponse({ error: "Unauthorized" }, 401);
     }
 

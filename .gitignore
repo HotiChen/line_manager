@@ -1,5 +1,36 @@
+# Dependencies
 node_modules/
+
+# OS files
 .DS_Store
+Thumbs.db
+
+# Cloudflare
 .wrangler/
+
+# Archives
 *.zip
+*.tar.gz
+
+# Logs
 *.log
+
+# Backup files (防止未來再產生)
+*.bak
+*.bak2
+*.backup
+*.backup_*
+*.before_*
+*.tmp
+*_old.*
+
+# Backups directory
+backups/
+
+# IDE
+.vscode/
+.idea/
+
+# Environment (避免洩漏 secrets)
+.env
+.env.*

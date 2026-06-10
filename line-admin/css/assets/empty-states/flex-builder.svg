@@ -1,0 +1,36 @@
+<svg width="300" height="300" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg">
+  <!-- Flex Builder empty state - Design canvas theme -->
+  <g id="empty-flex-builder">
+    <!-- Background circle -->
+    <circle cx="150" cy="150" r="120" fill="#F5F5F5" opacity="0.3"/>
+    
+    <!-- Canvas/Artboard -->
+    <rect x="105" y="100" width="90" height="120" rx="4" fill="white" stroke="#CCC" stroke-width="2" stroke-dasharray="5,5"/>
+    
+    <!-- Design tool icons around canvas -->
+    <!-- Palette (top left) -->
+    <circle cx="75" cy="80" r="18" fill="#06C755" opacity="0.3"/>
+    <circle cx="70" cy="76" r="5" fill="#06C755"/>
+    <circle cx="80" cy="76" r="5" fill="#667eea"/>
+    <circle cx="75" cy="84" r="5" fill="#FFD700"/>
+    
+    <!-- Magic wand (top right) -->
+    <circle cx="225" cy="80" r="18" fill="#667eea" opacity="0.3"/>
+    <path d="M 220 75 L 230 85 M 225 70 L 225 90 M 220 85 L 230 75" stroke="#667eea" stroke-width="2.5" stroke-linecap="round"/>
+    <circle cx="232" cy="68" r="3" fill="#FFD700"/>
+    
+    <!-- Ruler (bottom left) -->
+    <circle cx="75" cy="220" r="18" fill="#E5E5E5" opacity="0.5"/>
+    <rect x="66" y="218" width="18" height="4" fill="#999"/>
+    <line x1="68" y1="216" x2="68" y2="222" stroke="#999" stroke-width="1"/>
+    <line x1="72" y1="216" x2="72" y2="222" stroke="#999" stroke-width="1"/>
+    <line x1="76" y1="216" x2="76" y2="222" stroke="#999" stroke-width="1"/>
+    <line x1="80" y1="216" x2="80" y2="222" stroke="#999" stroke-width="1"/>
+    
+    <!-- Layers icon (bottom right) -->
+    <circle cx="225" cy="220" r="18" fill="#06C755" opacity="0.3"/>
+    <rect x="218" y="213" width="14" height="3" rx="1" fill="#06C755"/>
+    <rect x="218" y="218" width="14" height="3" rx="1" fill="#06C755" opacity="0.7"/>
+    <rect x="218" y="223" width="14" height="3" rx="1" fill="#06C755" opacity="0.4"/>
+  </g>
+</svg>

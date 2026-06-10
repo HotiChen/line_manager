@@ -1,35 +1,90 @@
-# 部署指南 (Deployment Guide)
+# Pinti LINE - 部署指南
 
-本專案使用 [Cloudflare Workers](https://workers.cloudflare.com/) 作為後端服務。
+## 首次部署前必做
 
-## 事前準備 (Prerequisites)
-
-- **Node.js**: 請確保您的電腦已安裝 Node.js。
-- **Cloudflare 帳號**: 您必須透過 Wrangler 登入 Cloudflare。
-
-## 如何部署 (How to Deploy)
-
-若您修改了 `src` 目錄下的後端程式碼，請在終端機執行以下指令來部署更新：
+### 1. 設定 Cloudflare Secrets
 
 ```bash
-npm run deploy
+# 設定 Migration API 密鑰（自行產生一個強密碼）
+npx wrangler secret put MIGRATION_SECRET
+
+# 可選：設定 LIFF Channel ID
+npx wrangler secret put LIFF_CHANNEL_ID
 ```
 
-這個指令會執行 `wrangler deploy`，它會自動完成以下步驟：
-1.  將 `src/index.js` 打包。
-2.  上傳至 Cloudflare。
-3.  更新線上的 Worker 服務 (`pinti-line`)。
+### 2. 切換認證模式
 
-## 設定檔 (Configuration)
+`wrangler.jsonc` 中已設定：
+- 正式環境：`AUTH_MODE: "liff"`
+- dev 環境：`AUTH_MODE: "legacy"`
 
-部署相關的設定位於 `wrangler.jsonc` 檔案中。主要設定包含：
+正式部署前確認：
+- 前端 LIFF SDK 已正確初始化
+- `helper/api.client.js` 會自動發送 Bearer token
+- 使用者可透過 LINE Login 正常登入
 
-- **name**: `pinti-line` (Cloudflare 上的 Worker 名稱)
-- **main**: `src/index.js` (程式進入點)
-- **kv_namespaces**: Cloudflare KV 儲存空間的設定 (`KV_LINE_STORAGE`)。
+### 3. 執行 Pre-Deploy 檢查
 
-## 疑難排解 (Troubleshooting)
+```bash
+npm run deploy:check
+```
 
-如果部署失敗：
-1.  **檢查登入狀態**: 執行 `npx wrangler whoami` 確認是否已登入。
-2.  **查看 Log**: 執行 `npx wrangler tail` 可以查看 Worker 的即時執行紀錄，協助除錯。
+## 部署流程
+
+```bash
+# 1. 執行 pre-deploy 檢查
+npm run deploy:check
+
+# 2. 執行單元測試
+npm test
+
+# 3. 部署到 Cloudflare Workers
+npx wrangler deploy
+
+# 4. 驗證部署
+curl https://your-worker.workers.dev/debug-ping
+```
+
+## 開發環境
+
+```bash
+# 啟動本地開發伺服器
+npm run dev
+
+# 執行單元測試
+npm test
+
+# 執行安全性整合測試（需要 wrangler dev 運行中）
+npm run test:security
+```
+
+## 環境變數說明
+
+| 變數 | 類型 | 說明 |
+|------|------|------|
+| AUTH_MODE | var | `liff`（正式）或 `legacy`（開發） |
+| LIFF_ID | var | LIFF App ID |
+| MIGRATION_SECRET | secret | Migration API 驗證密鑰 |
+| LIFF_CHANNEL_ID | secret | LIFF Channel ID |
+
+## 回滾
+
+如果部署後發現問題：
+
+```bash
+# 回滾到上一版本
+npx wrangler rollback
+```
+
+## 疑難排解
+
+1. **檢查登入狀態**：`npx wrangler whoami`
+2. **查看即時 Log**：`npx wrangler tail`
+3. **檢查 Secrets**：`npx wrangler secret list`
+
+## 注意事項
+
+- **永遠不要**在 `wrangler.jsonc` 中寫入 secrets
+- 正式環境的 `AUTH_MODE` 必須是 `"liff"`
+- Migration API 只應在資料遷移時使用，遷移完成後可考慮移除路由
+- Rate limiter 使用 in-memory 方式，Worker 重啟後計數器會重置（預期行為）

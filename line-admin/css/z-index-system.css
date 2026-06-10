@@ -1,0 +1,54 @@
+/* ========================================
+   Z-Index System
+   Ensures consistent layering across all UI components
+   ======================================== */
+
+:root {
+    /* Z-index scale */
+    --z-base: 1;
+    --z-sidebar: 1000;
+    --z-header: 1010;
+    --z-dropdown: 1020;
+    --z-sticky: 1030;
+    --z-modal-backdrop: 1040;
+    --z-modal: 1050;
+    --z-toast: 1060;
+    --z-loading: 1070;
+    --z-tooltip: 1080;
+}
+
+/* Apply z-index to components */
+.sidebar {
+    z-index: var(--z-sidebar) !important;
+}
+
+.header,
+.page-header {
+    z-index: var(--z-header);
+}
+
+.dropdown-menu {
+    z-index: var(--z-dropdown);
+}
+
+.modal-backdrop {
+    z-index: var(--z-modal-backdrop) !important;
+}
+
+.modal {
+    z-index: var(--z-modal) !important;
+}
+
+.toast-container,
+.toast {
+    z-index: var(--z-toast) !important;
+}
+
+.loading-spinner,
+.loading-overlay {
+    z-index: var(--z-loading) !important;
+}
+
+.tooltip {
+    z-index: var(--z-tooltip);
+}

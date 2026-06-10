@@ -67,7 +67,7 @@ async function initializeBotSelector(activeBot) {
   try {
     const botData = await api.get('/token/list');
     // 使用 createElement + textContent 而非 innerHTML，避免 XSS
-    botSelect.innerHTML = '';
+    botSelect.innerHTML = ''; // safe: clear before building options via createElement
     const defaultOpt = document.createElement('option');
     defaultOpt.value = '';
     defaultOpt.textContent = '選擇帳號...';

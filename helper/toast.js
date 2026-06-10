@@ -71,7 +71,7 @@ export class ButtonLoader {
     /**
      * 啟動 Loading 狀態
      * @param {string} [text='處理中...'] - Loading 時顯示的文字
-     * 
+     *
      * Post-conditions:
      * - 按鈕被停用 (disabled = true) 且內容被替換為 Spinner
      */
@@ -82,12 +82,31 @@ export class ButtonLoader {
 
     /**
      * 停止 Loading 狀態並還原按鈕
-     * 
+     *
      * Post-conditions:
      * - 按鈕被啟用 (disabled = false) 且內容還原為原始狀態
      */
     stop() {
         this.btn.disabled = false;
         this.btn.innerHTML = this.oldHTML;
+    }
+}
+
+/**
+ * withButtonLoading
+ * 包裝一個非同步操作：執行期間顯示按鈕 Loading 狀態，完成後自動還原。
+ *
+ * @param {HTMLButtonElement} button - 要顯示 Loading 的按鈕
+ * @param {Function} asyncFn - 要執行的非同步函數
+ * @param {string} [loadingText='處理中...'] - Loading 期間顯示的文字
+ * @returns {Promise<any>} asyncFn 的回傳值
+ */
+export async function withButtonLoading(button, asyncFn, loadingText = '處理中...') {
+    const loader = new ButtonLoader(button);
+    loader.start(loadingText);
+    try {
+        return await asyncFn();
+    } finally {
+        loader.stop();
     }
 }

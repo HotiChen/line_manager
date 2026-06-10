@@ -80,9 +80,9 @@ async function loadUserProfile() {
     const data = await api.post('/profile/check');
 
     if (data.exists && data.profile) {
-      document.getElementById("user-name").value = data.profile.userName || "";
-      document.getElementById("user-email").value = data.profile.userEmail || "";
-      document.getElementById("line-id").value = data.profile.lineDisplayName || "";
+      document.getElementById("user-name").value = data.profile.userName || data.profile.name || "";
+      document.getElementById("user-email").value = data.profile.userEmail || data.profile.email || "";
+      document.getElementById("line-id").value = data.profile.lineDisplayName || data.profile.lineName || "";
     }
   } catch (err) {
     console.error("[profile.js] ❌ 載入 Profile 失敗:", err);

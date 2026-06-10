@@ -52,6 +52,64 @@ export async function getTierConfig(env, userId) {
 }
 
 /**
+ * updateTierConfig
+ * 更新等級全局配置
+ */
+export async function updateTierConfig(env, userId, newConfig) {
+    const key = `tier_config_${userId}`;
+    const current = await getTierConfig(env, userId);
+    const merged = { ...current, ...newConfig };
+    await env.KV_LINE_STORAGE.put(key, JSON.stringify(merged));
+    return merged;
+}
+
+/**
+ * setMemberTier
+ * 手動設定特定會員等級
+ */
+export async function setMemberTier(env, userId, lineUserId, tier) {
+    const profileKey = `member_profile_${userId}_${lineUserId}`;
+    const profile = JSON.parse(await env.KV_LINE_STORAGE.get(profileKey) || "{}");
+
+    if (!profile.memberId) {
+        return { success: false, error: "會員不存在" };
+    }
+
+    const oldTier = profile.tier || 0;
+    profile.tier = tier;
+    profile.lastTierUpdate = new Date().toISOString();
+    profile.tierSetBy = "manual";
+    await env.KV_LINE_STORAGE.put(profileKey, JSON.stringify(profile));
+
+    return { success: true, oldTier, newTier: tier };
+}
+
+/**
+ * getTierStatistics
+ * 取得各等級的會員統計數據
+ */
+export async function getTierStatistics(env, userId) {
+    const config = await getTierConfig(env, userId);
+    const prefix = `member_profile_${userId}_`;
+    const list = await env.KV_LINE_STORAGE.list({ prefix });
+
+    const stats = {};
+    for (const t of config.tiers) {
+        stats[t.id] = { name: t.name, icon: t.icon, count: 0 };
+    }
+
+    for (const key of list.keys) {
+        const profile = await env.KV_LINE_STORAGE.get(key.name, { type: "json" });
+        const tierId = profile?.tier || 0;
+        if (stats[tierId]) {
+            stats[tierId].count++;
+        }
+    }
+
+    return { tiers: stats, total: list.keys.length };
+}
+
+/**
  * getMemberTier
  * 取得特定會員目前等級資訊
  */
