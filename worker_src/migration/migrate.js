@@ -216,7 +216,14 @@ export async function handleMigrate(request, env) {
     const url = new URL(request.url);
     const key = url.searchParams.get("key");
     const migrationSecret = env.MIGRATION_SECRET;
-    if (!migrationSecret || !key || key !== migrationSecret) {
+
+    // Fail-closed：未設定 MIGRATION_SECRET 時拒絕執行，避免變成開放端點
+    if (!migrationSecret) {
+        console.error("[Migration] MIGRATION_SECRET 未設定，拒絕執行遷移端點");
+        return jsonResponse({ error: "Migration endpoint not configured" }, 503);
+    }
+
+    if (!key || key !== migrationSecret) {
         return jsonResponse({ error: "Unauthorized" }, 401);
     }
 
@@ -236,6 +243,8 @@ export async function handleMigrate(request, env) {
             return jsonResponse(result);
         }
     } catch (err) {
-        return jsonResponse({ error: err.message, stack: err.stack }, 500);
+        // 僅在伺服器端記錄 stack，不回傳給用戶端
+        console.error("[Migration] 遷移執行失敗:", err.stack || err);
+        return jsonResponse({ error: err.message }, 500);
     }
 }

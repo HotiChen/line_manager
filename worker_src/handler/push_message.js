@@ -51,10 +51,6 @@ export async function handleSendPushMessage(request, env, userId) {
                 newMsg.altText = replaceVars(newMsg.altText);
             }
 
-            // 🔍 偵錯：如果是 Imagemap，印出其 baseUrl
-            if (newMsg.type === 'imagemap') {
-            }
-
             return newMsg;
         });
 

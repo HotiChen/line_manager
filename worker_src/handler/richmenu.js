@@ -62,11 +62,11 @@ export async function handleGetRichMenuList(env, userId) {
     return jsonResponse({ richmenus: combinedRichMenus });
 
   } catch (err) {
-    console.error("在 handleGetRichMenuList 中發生錯誤:", err);
+    // stack 僅留在伺服器端 log，不回傳給用戶端
+    console.error("在 handleGetRichMenuList 中發生錯誤:", err.stack || err);
     return jsonResponse({
       error: "無法取得完整的 Rich Menu 資料。",
-      details: err.message,
-      stack: err.stack
+      details: err.message
     }, 500);
   }
 }

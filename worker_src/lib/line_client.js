@@ -52,7 +52,7 @@ export async function formatReplyMessage(reply, env, userId) {
         case 'text':
             return { type: 'text', text: reply.text };
 
-        case 'flex':
+        case 'flex': {
             let contents = reply.contents;
             // 如果只有 id，嘗試從 KV 抓取
             if (!contents && reply.id) {
@@ -69,8 +69,9 @@ export async function formatReplyMessage(reply, env, userId) {
                 altText: reply.altText || '您收到了一則 Flex 訊息',
                 contents: contents
             };
+        }
 
-        case 'imagemap':
+        case 'imagemap': {
             // 🧩 支援 Imagemap 重導向 (某些開發環境需要)
             const baseUrl = reply.baseUrl || '';
             const finalBaseUrl = baseUrl.startsWith('http')
@@ -84,6 +85,7 @@ export async function formatReplyMessage(reply, env, userId) {
                 baseSize: reply.baseSize,
                 actions: reply.actions
             };
+        }
 
         default:
             logger.warn('LINE_CLIENT', `不支援的訊息類型: ${reply.type}`);

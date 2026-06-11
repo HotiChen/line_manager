@@ -56,14 +56,18 @@ async function verifyLiffToken(accessToken) {
  * 認證中間件
  *
  * - 正式環境（AUTH_MODE === 'liff'）：從 Authorization header 讀取 LIFF token 並驗證
- * - 開發環境：允許 X-User-Id header 直接傳遞（僅限開發）
+ * - 開發環境（AUTH_MODE === 'legacy'）：允許 X-User-Id header 直接傳遞（僅限開發）
+ *
+ * Fail-closed：若 AUTH_MODE 未設定（例如部署時漏設），預設為 "liff"，
+ * 避免意外退回 legacy 模式而讓 X-User-Id 偽冒身分通行。
+ * wrangler.jsonc 已明確為 prod 設定 "liff"、dev 設定 "legacy"。
  *
  * @param {Request} request
  * @param {Object} env
  * @returns {Promise<{authenticated: boolean, userId?: string, error?: string}>}
  */
 export async function authenticate(request, env) {
-    const authMode = env.AUTH_MODE || "legacy";
+    const authMode = env.AUTH_MODE || "liff";
 
     // 檢查 Authorization header（LIFF token）
     const authHeader = request.headers.get("Authorization");

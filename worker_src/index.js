@@ -100,7 +100,7 @@ export default {
       // /team routes — exclude /team/invite/preview which is public
       (pathname.startsWith("/team") && pathname !== "/team/invite/preview");
 
-    let userId = null;
+    let userId;
 
     if (requiresAuth) {
       const auth = await authenticate(request, env);

@@ -217,8 +217,23 @@ export async function handleDeleteMember(request, env, ownerId) {
 /**
  * route
  * 路由分發進入點
+ *
+ * 授權模型（對齊 team.js SEC-001 的精神）：
+ * 會員 CRM 資料一律以擁有者的 userId 做命名空間
+ * （member_profile_${ownerId}_..、member_list_${ownerId}），
+ * 此處的 ownerId 必須是 index.js 認證後傳入的 userId，不接受任何
+ * 由 request body / query 覆寫的身分。因此 handler 永遠只能讀寫
+ * 「呼叫者本人」的命名空間，無法操作他人的會員資料。
+ *
+ * 注意：LIFF 會員自助註冊（pages/member_register.html）也是打 /member/save，
+ * 經認證後 ownerId 即為註冊者本人的 userId，仍落在自身命名空間，故維持可用。
  */
 export function route(request, env, ownerId, pathname, url) {
+  // Fail-closed：ownerId 必須來自認證 context；缺少即拒絕，避免落入空命名空間
+  if (!ownerId || typeof ownerId !== "string") {
+    return jsonResponse({ success: false, error: "Unauthorized" }, 401);
+  }
+
   if (pathname === "/member/save") return handleSaveMember(request, env, ownerId);
   if (pathname === "/member/list") return handleListMembers(env, ownerId);
   if (pathname === "/member/delete") return handleDeleteMember(request, env, ownerId);
