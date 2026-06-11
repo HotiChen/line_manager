@@ -38,11 +38,12 @@ describe('handleMigrate - Security', () => {
         assert.equal(res.status, 401);
     });
 
-    it('should return 401 when MIGRATION_SECRET not configured', async () => {
+    it('should return 503 when MIGRATION_SECRET not configured', async () => {
+        // Fail-closed: MIGRATION_SECRET 未設定時端點必須拒絕（503 = endpoint not configured）。
         const env = { KV_LINE_STORAGE: createMockKV() };
         const request = new Request('http://localhost/admin/migrate?key=anything&userId=U1');
         const res = await handleMigrate(request, env);
-        assert.equal(res.status, 401);
+        assert.equal(res.status, 503);
     });
 
     it('should return 400 when userId not provided', async () => {

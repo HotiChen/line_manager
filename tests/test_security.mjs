@@ -208,7 +208,6 @@ await test('連續請求不應立即被限制', async () => {
 
 await test('超過限制後應回 429', async () => {
     const testUser = `rate_limit_test_${Date.now()}`;
-    let got429 = false;
 
     // 快速發送 105 次請求（預設限制 100）
     const promises = [];
@@ -221,7 +220,7 @@ await test('超過限制後應回 429', async () => {
     }
 
     const results = await Promise.all(promises);
-    got429 = results.some(r => r.status === 429);
+    const got429 = results.some(r => r.status === 429);
 
     assert(got429, '發送 105 次請求後應至少有一次收到 429');
 });

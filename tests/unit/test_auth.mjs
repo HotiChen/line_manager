@@ -62,14 +62,16 @@ describe('authenticate - Legacy mode', () => {
         assert.ok(result.error);
     });
 
-    it('should default to legacy mode when AUTH_MODE not set', async () => {
+    it('should default to liff mode (fail-closed) when AUTH_MODE not set', async () => {
+        // SEC-002: AUTH_MODE 未設定時，預設為 liff（fail-closed）。
+        // X-User-Id fallback 在 liff 模式下應被拒絕，不可意外開放 legacy 通道。
         const { authenticate } = await loadAuth();
         const env = {};
         const request = makeRequest({ 'X-User-Id': 'Udefault' });
 
         const result = await authenticate(request, env);
-        assert.equal(result.authenticated, true);
-        assert.equal(result.userId, 'Udefault');
+        assert.equal(result.authenticated, false);
+        assert.equal(result.error, 'Authorization header required');
     });
 });
 
@@ -83,14 +85,16 @@ describe('authenticate - LIFF mode', () => {
         assert.equal(result.authenticated, false);
     });
 
-    it('should allow X-User-Id fallback in LIFF mode (transition period)', async () => {
+    it('should reject X-User-Id fallback in LIFF mode (SEC-002)', async () => {
+        // SEC-002: LIFF 模式下已禁用 X-User-Id 回退，必須提供 Authorization header。
+        // 此測試驗證新的正確行為：有 X-User-Id 但沒有 Authorization，應被拒絕。
         const { authenticate } = await loadAuth();
         const env = { AUTH_MODE: 'liff' };
         const request = makeRequest({ 'X-User-Id': 'Ufallback' });
 
         const result = await authenticate(request, env);
-        assert.equal(result.authenticated, true);
-        assert.equal(result.userId, 'Ufallback');
+        assert.equal(result.authenticated, false);
+        assert.equal(result.error, 'Authorization header required');
     });
 
     it('should reject invalid Bearer token', async () => {

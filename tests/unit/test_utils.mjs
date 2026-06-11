@@ -8,8 +8,12 @@ import { jsonResponse, getCorsHeaders } from '../../worker_src/lib/utils.js';
 
 describe('getCorsHeaders', () => {
     it('should return correct CORS headers', () => {
-        const headers = getCorsHeaders();
-        assert.equal(headers['Access-Control-Allow-Origin'], '*');
+        // SEC-005: fail-closed CORS — localhost requests get their origin reflected.
+        const req = new Request('http://localhost:8787/api/test', {
+            headers: { Origin: 'http://localhost:5500' },
+        });
+        const headers = getCorsHeaders(req);
+        assert.equal(headers['Access-Control-Allow-Origin'], 'http://localhost:5500');
         assert.ok(headers['Access-Control-Allow-Methods'].includes('GET'));
         assert.ok(headers['Access-Control-Allow-Methods'].includes('POST'));
         assert.ok(headers['Access-Control-Allow-Methods'].includes('PUT'));
@@ -38,8 +42,13 @@ describe('jsonResponse', () => {
     });
 
     it('should include CORS headers', () => {
-        const res = jsonResponse({ ok: true });
-        assert.equal(res.headers.get('Access-Control-Allow-Origin'), '*');
+        // SEC-005: fail-closed CORS — without a request, origin resolves to "null".
+        // Passing a localhost request causes origin reflection.
+        const req = new Request('http://localhost:8787/api/test', {
+            headers: { Origin: 'http://localhost:5500' },
+        });
+        const res = jsonResponse({ ok: true }, 200, req);
+        assert.equal(res.headers.get('Access-Control-Allow-Origin'), 'http://localhost:5500');
     });
 
     it('should serialize body as JSON', async () => {
