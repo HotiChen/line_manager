@@ -14,7 +14,13 @@ export async function verifySignature(request, bodyText, channelSecret) {
         ['sign']
     );
 
-    const signatureBytes = Uint8Array.from(atob(signature), c => c.charCodeAt(0));
+    // 非法 base64 簽章視為驗證失敗，不可拋出例外（會變成 500）
+    let signatureBytes;
+    try {
+        signatureBytes = Uint8Array.from(atob(signature), c => c.charCodeAt(0));
+    } catch {
+        return false;
+    }
     const hmac = await crypto.subtle.sign('HMAC', key, encoder.encode(bodyText));
 
     return timingSafeEqual(new Uint8Array(hmac), signatureBytes);
