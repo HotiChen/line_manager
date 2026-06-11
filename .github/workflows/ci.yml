@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      # Backend lint — errors only (warnings are tracked but don't block).
+      # Frontend (js/, helper/) has legacy lint debt; expand scope as it's paid down.
+      - name: Lint (backend + tests, errors only)
+        run: npx eslint worker_src tests --quiet

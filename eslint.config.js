@@ -55,7 +55,6 @@ export default [
     {
         ignores: [
             'node_modules/**',
-            'worker_src/**',      // Ignore worker backend files for frontend audit for now
             'js/flex2html.js',    // Ignore generated/minified files
             'js/flex2html.min.js',
             '**/*.tmp',
