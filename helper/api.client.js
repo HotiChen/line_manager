@@ -1,7 +1,7 @@
 /**
  * ApiClient - 統一 API 客戶端
  */
-import { getUserId, apiBase, debug } from './state.js';
+import { getUserId, getAuthHeaders, apiBase, debug } from './state.js';
 import { ErrorHandler, ErrorTypes } from './error.handler.js';
 
 const DEFAULT_CONFIG = {
@@ -96,26 +96,7 @@ export class ApiClient {
     static buildHeaders(body, customHeaders = {}, skipAuth = false) {
         const headers = (body && !(body instanceof FormData)) ? { 'Content-Type': 'application/json' } : {};
         if (!skipAuth) {
-            // 優先使用 LIFF access token（正式環境，非 debug 模式）
-            const isLocalHost = typeof window !== 'undefined' &&
-                (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-            if (!debug && !isLocalHost) { 
-                try {
-                    // eslint-disable-next-line no-undef
-                    if (typeof liff !== 'undefined' && typeof liff.isLoggedIn === 'function' && liff.isLoggedIn()) {
-                        const accessToken = liff.getAccessToken();
-                        if (accessToken) {
-                            headers['Authorization'] = `Bearer ${accessToken}`;
-                        }
-                    }
-                } catch (e) {
-                    // LIFF SDK 尚未 init 時的預期錯誤，靜默降級即可不阻擋請求
-                    console.warn('⚠️ [ApiClient] LIFF 尚未初始化，自動降級使用 X-User-Id:', e.message);
-                }
-            }
-            // 同時帶上 X-User-Id 作為回退（過渡期間）
-            const userId = getUserId();
-            if (userId) headers['X-User-Id'] = userId;
+            Object.assign(headers, getAuthHeaders());
         }
         return { ...headers, ...customHeaders };
     }

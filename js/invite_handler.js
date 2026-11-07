@@ -1,6 +1,7 @@
 import { apiBase, liffId } from '../env/config.js';
 import { setInnerHTML } from "../helper/security.js";
 import { toast } from "../helper/toast.js";
+import { getAuthHeaders } from "../helper/state.js";
 
 // Debug mode 偵測
 const urlParams = new URLSearchParams(window.location.search);
@@ -162,7 +163,7 @@ async function acceptInvite() {
     try {
         const res = await fetch(`${API_BASE}/team/invite/accept`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
             body: JSON.stringify({
                 token,
                 userId: userProfile.userId,

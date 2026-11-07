@@ -2,8 +2,10 @@
  * 認證中間件 - 驗證使用者身份
  *
  * 支援兩種模式：
- * 1. LIFF Token 驗證（正式環境）：透過 LINE LIFF API 驗證 access token
- * 2. User ID 直接傳遞（開發環境）：僅在 AUTH_MODE !== 'liff' 時允許
+ * 1. LIFF Token 驗證（預設，正式環境）：透過 LINE API 驗證 access token，
+ *    並確認 token 是發給本專案的 Channel（client_id 比對 LIFF_CHANNEL_ID）
+ * 2. User ID 直接傳遞（僅本機開發）：必須明確設定 AUTH_MODE = "legacy" 才會啟用，
+ *    未設定時一律視為 liff（預設拒絕）
  */
 import { jsonResponse } from "../lib/utils.js";
 
@@ -11,9 +13,14 @@ import { jsonResponse } from "../lib/utils.js";
  * 驗證 LIFF Access Token，取得真實的 userId
  *
  * @param {string} accessToken - LIFF access token
+ * @param {Object} env - 需包含 LIFF_CHANNEL_ID
  * @returns {Promise<{valid: boolean, userId?: string, error?: string}>}
  */
-async function verifyLiffToken(accessToken) {
+async function verifyLiffToken(accessToken, env) {
+    // 沒設定 Channel ID 就無法確認 token 的發行對象，寧可拒絕也不放行
+    if (!env.LIFF_CHANNEL_ID) {
+        return { valid: false, error: "Server misconfigured: LIFF_CHANNEL_ID missing" };
+    }
     try {
         // 使用 LINE 的 verify API 驗證 access token
         const verifyRes = await fetch(
@@ -29,6 +36,11 @@ async function verifyLiffToken(accessToken) {
         // 檢查 token 是否過期
         if (verifyData.expires_in <= 0) {
             return { valid: false, error: "Access token expired" };
+        }
+
+        // 確認 token 是發給本專案的 Channel，避免其他 LINE 應用的 token 被接受
+        if (String(verifyData.client_id) !== String(env.LIFF_CHANNEL_ID)) {
+            return { valid: false, error: "Access token was issued for a different channel" };
         }
 
         // 使用 access token 取得用戶 profile（包含 userId）
@@ -56,21 +68,22 @@ async function verifyLiffToken(accessToken) {
  * 認證中間件
  *
  * - 正式環境（AUTH_MODE === 'liff'）：從 Authorization header 讀取 LIFF token 並驗證
- * - 開發環境：允許 X-User-Id header 直接傳遞（僅限開發）
+ * - 其他情況（含未設定）一律走 liff；只有 AUTH_MODE === 'legacy' 才允許 X-User-Id（僅限本機開發）
  *
  * @param {Request} request
  * @param {Object} env
  * @returns {Promise<{authenticated: boolean, userId?: string, error?: string}>}
  */
 export async function authenticate(request, env) {
-    const authMode = env.AUTH_MODE || "legacy";
+    // 預設 liff（安全預設）；只有明確設定 "legacy" 才會信任 X-User-Id
+    const authMode = env.AUTH_MODE === "legacy" ? "legacy" : "liff";
 
     // 檢查 Authorization header（LIFF token）
     const authHeader = request.headers.get("Authorization");
 
     if (authHeader && authHeader.startsWith("Bearer ")) {
         const token = authHeader.substring(7);
-        const result = await verifyLiffToken(token);
+        const result = await verifyLiffToken(token, env);
 
         if (result.valid) {
             return { authenticated: true, userId: result.userId };

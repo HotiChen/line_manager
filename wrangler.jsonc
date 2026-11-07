@@ -10,11 +10,11 @@
   ],
   "vars": {
     "LIFF_ID": "1653928585-8Kkz0jnz",
+    "LIFF_CHANNEL_ID": "1653928585",
     "AUTH_MODE": "liff"
   },
   // 以下 secrets 需透過 `wrangler secret put` 設定，不要寫在這裡：
   // - MIGRATION_SECRET: migration API 的驗證金鑰
-  // - LIFF_CHANNEL_ID: LIFF Channel ID（用於驗證 LIFF access token）
   "env": {
     "dev": {
       "name": "pinti-line-dev",
@@ -27,6 +27,7 @@
       ],
       "vars": {
         "LIFF_ID": "1653928585-8Kkz0jnz",
+        "LIFF_CHANNEL_ID": "1653928585",
         "BASE_URL": "http://127.0.0.1:5500",
         "AUTH_MODE": "legacy"
       }

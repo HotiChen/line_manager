@@ -98,7 +98,9 @@ export default {
       pathname.startsWith("/tier") || pathname.startsWith("/flow") || pathname.startsWith("/stats") ||
       pathname.startsWith("/user/bot") || pathname.startsWith("/image") ||
       // /team routes — exclude /team/invite/preview which is public
-      (pathname.startsWith("/team") && pathname !== "/team/invite/preview");
+      (pathname.startsWith("/team") && pathname !== "/team/invite/preview") ||
+      // /api routes — exclude /api/webhook (public, verified by LINE signature)
+      (pathname.startsWith("/api") && pathname !== "/api/webhook");
 
     let userId = null;
 
@@ -113,8 +115,8 @@ export default {
       const rateLimitResponse = await rateLimitMiddleware(env, userId);
       if (rateLimitResponse) return rateLimitResponse;
     } else {
-      // 非認證 API（如 webhook、debug、admin），從 header 取得 userId（可選）
-      userId = request.headers.get("X-User-Id") || url.searchParams.get("userId");
+      // 非認證 API（如 webhook、debug、admin）不信任任何自報的 userId
+      userId = null;
     }
 
     // 🆕 等級系統 API (最優先處理)

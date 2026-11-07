@@ -105,3 +105,36 @@ export function clearUserId() {
 
 export const apiBase = config.apiBase;
 export const debug = config.debug;
+
+/**
+ * 取得驗證用的請求標頭。
+ *
+ * Why:
+ * - 後端預設只認 LIFF access token（Authorization: Bearer），不再信任自報的 X-User-Id。
+ * - 只有本機開發（localhost）才會附帶 X-User-Id，對應後端 AUTH_MODE = "legacy"。
+ *
+ * Post-conditions:
+ * - 正式環境：已登入 LIFF 則回傳 { Authorization }，否則回傳空物件
+ * - 本機開發：額外回傳 { 'X-User-Id' }
+ *
+ * @returns {Object} headers
+ */
+export function getAuthHeaders() {
+    const headers = {};
+    const isLocalHost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    try {
+        // eslint-disable-next-line no-undef
+        if (typeof liff !== 'undefined' && typeof liff.isLoggedIn === 'function' && liff.isLoggedIn()) {
+            // eslint-disable-next-line no-undef
+            const accessToken = liff.getAccessToken();
+            if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+        }
+    } catch (e) {
+        console.warn('⚠️ [State] LIFF 尚未初始化，無法取得 access token:', e.message);
+    }
+    if (isLocalHost) {
+        const userId = getUserId();
+        if (userId) headers['X-User-Id'] = userId;
+    }
+    return headers;
+}
