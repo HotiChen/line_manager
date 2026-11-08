@@ -105,3 +105,46 @@ export function clearUserId() {
 
 export const apiBase = config.apiBase;
 export const debug = config.debug;
+
+/**
+ * 取得驗證用的請求標頭。
+ *
+ * Why:
+ * - 後端預設只認 LIFF access token（Authorization: Bearer），不再信任自報的
+ *   X-User-Id —— 任何人都能填那個 header，後端會拿它去 KV 讀該使用者的資料。
+ * - 只有本機開發（localhost / 127.0.0.1）才附帶 X-User-Id，對應後端
+ *   wrangler.jsonc dev 環境的 AUTH_MODE = "legacy"。
+ * - 集中在這裡是因為先前 api.client.js 和 message.helper.js 各組一份 header，
+ *   後者只送 X-User-Id，於是 /keyword/list、/tag/list 在正式環境一律 401。
+ *
+ * Post-conditions:
+ * - 正式環境：已登入 LIFF 回傳 { Authorization }，否則回傳空物件（讓後端回 401，
+ *   而不是用一個假身分成功）
+ * - 本機開發：額外回傳 { 'X-User-Id' }
+ *
+ * @returns {Object} headers
+ */
+export function getAuthHeaders() {
+    const headers = {};
+
+    try {
+        // eslint-disable-next-line no-undef
+        if (typeof liff !== 'undefined' && typeof liff.isLoggedIn === 'function' && liff.isLoggedIn()) {
+            // eslint-disable-next-line no-undef
+            const accessToken = liff.getAccessToken();
+            if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+        }
+    } catch (e) {
+        // LIFF SDK 尚未 init 是預期狀況，不阻擋請求；後端會以 401 回應
+        console.warn('⚠️ [State] LIFF 尚未初始化，無法取得 access token:', e.message);
+    }
+
+    const isLocalHost = typeof window !== 'undefined' &&
+        ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    if (isLocalHost) {
+        const userId = getUserId();
+        if (userId) headers['X-User-Id'] = userId;
+    }
+
+    return headers;
+}

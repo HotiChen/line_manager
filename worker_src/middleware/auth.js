@@ -2,18 +2,31 @@
  * 認證中間件 - 驗證使用者身份
  *
  * 支援兩種模式：
- * 1. LIFF Token 驗證（正式環境）：透過 LINE LIFF API 驗證 access token
- * 2. User ID 直接傳遞（開發環境）：僅在 AUTH_MODE !== 'liff' 時允許
+ * 1. LIFF Token 驗證（預設，正式環境）：透過 LINE API 驗證 access token，
+ *    並確認該 token 是發給本專案 Channel 的（client_id 比對 LIFF_CHANNEL_ID）
+ * 2. User ID 直接傳遞（僅本機開發）：必須明確設定 AUTH_MODE === "legacy" 才啟用
  */
 import { jsonResponse } from "../lib/utils.js";
 
 /**
  * 驗證 LIFF Access Token，取得真實的 userId
  *
+ * token「有效」不等於「是發給本站的」。LINE 的 verify API 會對任何 LINE
+ * 應用發出的 token 回 200，profile 也查得到真實 userId——所以少了 client_id
+ * 比對，別的 LINE app 的使用者可以直接拿他自己的 token 通過本站認證，
+ * 而他從未授權過本站。client_id 就是這個 token 的發行對象。
+ *
  * @param {string} accessToken - LIFF access token
+ * @param {Object} env - 需包含 LIFF_CHANNEL_ID
  * @returns {Promise<{valid: boolean, userId?: string, error?: string}>}
  */
-async function verifyLiffToken(accessToken) {
+async function verifyLiffToken(accessToken, env) {
+    // 沒設定 Channel ID 就無從判斷 token 的歸屬。漏設一個環境變數不該
+    // 等於關掉這道檢查，所以這裡拒絕，而不是跳過比對放行。
+    if (!env || !env.LIFF_CHANNEL_ID) {
+        return { valid: false, error: "Server misconfigured: LIFF_CHANNEL_ID missing" };
+    }
+
     try {
         // 使用 LINE 的 verify API 驗證 access token
         const verifyRes = await fetch(
@@ -29,6 +42,12 @@ async function verifyLiffToken(accessToken) {
         // 檢查 token 是否過期
         if (verifyData.expires_in <= 0) {
             return { valid: false, error: "Access token expired" };
+        }
+
+        // 確認 token 是發給本專案 Channel 的，否則任何 LINE 應用的 token 都能通行。
+        // 兩邊都轉字串比較：verify API 回字串，env 若來自 JSON 設定可能是數字。
+        if (String(verifyData.client_id) !== String(env.LIFF_CHANNEL_ID)) {
+            return { valid: false, error: "Access token was issued for a different channel" };
         }
 
         // 使用 access token 取得用戶 profile（包含 userId）
@@ -58,8 +77,11 @@ async function verifyLiffToken(accessToken) {
  * - 正式環境（AUTH_MODE === 'liff'）：從 Authorization header 讀取 LIFF token 並驗證
  * - 開發環境（AUTH_MODE === 'legacy'）：允許 X-User-Id header 直接傳遞（僅限開發）
  *
- * Fail-closed：若 AUTH_MODE 未設定（例如部署時漏設），預設為 "liff"，
- * 避免意外退回 legacy 模式而讓 X-User-Id 偽冒身分通行。
+ * Fail-closed：只有 AUTH_MODE 明確等於 "legacy" 才啟用 X-User-Id 回退。
+ * 先前寫法是 `env.AUTH_MODE || "liff"`，未設定時確實會落在 liff，但只要值
+ * 不是空的就照用——打成 "dev"、"LEGACY"、"production" 之類的任何字串，
+ * authMode 都不等於 "liff"，於是掉進 legacy 分支讓 X-User-Id 直接通行。
+ * fail-closed 是「只有明確開啟才開」，不是「不是 liff 就開」。
  * wrangler.jsonc 已明確為 prod 設定 "liff"、dev 設定 "legacy"。
  *
  * @param {Request} request
@@ -67,14 +89,14 @@ async function verifyLiffToken(accessToken) {
  * @returns {Promise<{authenticated: boolean, userId?: string, error?: string}>}
  */
 export async function authenticate(request, env) {
-    const authMode = env.AUTH_MODE || "liff";
+    const authMode = env.AUTH_MODE === "legacy" ? "legacy" : "liff";
 
     // 檢查 Authorization header（LIFF token）
     const authHeader = request.headers.get("Authorization");
 
     if (authHeader && authHeader.startsWith("Bearer ")) {
         const token = authHeader.substring(7);
-        const result = await verifyLiffToken(token);
+        const result = await verifyLiffToken(token, env);
 
         if (result.valid) {
             return { authenticated: true, userId: result.userId };

@@ -4,6 +4,7 @@ const assetManifest = JSON.parse(manifestJSON);
 
 import { jsonResponse, getCorsHeaders } from "./lib/utils.js";
 import { authenticate } from "./middleware/auth.js";
+import { requiresAuthentication } from "./middleware/auth_routes.js";
 import { rateLimitMiddleware } from "./middleware/rate_limiter.js";
 import * as KeywordReplyHandler from "./handler/keyword_reply.js";
 import * as TagHandler from "./handler/tag.js";
@@ -90,15 +91,9 @@ export default {
     }
 
     // 2️⃣ API 請求處理 — 使用 auth middleware 驗證身份
-    // /team/invite/preview は公開エンドポイント（認証不要）、それ以外の /team/* は認証必須（SEC-001）
-    const requiresAuth = pathname.startsWith("/token") || pathname.startsWith("/richmenu") || pathname.startsWith("/alias") ||
-      pathname.startsWith("/flex") || pathname.startsWith("/imagemap") || pathname.startsWith("/profile") ||
-      pathname.startsWith("/member") || pathname.startsWith("/keyword") ||
-      pathname.startsWith("/tag") || pathname.startsWith("/quickreply") || pathname.startsWith("/quick_reply") ||
-      pathname.startsWith("/tier") || pathname.startsWith("/flow") || pathname.startsWith("/stats") ||
-      pathname.startsWith("/user/bot") || pathname.startsWith("/image") ||
-      // /team routes — exclude /team/invite/preview which is public
-      (pathname.startsWith("/team") && pathname !== "/team/invite/preview");
+    // 清單與例外（/team/invite/preview、/api/webhook）見 middleware/auth_routes.js，
+    // 抽出去是為了讓這道安全邊界能被單元測試覆蓋。
+    const requiresAuth = requiresAuthentication(pathname);
 
     let userId;
 
@@ -113,8 +108,10 @@ export default {
       const rateLimitResponse = await rateLimitMiddleware(env, userId);
       if (rateLimitResponse) return rateLimitResponse;
     } else {
-      // 非認證 API（如 webhook、debug、admin），從 header 取得 userId（可選）
-      userId = request.headers.get("X-User-Id") || url.searchParams.get("userId");
+      // 非認證 API（webhook、debug、admin）不信任任何自報的身分。
+      // 先前從 X-User-Id / ?userId 取值，等於讓未認證的呼叫者自選身分，
+      // 而下游 handler 會拿它去 KV 讀該使用者的資料與 token。
+      userId = null;
     }
 
     // 🆕 等級系統 API (最優先處理)

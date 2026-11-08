@@ -34,7 +34,7 @@ function makeRequest(headers = {}) {
 describe('authenticate - Legacy mode', () => {
     it('should authenticate with X-User-Id header in legacy mode', async () => {
         const { authenticate } = await loadAuth();
-        const env = { AUTH_MODE: 'legacy' };
+        const env = { AUTH_MODE: 'legacy', LIFF_CHANNEL_ID: 'test' };
         const request = makeRequest({ 'X-User-Id': 'U12345' });
 
         const result = await authenticate(request, env);
@@ -44,7 +44,7 @@ describe('authenticate - Legacy mode', () => {
 
     it('should authenticate with userId query param in legacy mode', async () => {
         const { authenticate } = await loadAuth();
-        const env = { AUTH_MODE: 'legacy' };
+        const env = { AUTH_MODE: 'legacy', LIFF_CHANNEL_ID: 'test' };
         const request = new Request('http://localhost/api/test?userId=U67890');
 
         const result = await authenticate(request, env);
@@ -54,7 +54,7 @@ describe('authenticate - Legacy mode', () => {
 
     it('should fail when no auth provided in legacy mode', async () => {
         const { authenticate } = await loadAuth();
-        const env = { AUTH_MODE: 'legacy' };
+        const env = { AUTH_MODE: 'legacy', LIFF_CHANNEL_ID: 'test' };
         const request = makeRequest({});
 
         const result = await authenticate(request, env);
@@ -78,7 +78,7 @@ describe('authenticate - Legacy mode', () => {
 describe('authenticate - LIFF mode', () => {
     it('should fail when no Authorization header in LIFF mode', async () => {
         const { authenticate } = await loadAuth();
-        const env = { AUTH_MODE: 'liff' };
+        const env = { AUTH_MODE: 'liff', LIFF_CHANNEL_ID: 'test' };
         const request = makeRequest({});
 
         const result = await authenticate(request, env);
@@ -89,7 +89,7 @@ describe('authenticate - LIFF mode', () => {
         // SEC-002: LIFF 模式下已禁用 X-User-Id 回退，必須提供 Authorization header。
         // 此測試驗證新的正確行為：有 X-User-Id 但沒有 Authorization，應被拒絕。
         const { authenticate } = await loadAuth();
-        const env = { AUTH_MODE: 'liff' };
+        const env = { AUTH_MODE: 'liff', LIFF_CHANNEL_ID: 'test' };
         const request = makeRequest({ 'X-User-Id': 'Ufallback' });
 
         const result = await authenticate(request, env);
@@ -99,7 +99,7 @@ describe('authenticate - LIFF mode', () => {
 
     it('should reject invalid Bearer token', async () => {
         const { authenticate } = await loadAuth();
-        const env = { AUTH_MODE: 'liff' };
+        const env = { AUTH_MODE: 'liff', LIFF_CHANNEL_ID: 'test' };
 
         // Mock LINE API to return error
         mockFetch(async (url) => {
@@ -118,7 +118,7 @@ describe('authenticate - LIFF mode', () => {
 
     it('should accept valid Bearer token and extract userId', async () => {
         const { authenticate } = await loadAuth();
-        const env = { AUTH_MODE: 'liff' };
+        const env = { AUTH_MODE: 'liff', LIFF_CHANNEL_ID: 'test' };
 
         // Mock LINE API: verify → ok, profile → userId
         mockFetch(async (url) => {
@@ -143,7 +143,7 @@ describe('authenticate - LIFF mode', () => {
 
     it('should reject expired token', async () => {
         const { authenticate } = await loadAuth();
-        const env = { AUTH_MODE: 'liff' };
+        const env = { AUTH_MODE: 'liff', LIFF_CHANNEL_ID: 'test' };
 
         mockFetch(async (url) => {
             if (url.includes('oauth2/v2.1/verify')) {
@@ -164,11 +164,11 @@ describe('authenticate - LIFF mode', () => {
 
     it('should reject when profile has no userId', async () => {
         const { authenticate } = await loadAuth();
-        const env = { AUTH_MODE: 'liff' };
+        const env = { AUTH_MODE: 'liff', LIFF_CHANNEL_ID: 'test' };
 
         mockFetch(async (url) => {
             if (url.includes('oauth2/v2.1/verify')) {
-                return new Response(JSON.stringify({ expires_in: 3600 }), { status: 200 });
+                return new Response(JSON.stringify({ expires_in: 3600, client_id: 'test' }), { status: 200 });
             }
             if (url.includes('v2/profile')) {
                 return new Response(JSON.stringify({ displayName: 'NoId' }), { status: 200 });
@@ -188,11 +188,11 @@ describe('authenticate - LIFF mode', () => {
 
     it('should reject when profile API fails', async () => {
         const { authenticate } = await loadAuth();
-        const env = { AUTH_MODE: 'liff' };
+        const env = { AUTH_MODE: 'liff', LIFF_CHANNEL_ID: 'test' };
 
         mockFetch(async (url) => {
             if (url.includes('oauth2/v2.1/verify')) {
-                return new Response(JSON.stringify({ expires_in: 3600 }), { status: 200 });
+                return new Response(JSON.stringify({ expires_in: 3600, client_id: 'test' }), { status: 200 });
             }
             if (url.includes('v2/profile')) {
                 return new Response('Unauthorized', { status: 401 });
@@ -213,11 +213,11 @@ describe('authenticate - LIFF mode', () => {
 describe('authenticate - Bearer token takes priority', () => {
     it('should use Bearer token over X-User-Id in legacy mode', async () => {
         const { authenticate } = await loadAuth();
-        const env = { AUTH_MODE: 'legacy' };
+        const env = { AUTH_MODE: 'legacy', LIFF_CHANNEL_ID: 'test' };
 
         mockFetch(async (url) => {
             if (url.includes('oauth2/v2.1/verify')) {
-                return new Response(JSON.stringify({ expires_in: 3600 }), { status: 200 });
+                return new Response(JSON.stringify({ expires_in: 3600, client_id: 'test' }), { status: 200 });
             }
             if (url.includes('v2/profile')) {
                 return new Response(JSON.stringify({ userId: 'UfromToken' }), { status: 200 });
@@ -240,7 +240,7 @@ describe('authenticate - Bearer token takes priority', () => {
 
     it('should reject if Bearer token is provided but invalid, even with valid X-User-Id', async () => {
         const { authenticate } = await loadAuth();
-        const env = { AUTH_MODE: 'legacy' };
+        const env = { AUTH_MODE: 'legacy', LIFF_CHANNEL_ID: 'test' };
 
         mockFetch(async () => {
             return new Response('Bad', { status: 400 });
@@ -271,7 +271,7 @@ describe('withAuth', () => {
         };
 
         const wrapped = withAuth(handler);
-        const env = { AUTH_MODE: 'legacy' };
+        const env = { AUTH_MODE: 'legacy', LIFF_CHANNEL_ID: 'test' };
         const request = makeRequest({ 'X-User-Id': 'Uwrapped123' });
 
         await wrapped(request, env);
@@ -283,7 +283,7 @@ describe('withAuth', () => {
         const handler = async () => new Response('Should not reach');
 
         const wrapped = withAuth(handler);
-        const env = { AUTH_MODE: 'legacy' };
+        const env = { AUTH_MODE: 'legacy', LIFF_CHANNEL_ID: 'test' };
         const request = makeRequest({});
 
         const res = await wrapped(request, env);

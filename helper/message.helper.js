@@ -2,7 +2,7 @@
 
 import { showLoader, hideLoader } from '../js/shared/loader.js';
 import { apiBase } from "../env/config.js";
-import { getUserId } from "./state.js";
+import { getAuthHeaders } from "./state.js";
 
 // 🎯 版本資訊
 export const HELPER_VERSION = "2.1.0"; // Bump version for refactoring
@@ -64,7 +64,8 @@ const messageCache = new MessageCache();
 async function apiClient(endpoint, options = {}) {
   const { method = 'GET', body = null, headers = {}, responseType = 'json' } = options;
 
-  const defaultHeaders = { 'X-User-Id': getUserId() };
+  // 只送 X-User-Id 的話，/keyword/list 與 /tag/list 在正式環境（AUTH_MODE=liff）一律 401
+  const defaultHeaders = { ...getAuthHeaders() };
   if (body && typeof body === 'object' && !(body instanceof FormData)) {
     defaultHeaders['Content-Type'] = 'application/json';
   }
