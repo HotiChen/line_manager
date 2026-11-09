@@ -22,8 +22,13 @@
       "name": "pinti-line-dev",
       "kv_namespaces": [
         {
-          "id": "7cbba24c35ad464d875ef1fc5107604e",
-          "preview_id": "7cbba24c35ad464d875ef1fc5107604e",
+          // dev 專用 namespace（title: pinti-line-dev-dev-KV_LINE_STORAGE）。
+          // 先前 dev 與 prod 都指向 7cbba24c…，而 dev 的 AUTH_MODE 是 legacy
+          // （接受自報的 X-User-Id 當身分），等於本機跑 wrangler dev --env dev
+          // 就能用任意身分讀寫正式環境的 924 筆資料。tests/unit/test_wrangler_config.mjs
+          // 會擋住再次指回去。
+          "id": "134f95b543c4447e872a782be652b13c",
+          "preview_id": "134f95b543c4447e872a782be652b13c",
           "binding": "KV_LINE_STORAGE"
         }
       ],
