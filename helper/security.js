@@ -4,21 +4,51 @@
  */
 
 /**
+ * 把 HTML 的特殊字元逸出成實體，讓標記失去作用、只剩字面文字。
+ *
+ * 這是 DOMPurify 缺席時的退路，不是平常的消毒手段——逸出後的字串寫進
+ * innerHTML 只會顯示字面標記，不會建立任何節點，所以 script / onerror /
+ * onload 一律無從執行。
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function escapeHTML(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
  * 清理 HTML 字串，防止惡意腳本執行。
- * 
+ *
  * @param {string} dirtyHTML - 未過濾的 HTML 字串
  * @returns {string} 安全的 HTML 字串
- * 
- * Pre-conditions: 
- * - 需在 index.html 載入 DOMPurify 
+ *
+ * Pre-conditions:
+ * - 正常情況下 index.html 已載入 DOMPurify
  * Post-conditions:
- * - 回傳已清除潛在 XSS 威脅的 HTML，若 DOMPurify 不存在則回傳原值並警告
+ * - DOMPurify 可用：回傳它消毒後的 HTML
+ * - DOMPurify 不可用：回傳逸出後的純文字（fail-closed）
+ *
+ * Why fail-closed:
+ * 這個函式是 setInnerHTML() 的唯一出口，而 setInnerHTML 有上百個呼叫點。
+ * 先前缺少 DOMPurify 時會「回傳原值並警告」——DOMPurify 是從 CDN 載入的，
+ * CDN 掛掉、被牆或被 CSP 擋掉的那一刻，所有注入點同時從已消毒變成原始
+ * HTML 直寫 DOM，而唯一的徵兆是 console 一行 warn。消毒失敗時讓標記
+ * 失效才是正確的退路：畫面會顯示字面標記，看得見的壞勝過看不見的 XSS。
  */
 export function safeHTML(dirtyHTML) {
-  if (typeof window.DOMPurify === 'undefined') {
-    console.warn('🛡️ [Security] DOMPurify 未載入，將回傳原始內容。');
-    return dirtyHTML;
+  if (dirtyHTML === null || dirtyHTML === undefined) return '';
+
+  if (typeof window === 'undefined' || typeof window.DOMPurify === 'undefined') {
+    console.warn('🛡️ [Security] DOMPurify 未載入，內容已逸出為純文字（fail-closed）。');
+    return escapeHTML(dirtyHTML);
   }
+
   return window.DOMPurify.sanitize(dirtyHTML);
 }
 
