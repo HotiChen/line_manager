@@ -1,21 +1,21 @@
 // lib/imagemap.js
 
 import { jsonResponse } from "../lib/utils.js";
+import { openBotStore } from "../lib/bot_store.js";
 
 export async function handleSaveImagemapData(request, env, userId) {
   const { imagemaps } = await request.json();
   if (!Array.isArray(imagemaps)) return jsonResponse({ error: "Invalid imagemap data" }, 400);
 
-  await env.KV_LINE_STORAGE.put(`imagemap_${userId}`, JSON.stringify(imagemaps));
+  const store = await openBotStore(env, userId);
+  await store.put('imagemaps', imagemaps);
   return jsonResponse({ success: true, message: `已儲存 ${imagemaps.length} 筆 ImageMap` });
 }
 
 export async function handleListImagemaps(env, userId) {
   try {
-    const key = `imagemap_${userId}`;
-    const raw = await env.KV_LINE_STORAGE.get(key);
-    if (!raw) return jsonResponse({ success: true, imagemaps: [] });
-    return jsonResponse({ success: true, imagemaps: JSON.parse(raw) });
+    const store = await openBotStore(env, userId);
+    return jsonResponse({ success: true, imagemaps: await store.getOr('imagemaps', []) });
   } catch (err) {
     console.error("[handleListImagemaps] ❌", err);
     return jsonResponse({ error: err.message }, 500);

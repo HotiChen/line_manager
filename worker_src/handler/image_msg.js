@@ -1,14 +1,13 @@
 import { jsonResponse } from "../lib/utils.js";
+import { openBotStore } from "../lib/bot_store.js";
  
 /**
   * 處理讀取圖片訊息列表的請求。
   * 會從單一的 KV 鍵中讀取整個列表。
   */
 export async function handleListImageMessages(env, userId) {
-    const key = `image_list_${userId}`;
-    const value = await env.KV_LINE_STORAGE.get(key);
-
-    const imageMessages = value ? JSON.parse(value) : [];
+    const store = await openBotStore(env, userId);
+    const imageMessages = await store.getOr('images', []);
 
     // 前端 helper 預期收到的 key 是 'images'
     return jsonResponse({ images: imageMessages });
@@ -33,8 +32,8 @@ export async function handleSyncImageMessages(request, env, userId) {
         return item;
     });
 
-    const key = `image_list_${userId}`;
-    await env.KV_LINE_STORAGE.put(key, JSON.stringify(processedImages));
+    const store = await openBotStore(env, userId);
+    await store.put('images', processedImages);
 
     return jsonResponse({ success: true, message: `成功同步 ${processedImages.length} 個圖片訊息。` });
 }

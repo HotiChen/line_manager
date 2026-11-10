@@ -1,15 +1,13 @@
 import { jsonResponse } from "../lib/utils.js";
+import { openBotStore } from "../lib/bot_store.js";
 
 /**
 * (新) 處理讀取 Flex Message 列表的請求。
 * 現在會從單一的 KV 鍵中讀取整個列表。
 */
 export async function handleListFlexMessages(env, userId) {
-  const key = `flex_list_${userId}`;
-  const value = await env.KV_LINE_STORAGE.get(key);
-
-  // 如果沒有值，回傳一個空陣列
-  const flexMessages = value ? JSON.parse(value) : [];
+  const store = await openBotStore(env, userId);
+  const flexMessages = await store.getOr('flexList', []);
 
   // 為了符合前端 helper 的預期，我們回傳的物件 key 是 'flexs'
   return jsonResponse({ success: true, flexs: flexMessages });
@@ -34,9 +32,8 @@ export async function handleSyncFlexMessages(request, env, userId) {
   });
   // --- 邏輯結束 ---
 
-  const key = `flex_list_${userId}`;
-  // 儲存處理過的列表
-  await env.KV_LINE_STORAGE.put(key, JSON.stringify(processedFlexs));
+  const store = await openBotStore(env, userId);
+  await store.put('flexList', processedFlexs);
 
   return jsonResponse({ success: true, message: `成功同步 ${processedFlexs.length} 個 Flex Message。` });
 

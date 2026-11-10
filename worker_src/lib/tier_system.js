@@ -1,5 +1,10 @@
 /**
  * 會員等級系統核心邏輯
+ *
+ * 所有函式收 BotStore 而不是 (env, userId)：等級設定與會員 profile 都是
+ * per-bot 的資料，而 botId 只有呼叫端知道（後台看的是使用者選的 bot，
+ * webhook 看的是 LINE 的 destination）。在這一層自己去猜等於把
+ * 「寫錯官方帳號」變成一個不會報錯的 bug。
  */
 import * as logger from '../utils/logger.js';
 import { linkRichMenuToUser, unlinkRichMenuFromUser } from './line_client.js';
@@ -42,11 +47,10 @@ const DEFAULT_TIER_CONFIG = {
  * getTierConfig
  * 取得等級全局配置
  */
-export async function getTierConfig(env, userId) {
-    const key = `tier_config_${userId}`;
-    const config = await env.KV_LINE_STORAGE.get(key, { type: 'json' });
+export async function getTierConfig(store) {
+    const config = await store.get('tierConfig');
     if (!config) {
-        await env.KV_LINE_STORAGE.put(key, JSON.stringify(DEFAULT_TIER_CONFIG));
+        await store.put('tierConfig', DEFAULT_TIER_CONFIG);
         return DEFAULT_TIER_CONFIG;
     }
     return { ...DEFAULT_TIER_CONFIG, ...config };
@@ -56,11 +60,10 @@ export async function getTierConfig(env, userId) {
  * updateTierConfig
  * 更新等級全局配置
  */
-export async function updateTierConfig(env, userId, newConfig) {
-    const key = `tier_config_${userId}`;
-    const current = await getTierConfig(env, userId);
+export async function updateTierConfig(store, newConfig) {
+    const current = await getTierConfig(store);
     const merged = { ...current, ...newConfig };
-    await env.KV_LINE_STORAGE.put(key, JSON.stringify(merged));
+    await store.put('tierConfig', merged);
     return merged;
 }
 
@@ -68,9 +71,8 @@ export async function updateTierConfig(env, userId, newConfig) {
  * setMemberTier
  * 手動設定特定會員等級
  */
-export async function setMemberTier(env, userId, lineUserId, tier) {
-    const profileKey = `member_profile_${userId}_${lineUserId}`;
-    const profile = JSON.parse(await env.KV_LINE_STORAGE.get(profileKey) || "{}");
+export async function setMemberTier(store, lineUserId, tier) {
+    const profile = await store.getOr('member', {}, lineUserId);
 
     if (!profile.memberId) {
         return { success: false, error: "會員不存在" };
@@ -80,7 +82,7 @@ export async function setMemberTier(env, userId, lineUserId, tier) {
     profile.tier = tier;
     profile.lastTierUpdate = new Date().toISOString();
     profile.tierSetBy = "manual";
-    await env.KV_LINE_STORAGE.put(profileKey, JSON.stringify(profile));
+    await store.put('member', profile, lineUserId);
 
     return { success: true, oldTier, newTier: tier };
 }
@@ -89,34 +91,34 @@ export async function setMemberTier(env, userId, lineUserId, tier) {
  * getTierStatistics
  * 取得各等級的會員統計數據
  */
-export async function getTierStatistics(env, userId) {
-    const config = await getTierConfig(env, userId);
-    const prefix = `member_profile_${userId}_`;
-    const list = await env.KV_LINE_STORAGE.list({ prefix });
+export async function getTierStatistics(store) {
+    const config = await getTierConfig(store);
+    // listIds 回新舊兩個命名空間的聯集，所以回填期間不會少算會員
+    const memberIds = await store.listIds('member');
 
     const stats = {};
     for (const t of config.tiers) {
         stats[t.id] = { name: t.name, icon: t.icon, count: 0 };
     }
 
-    for (const key of list.keys) {
-        const profile = await env.KV_LINE_STORAGE.get(key.name, { type: "json" });
+    for (const memberId of memberIds) {
+        const profile = await store.get('member', memberId);
         const tierId = profile?.tier || 0;
         if (stats[tierId]) {
             stats[tierId].count++;
         }
     }
 
-    return { tiers: stats, total: list.keys.length };
+    return { tiers: stats, total: memberIds.length };
 }
 
 /**
  * getMemberTier
  * 取得特定會員目前等級資訊
  */
-export async function getMemberTier(env, userId, lineUserId) {
-    const profile = JSON.parse(await env.KV_LINE_STORAGE.get(`member_profile_${userId}_${lineUserId}`) || "{}");
-    const config = await getTierConfig(env, userId);
+export async function getMemberTier(store, lineUserId) {
+    const profile = await store.getOr('member', {}, lineUserId);
+    const config = await getTierConfig(store);
     const tierId = profile.tier || 0;
     const info = config.tiers.find(t => t.id === tierId) || config.tiers[0];
 
@@ -136,13 +138,12 @@ export async function getMemberTier(env, userId, lineUserId) {
  * Post-conditions:
  * - 若符合條件則更新會員等級並同步選單
  */
-export async function checkTierUpgrade(env, userId, lineUserId) {
+export async function checkTierUpgrade(store, lineUserId) {
     try {
-        const profileKey = `member_profile_${userId}_${lineUserId}`;
-        const profile = JSON.parse(await env.KV_LINE_STORAGE.get(profileKey) || "{}");
+        const profile = await store.getOr('member', {}, lineUserId);
         if (!profile?.memberId) return { upgraded: false, tier: 0 };
 
-        const config = await getTierConfig(env, userId);
+        const config = await getTierConfig(store);
         const currentTier = profile.tier || 0;
         let newTier = currentTier;
 
@@ -166,10 +167,10 @@ export async function checkTierUpgrade(env, userId, lineUserId) {
 
         profile.tier = newTier;
         profile.lastTierUpdate = new Date().toISOString();
-        await env.KV_LINE_STORAGE.put(profileKey, JSON.stringify(profile));
+        await store.put('member', profile, lineUserId);
 
         if (config.benefits?.richMenu?.enabled) {
-            await syncTierRichMenu(env, userId, lineUserId, newTier);
+            await syncTierRichMenu(store, lineUserId, newTier);
         }
 
         return { upgraded: true, oldTier: currentTier, newTier };
@@ -179,10 +180,11 @@ export async function checkTierUpgrade(env, userId, lineUserId) {
     }
 }
 
-async function syncTierRichMenu(env, userId, lineUserId, tierId) {
-    const accessToken = await getCurrentAccessToken(env, userId);
+async function syncTierRichMenu(store, lineUserId, tierId) {
+    // token 的存放不在 bot_store 的管轄範圍（見 token_store.js），仍以 owner 為 key
+    const accessToken = await getCurrentAccessToken(store.env, store.userId);
     if (accessToken) {
-        await applyTierRichMenu(env, userId, lineUserId, tierId, accessToken);
+        await applyTierRichMenu(store, lineUserId, tierId, accessToken);
     }
 }
 
@@ -191,8 +193,8 @@ function calculateDaysSince(date) {
     return Math.ceil(Math.abs(new Date() - new Date(date)) / (1000 * 60 * 60 * 24));
 }
 
-export async function applyTierRichMenu(env, userId, lineUserId, tierId, accessToken) {
-    const config = await getTierConfig(env, userId);
+export async function applyTierRichMenu(store, lineUserId, tierId, accessToken) {
+    const config = await getTierConfig(store);
     const tier = config.tiers.find(t => t.id === tierId);
     if (!tier) return;
 

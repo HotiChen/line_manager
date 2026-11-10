@@ -144,17 +144,18 @@ async function routeEvent(event, env, userId, accessToken, ctx, destination) {
         return null;
     }
 
+    // destination 就是 botId，每一種事件都要拿到它：它決定資料寫進哪個
+    // 命名空間（bot:${botId}:*）。少了它，同一個 owner 底下兩個官方帳號的
+    // 會員會混在一起，而且事後分不回去。
     switch (event.type) {
         case 'message':
-            return EventHandler.handleMessageEvent(event, env, userId, accessToken, ctx);
+            return EventHandler.handleMessageEvent(event, env, userId, accessToken, ctx, destination);
         case 'follow':
-            // destination 就是 botId。傳下去讓會員資料記得自己屬於哪個官方帳號 ——
-            // 少了它，同一個 owner 底下兩個帳號的會員會混在一起且事後分不回去。
             return EventHandler.handleFollowEvent(event, env, userId, accessToken, ctx, destination);
         case 'unfollow':
-            return EventHandler.handleUnfollowEvent(event, env, userId);
+            return EventHandler.handleUnfollowEvent(event, env, userId, destination);
         case 'postback':
-            return EventHandler.handlePostbackEvent(event, env, userId, accessToken, ctx);
+            return EventHandler.handlePostbackEvent(event, env, userId, accessToken, ctx, destination);
         default:
             logger.debug('EVENT', `跳過不處理的事件類型: ${event.type}`);
             return null;

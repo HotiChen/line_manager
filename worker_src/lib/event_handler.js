@@ -1,6 +1,17 @@
 /**
  * LINE Webhook 事件處理器
  * 處理各種 LINE 事件類型
+ *
+ * ## botId 從哪裡來
+ *
+ * 每個 export 的事件處理器都收一個 botId —— LINE webhook body 的
+ * `destination`，由 webhook.js 傳進來。那是這個事件屬於哪個官方帳號的
+ * 唯一權威來源。
+ *
+ * **不可以用 resolveBotId(userId) 回推。** 那回傳的是「這個 owner 現在
+ * 在後台選的 bot」，而 webhook 完全不受後台操作影響：owner 正在看 B 帳號
+ * 的時候，A 帳號收到的訊息會被寫進 B 的命名空間 —— 不會報錯，只是會員
+ * 跑到隔壁去，而且事後分不回來。
  */
 import * as logger from '../utils/logger.js';
 import { findMatchingKeyword } from './keyword_matcher.js';
@@ -9,6 +20,7 @@ import { incrementMessageCount } from './message_stats.js';
 import { syncMemberRichMenu } from './segmented_richmenu_logic.js';
 import { addTagsToEntity, removeTagsFromEntity } from './tag_system.js';
 import { getMemberTier, checkTierUpgrade } from './tier_system.js';
+import { openBotStoreFor } from './bot_store.js';
 
 /**
  * 把 botId 併進會員的 botIds。
@@ -37,15 +49,13 @@ function withBotId(profile, botId) {
  * @param {string} [botId] - 事件來源的 LINE destination。缺少時會員照常建立，
  *   只是這筆資料無法歸屬到特定官方帳號。
  */
-async function recordMemberInteraction(event, env, userId, accessToken, botId) {
+async function recordMemberInteraction(event, store, accessToken, botId) {
     try {
         const lineUserId = event.source.userId;
-        const profileKey = `member_profile_${userId}_${lineUserId}`;
-        const listKey = `member_list_${userId}`;
 
         logger.info('RECORD_MEMBER', `開始記錄會員互動: ${lineUserId}`);
 
-        let profile = JSON.parse(await env.KV_LINE_STORAGE.get(profileKey) || "{}");
+        let profile = await store.getOr('member', {}, lineUserId);
         const isNew = !profile.memberId;
 
         logger.info('RECORD_MEMBER', `會員狀態: ${isNew ? '新會員' : '現有會員'}`);
@@ -66,10 +76,10 @@ async function recordMemberInteraction(event, env, userId, accessToken, botId) {
             withBotId(profile, botId);
 
             // 更新會員列表
-            const list = JSON.parse(await env.KV_LINE_STORAGE.get(listKey) || "[]");
+            const list = await store.getOr('members', []);
             if (!list.includes(lineUserId)) {
                 list.push(lineUserId);
-                await env.KV_LINE_STORAGE.put(listKey, JSON.stringify(list));
+                await store.put('members', list);
             }
             logger.info('RECORD_MEMBER', '新會員資料已建立');
         } else {
@@ -81,7 +91,7 @@ async function recordMemberInteraction(event, env, userId, accessToken, botId) {
             logger.info('RECORD_MEMBER', '現有會員資料已更新');
         }
 
-        await env.KV_LINE_STORAGE.put(profileKey, JSON.stringify(profile));
+        await store.put('member', profile, lineUserId);
         logger.info('RECORD_MEMBER', '會員資料已儲存至 KV');
         return profile;
     } catch (error) {
@@ -143,29 +153,13 @@ function replaceMessageVariables(messages, variables) {
 /**
  * 取得 Quick Reply 模板
  */
-async function getQuickReplyTemplate(env, userId, qrId) {
+async function getQuickReplyTemplate(store, qrId) {
     try {
-        let qrList = [];
-        let foundKey = '';
-        const key1 = `quick_reply_list_${userId}`;
-        qrList = await env.KV_LINE_STORAGE.get(key1, { type: 'json' }) || [];
-        if (qrList.length > 0) {
-            foundKey = key1;
-        } else {
-            const key2 = `bot:${userId}:quick_replies`;
-            qrList = await env.KV_LINE_STORAGE.get(key2, { type: 'json' }) || [];
-            if (qrList.length > 0) {
-                foundKey = key2;
-            } else {
-                const key3 = `quick_replies_${userId}`;
-                qrList = await env.KV_LINE_STORAGE.get(key3, { type: 'json' }) || [];
-                if (qrList.length > 0) {
-                    foundKey = key3;
-                }
-            }
-        }
-        logger.info('QR', `使用 Key: "${foundKey}", 共 ${qrList.length} 個模板`);
-        const qr = qrList.find(q => q.id === qrId);
+        // 原本在這裡試三個 key，其中 `bot:${userId}:quick_replies` 把 userId
+        // 放進了 botId 的位置，永遠對不到。bot_store 的雙讀取代了這整段。
+        const qrList = await store.getOr('quickReplies', []);
+        logger.info('QR', `共 ${qrList.length} 個模板`);
+        const qr = Array.isArray(qrList) ? qrList.find(q => q.id === qrId) : null;
         if (!qr || !qr.items || qr.items.length === 0) {
             logger.debug('QR', `Quick Reply 模板 ${qrId} 不存在或無項目`);
             return null;
@@ -186,7 +180,8 @@ async function getQuickReplyTemplate(env, userId, qrId) {
 /**
  * 處理 Message 事件
  */
-export async function handleMessageEvent(event, env, userId, accessToken, ctx) {
+export async function handleMessageEvent(event, env, userId, accessToken, ctx, botId) {
+    const store = openBotStoreFor(env, userId, botId);
     if (event.message.type !== 'text') {
         logger.info('MESSAGE', `收到非文字訊息: ${event.message.type}`);
         return;
@@ -195,7 +190,7 @@ export async function handleMessageEvent(event, env, userId, accessToken, ctx) {
     const lineUserId = event.source.userId;
     logger.info('MESSAGE', `使用者訊息: "${userMessage}"`);
     // 載入關鍵字列表
-    const keywordList = await env.KV_LINE_STORAGE.get(`keyword_reply_list_${userId}`, { type: 'json' }) || [];
+    const keywordList = await store.getOr('keywords', []);
     // 追蹤偵錯：輸出關鍵字清單摘要 (僅用於排除 testVip 問題)
     if (userMessage.toLowerCase().includes('test')) {
         logger.debug('TRACER', `偵測到測試訊息 "${userMessage}"，目前關鍵字清單：${keywordList.map(k => k.keyword).join(', ')}`);
@@ -223,20 +218,18 @@ export async function handleMessageEvent(event, env, userId, accessToken, ctx) {
     // 🆕 取得使用者名稱與等級資訊並替換變數 (並行處理 + 逾時保護)
     let memberProfile = null;
     try {
-        const profileKey = `member_profile_${userId}_${lineUserId}`;
-
         // 使用 Promise.all 並行獲取所需資訊
-        const [profileJSON, lineProfile, tierData] = await Promise.all([
-            env.KV_LINE_STORAGE.get(profileKey),
+        const [storedProfile, lineProfile, tierData] = await Promise.all([
+            store.get('member', lineUserId),
             // 為外部 API 提供 2 秒逾時保護
             Promise.race([
                 getLineUserProfile(lineUserId, accessToken),
                 new Promise(resolve => setTimeout(() => resolve(null), 2000))
             ]),
-            getMemberTier(env, userId, lineUserId)
+            getMemberTier(store, lineUserId)
         ]);
 
-        memberProfile = JSON.parse(profileJSON || "{}");
+        memberProfile = storedProfile || {};
         const userName = lineProfile?.displayName || '用戶';
         const tierInfo = tierData || { tierName: '新手', tierTitle: '親愛的' };
 
@@ -253,7 +246,7 @@ export async function handleMessageEvent(event, env, userId, accessToken, ctx) {
         if (replyWithQR) qrId = replyWithQR.quickReplyId;
     }
     if (qrId && validMessages.length > 0) {
-        const quickReply = await getQuickReplyTemplate(env, userId, qrId);
+        const quickReply = await getQuickReplyTemplate(store, qrId);
         if (quickReply) {
             validMessages[validMessages.length - 1].quickReply = quickReply;
         }
@@ -273,10 +266,10 @@ export async function handleMessageEvent(event, env, userId, accessToken, ctx) {
                     profileChanged = true;
 
                     // 檢查等級升級
-                    const upgradeResult = await checkTierUpgrade(env, userId, lineUserId);
+                    const upgradeResult = await checkTierUpgrade(store, lineUserId);
                     if (upgradeResult.upgraded) {
                         logger.info('TIER', `🎉 會員升級: ${lineUserId} -> ${upgradeResult.tierName}`);
-                        const freshlyUpgradedProfile = JSON.parse(await env.KV_LINE_STORAGE.get(`member_profile_${userId}_${lineUserId}`) || "{}");
+                        const freshlyUpgradedProfile = await store.getOr('member', {}, lineUserId);
                         memberProfile = { ...memberProfile, ...freshlyUpgradedProfile };
                     }
 
@@ -302,13 +295,13 @@ export async function handleMessageEvent(event, env, userId, accessToken, ctx) {
                     }
 
                     if (profileChanged) {
-                        await env.KV_LINE_STORAGE.put(`member_profile_${userId}_${lineUserId}`, JSON.stringify(memberProfile));
+                        await store.put('member', memberProfile, lineUserId);
                     }
                 }
 
                 // 2. 增加統計數據
-                await incrementKeywordStat(env, userId, match.keyword);
-                await incrementMessageCount(env, userId, 'reply');
+                await incrementKeywordStat(store, match.keyword);
+                await incrementMessageCount(store, 'reply');
             } catch (bgError) {
                 logger.error('BACKGROUND', '背景任務執行失敗', bgError);
             }
@@ -332,15 +325,16 @@ export async function handleMessageEvent(event, env, userId, accessToken, ctx) {
  * 處理 Follow 事件
  */
 export async function handleFollowEvent(event, env, userId, accessToken, ctx, botId) {
+    const store = openBotStoreFor(env, userId, botId);
     const lineUserId = event.source.userId;
     logger.info('FOLLOW', `新用戶加入: ${lineUserId}`);
 
     // 紀錄會員並同步選單
-    await recordMemberInteraction(event, env, userId, accessToken, botId);
-    await syncMemberRichMenu(env, userId, lineUserId);
+    await recordMemberInteraction(event, store, accessToken, botId);
+    await syncMemberRichMenu(store, lineUserId);
 
     try {
-        const welcomeConfig = await env.KV_LINE_STORAGE.get(`welcome_message_${userId}`, { type: 'json' });
+        const welcomeConfig = await store.get('welcome');
         if (welcomeConfig && welcomeConfig.enabled && welcomeConfig.replies) {
             const messages = await Promise.all(
                 welcomeConfig.replies.map(reply => formatReplyMessage(reply, env, userId))
@@ -357,7 +351,7 @@ export async function handleFollowEvent(event, env, userId, accessToken, ctx, bo
                 if (replyWithQR) qrId = replyWithQR.quickReplyId;
             }
             if (qrId && validMessages.length > 0) {
-                const quickReply = await getQuickReplyTemplate(env, userId, qrId);
+                const quickReply = await getQuickReplyTemplate(store, qrId);
                 if (quickReply) {
                     validMessages[validMessages.length - 1].quickReply = quickReply;
                     logger.info('QR', `已附加 QR 到歡迎訊息`);
@@ -365,7 +359,7 @@ export async function handleFollowEvent(event, env, userId, accessToken, ctx, bo
             }
             if (validMessages.length > 0) {
                 await replyWithRetry(event.replyToken, validMessages, accessToken);
-                await incrementMessageCount(env, userId, 'reply');
+                await incrementMessageCount(store, 'reply');
                 logger.info('FOLLOW', '已發送歡迎訊息');
             }
         }
@@ -376,23 +370,23 @@ export async function handleFollowEvent(event, env, userId, accessToken, ctx, bo
 /**
  * 處理 Unfollow 事件
  */
-export async function handleUnfollowEvent(event, env, userId) {
+export async function handleUnfollowEvent(event, env, userId, botId) {
+    const store = openBotStoreFor(env, userId, botId);
     const lineUserId = event.source.userId;
     logger.info('UNFOLLOW', `用戶封鎖: ${lineUserId}`);
 
     // 更新狀態為 inactive
-    const profileKey = `member_profile_${userId}_${lineUserId}`;
-    const profileRaw = await env.KV_LINE_STORAGE.get(profileKey);
-    if (profileRaw) {
-        const profile = JSON.parse(profileRaw);
+    const profile = await store.get('member', lineUserId);
+    if (profile) {
         profile.status = "inactive";
-        await env.KV_LINE_STORAGE.put(profileKey, JSON.stringify(profile));
+        await store.put('member', profile, lineUserId);
     }
 }
 /**
  * 處理 Postback 事件
  */
-export async function handlePostbackEvent(event, env, userId, accessToken) {
+export async function handlePostbackEvent(event, env, userId, accessToken, ctx, botId) {
+    const store = openBotStoreFor(env, userId, botId);
     const postbackData = event.postback.data;
     const lineUserId = event.source.userId;
     logger.info('POSTBACK', `收到 Postback: ${postbackData}`);
@@ -405,8 +399,7 @@ export async function handlePostbackEvent(event, env, userId, accessToken) {
         const tagToRemove = params.get('untag');
 
         if (tagToAdd || tagToRemove) {
-            const profileKey = `member_profile_${userId}_${lineUserId}`;
-            const profile = JSON.parse(await env.KV_LINE_STORAGE.get(profileKey) || "{}");
+            const profile = await store.getOr('member', {}, lineUserId);
 
             if (profile && Object.keys(profile).length > 0) {
                 profile.tags = profile.tags || [];
@@ -423,7 +416,7 @@ export async function handlePostbackEvent(event, env, userId, accessToken) {
                     logger.info('AUTO_TAG', `Postback 自動移除標籤: ${tagToRemove.trim()}`);
                 }
 
-                await env.KV_LINE_STORAGE.put(profileKey, JSON.stringify(profile));
+                await store.put('member', profile, lineUserId);
                 logger.info('AUTO_TAG', `Postback 標籤更新完成 (極簡模式)`, { tags: profile.tags });
             }
         }
@@ -438,7 +431,7 @@ export async function handlePostbackEvent(event, env, userId, accessToken) {
             text: `✅ 已收到您的操作：${postbackData}`
         };
         await replyWithRetry(event.replyToken, [message], accessToken);
-        await incrementMessageCount(env, userId, 'reply');
+        await incrementMessageCount(store, 'reply');
     } catch (error) {
         logger.error('POSTBACK', '處理 Postback 失敗', error);
     }
@@ -446,16 +439,15 @@ export async function handlePostbackEvent(event, env, userId, accessToken) {
 /**
  * 增加關鍵字統計
  */
-async function incrementKeywordStat(env, userId, keyword) {
+async function incrementKeywordStat(store, keyword) {
     const now = new Date();
     const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const statsKey = `keyword_stats_${userId}`;
-    const stats = await env.KV_LINE_STORAGE.get(statsKey, { type: 'json' }) || {};
+    const stats = await store.getOr('keywordStats', {});
     if (!stats[keyword]) {
         stats[keyword] = { total: 0, monthly: {} };
     }
     stats[keyword].total = (stats[keyword].total || 0) + 1;
     stats[keyword].monthly[currentMonth] = (stats[keyword].monthly[currentMonth] || 0) + 1;
-    await env.KV_LINE_STORAGE.put(statsKey, JSON.stringify(stats));
+    await store.put('keywordStats', stats);
     logger.debug('STATS', `關鍵字 "${keyword}" 統計 +1`);
 }

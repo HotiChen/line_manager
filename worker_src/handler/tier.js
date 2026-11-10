@@ -9,6 +9,7 @@ import { jsonResponse } from '../lib/utils.js';
 import { getTierConfig, updateTierConfig, setMemberTier, getTierStatistics, applyTierRichMenu } from '../lib/tier_system.js';
 import * as logger from '../utils/logger.js';
 import { getCurrentAccessToken } from '../lib/token_store.js';
+import { openBotStore } from '../lib/bot_store.js';
 
 /**
  * 取得等級配置
@@ -19,7 +20,8 @@ export async function handleGetTierConfig(request, env, userId) {
             return jsonResponse({ error: '缺少使用者認證' }, 401);
         }
 
-        const config = await getTierConfig(env, userId);
+        const store = await openBotStore(env, userId);
+        const config = await getTierConfig(store);
         return jsonResponse({ success: true, config });
 
     } catch (error) {
@@ -38,7 +40,8 @@ export async function handleUpdateTierConfig(request, env, userId) {
         }
 
         const config = await request.json();
-        await updateTierConfig(env, userId, config);
+        const store = await openBotStore(env, userId);
+        await updateTierConfig(store, config);
 
         return jsonResponse({ success: true, message: '等級配置已更新' });
 
@@ -63,18 +66,19 @@ export async function handleSetMemberTier(request, env, userId) {
             return jsonResponse({ error: '缺少必要參數' }, 400);
         }
 
-        const result = await setMemberTier(env, userId, lineUserId, tier);
+        const store = await openBotStore(env, userId);
+        const result = await setMemberTier(store, lineUserId, tier);
 
         if (result.success) {
             // 🆕 手動設定後也嘗試同步 Rich Menu
-            const config = await getTierConfig(env, userId);
+            const config = await getTierConfig(store);
             if (config.benefits?.richMenu?.enabled) {
                 try {
                     const accessToken = await getCurrentAccessToken(env, userId);
 
                     if (accessToken) {
                         // 不需要 await，在背景執行即可
-                        applyTierRichMenu(env, userId, lineUserId, tier, accessToken);
+                        applyTierRichMenu(store, lineUserId, tier, accessToken);
                     }
                 } catch (e) {
                     logger.error('TIER_API', '手動設定等級時切換 Rich Menu 失敗', e);
@@ -100,7 +104,8 @@ export async function handleGetTierStats(request, env, userId) {
             return jsonResponse({ error: '缺少使用者認證' }, 401);
         }
 
-        const stats = await getTierStatistics(env, userId);
+        const store = await openBotStore(env, userId);
+        const stats = await getTierStatistics(store);
         return jsonResponse({ success: true, stats });
 
     } catch (error) {

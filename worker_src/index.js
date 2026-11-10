@@ -14,6 +14,7 @@ import * as QuickReplyHandler from "./handler/quick_reply.js";
 import * as TeamHandler from "./handler/team.js";
 import * as BotHandler from "./handler/bot.js";
 import * as MigrationHandler from "./migration/migrate.js";
+import { openBotStore } from "./lib/bot_store.js";
 import { getMessageStats } from "./lib/message_stats.js";
 
 
@@ -128,7 +129,7 @@ export default {
     // 統計相關 API (Support legacy path and new path)
     if (pathname === "/stats" || pathname === "/stats/messages") {
       if (request.method === "OPTIONS") return jsonResponse({}, 200);
-      const stats = await getMessageStats(env, userId);
+      const stats = await getMessageStats(await openBotStore(env, userId));
       return jsonResponse({ success: true, stats });
     }
 

@@ -1,6 +1,8 @@
 /**
  * Message Statistics Utility
- * Manage message counting logic in KV
+ *
+ * 收 BotStore 而不是 (env, userId)：訊息量是 per-bot 的（LINE 的免費額度
+ * 本身就是 per 官方帳號計算），把兩個帳號的量加在一起看不出任何東西。
  */
 
 /**
@@ -9,19 +11,12 @@
  * @param {string} userId - The owner (user) ID
  * @param {string} type - Message type ('reply', 'push', 'broadcast')
  */
-export async function incrementMessageCount(env, userId, type = 'reply') {
-    const statsKey = `message_stats_${userId}`;
+export async function incrementMessageCount(store, type = 'reply') {
     const now = new Date();
     const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
-    const kv = env.KV_STORAGE || env.KV_LINE_STORAGE;
-    if (!kv) {
-        console.error('[STATS] No KV binding found');
-        return;
-    }
-
     try {
-        const stats = await kv.get(statsKey, { type: 'json' }) || { total: 0, monthly: {} };
+        const stats = await store.getOr('messageStats', { total: 0, monthly: {} });
 
         // Ensure structure for new categories
         if (!stats.reply) stats.reply = 0;
@@ -53,7 +48,7 @@ export async function incrementMessageCount(env, userId, type = 'reply') {
             stats.monthly[currentMonth][type] = (stats.monthly[currentMonth][type] || 0) + 1;
         }
 
-        await kv.put(statsKey, JSON.stringify(stats));
+        await store.put('messageStats', stats);
     } catch (error) {
         console.error('[STATS] Failed to increment message count:', error);
     }
@@ -62,13 +57,9 @@ export async function incrementMessageCount(env, userId, type = 'reply') {
 /**
  * Get message statistics for a user
  */
-export async function getMessageStats(env, userId) {
-    const statsKey = `message_stats_${userId}`;
-    const kv = env.KV_STORAGE || env.KV_LINE_STORAGE;
-    if (!kv) return { total: 0, reply: 0, push: 0, broadcast: 0, monthly: {} };
-
+export async function getMessageStats(store) {
     try {
-        const stats = await kv.get(statsKey, { type: 'json' });
+        const stats = await store.get('messageStats');
         if (!stats) return { total: 0, reply: 0, push: 0, broadcast: 0, monthly: {} };
 
         // Ensure defaults for missing fields

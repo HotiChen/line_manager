@@ -1,4 +1,5 @@
 import { jsonResponse } from "../lib/utils.js";
+import { openBotStore } from "../lib/bot_store.js";
 import { ensureTagExists } from "../lib/tag_system.js";
 
 // 儲存一組 keyword + replies
@@ -10,9 +11,8 @@ export async function handleSaveKeywordReply(request, env, userId) {
     return jsonResponse({ success: false, error: "缺少必要欄位" }, 400);
   }
 
-  const listKey = `keyword_reply_list_${userId}`;
-  const existing = JSON.parse(await env.KV_LINE_STORAGE.get(listKey) || "[]");
-
+  const store = await openBotStore(env, userId);
+  const existing = await store.getOr('keywords', []);
 
   // 建立新的 keyword 物件，包含所有欄位
   const keywordData = {
@@ -33,7 +33,7 @@ export async function handleSaveKeywordReply(request, env, userId) {
   for (const tag of allTags) {
     if (tag && tag.trim()) {
       const trimmedTag = tag.trim();
-      await ensureTagExists(env, userId, trimmedTag);
+      await ensureTagExists(store, trimmedTag);
       registeredTags.push(trimmedTag);
     }
   }
@@ -45,7 +45,7 @@ export async function handleSaveKeywordReply(request, env, userId) {
     existing.push(keywordData);
   }
 
-  await env.KV_LINE_STORAGE.put(listKey, JSON.stringify(existing));
+  await store.put('keywords', existing);
 
   // 🆕 回傳更詳細的資訊
   return jsonResponse({
@@ -56,8 +56,8 @@ export async function handleSaveKeywordReply(request, env, userId) {
 
 // 取得所有 keyword replies
 export async function handleListKeywordReplies(env, userId) {
-  const listKey = `keyword_reply_list_${userId}`;
-  const list = JSON.parse(await env.KV_LINE_STORAGE.get(listKey) || "[]");
+  const store = await openBotStore(env, userId);
+  const list = await store.getOr('keywords', []);
   return jsonResponse({ success: true, data: list });
 }
 
@@ -74,17 +74,16 @@ export async function handleDeleteKeywordReply(request, env, userId) {
     return jsonResponse({ success: false, error: "缺少 keyword 或 keywords" }, 400);
   }
 
+  const store = await openBotStore(env, userId);
 
   // 1️⃣ 刪除 keyword_reply_list
-  const listKey = `keyword_reply_list_${userId}`;
-  const list = JSON.parse(await env.KV_LINE_STORAGE.get(listKey) || "[]");
+  const list = await store.getOr('keywords', []);
 
   const updated = list.filter(item => !keywordsToDelete.includes(item.keyword));
-  await env.KV_LINE_STORAGE.put(listKey, JSON.stringify(updated));
+  await store.put('keywords', updated);
 
   // 2️⃣ 同時刪除 keyword_stats 中對應的統計
-  const statsKey = `keyword_stats_${userId}`;
-  const stats = await env.KV_LINE_STORAGE.get(statsKey, { type: "json" }) || {};
+  const stats = await store.getOr('keywordStats', {});
 
   let statsModified = false;
   for (const k of keywordsToDelete) {
@@ -94,34 +93,11 @@ export async function handleDeleteKeywordReply(request, env, userId) {
     }
   }
   if (statsModified) {
-    await env.KV_LINE_STORAGE.put(statsKey, JSON.stringify(stats));
+    await store.put('keywordStats', stats);
   }
 
   return jsonResponse({ success: true, deleted: keywordsToDelete });
 }
-
-// export async function handleDeleteKeywordReply(request, env, userId) {
-//   const { keyword } = await request.json();
-
-//   if (!keyword) return jsonResponse({ success: false, error: "缺少 keyword" }, 400);
-
-//   // 1️⃣ 刪除 keyword_reply_list
-//   const listKey = `keyword_reply_list_${userId}`;
-//   const list = JSON.parse(await env.KV_LINE_STORAGE.get(listKey) || "[]");
-//   const updated = list.filter(item => item.keyword !== keyword);
-
-//   await env.KV_LINE_STORAGE.put(listKey, JSON.stringify(updated));
-
-//   // 2️⃣ 同時刪除 keyword_stats
-//   const statsKey = `keyword_stats_${userId}`;
-//   const stats = await env.KV_LINE_STORAGE.get(statsKey, { type: "json" }) || {};
-//   if (stats[keyword]) {
-//     delete stats[keyword];
-//     await env.KV_LINE_STORAGE.put(statsKey, JSON.stringify(stats));
-//   }
-
-//   return jsonResponse({ success: true });
-// }
 
 // 取得單一 keyword 的統計資料
 async function handleKeywordStats(request, env, userId) {
@@ -132,8 +108,8 @@ async function handleKeywordStats(request, env, userId) {
     return jsonResponse({ success: false, error: "缺少 keyword" }, 400);
   }
 
-  const statsKey = `keyword_stats_${userId}`;
-  const stats = await env.KV_LINE_STORAGE.get(statsKey, { type: "json" }) || {};
+  const store = await openBotStore(env, userId);
+  const stats = await store.getOr('keywordStats', {});
   const stat = stats[keyword] || { total: 0, monthly: {} };
 
   const now = new Date();
@@ -143,7 +119,6 @@ async function handleKeywordStats(request, env, userId) {
 
   const thisMonth = stat.monthly?.[currentMonthKey] || 0;
   const lastMonth = stat.monthly?.[lastMonthKey] || 0;
-
 
   return jsonResponse({
     success: true,

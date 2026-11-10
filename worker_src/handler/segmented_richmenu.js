@@ -3,6 +3,7 @@
  * 處理分眾規則的 CRUD
  */
 import { jsonResponse } from "../lib/utils.js";
+import { openBotStore } from "../lib/bot_store.js";
 
 export async function handleSaveSegmentedRules(request, env, ownerId) {
     try {
@@ -18,8 +19,8 @@ export async function handleSaveSegmentedRules(request, env, ownerId) {
             }
         }
 
-        const rulesKey = `richmenu_segmented_rules_${ownerId}`;
-        await env.KV_LINE_STORAGE.put(rulesKey, JSON.stringify(rules));
+        const store = await openBotStore(env, ownerId);
+        await store.put('segmentedRichMenuRules', rules);
 
         return jsonResponse({ success: true, rules });
     } catch (error) {
@@ -28,8 +29,8 @@ export async function handleSaveSegmentedRules(request, env, ownerId) {
 }
 
 export async function handleGetSegmentedRules(env, ownerId) {
-    const rulesKey = `richmenu_segmented_rules_${ownerId}`;
-    const rules = await env.KV_LINE_STORAGE.get(rulesKey, { type: 'json' }) || [];
+    const store = await openBotStore(env, ownerId);
+    const rules = await store.getOr('segmentedRichMenuRules', []);
     return jsonResponse({ success: true, rules });
 }
 

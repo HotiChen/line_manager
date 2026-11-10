@@ -1,6 +1,7 @@
 // lib/profile.js
 
 import { jsonResponse } from "../lib/utils.js";
+import { openBotStore } from "../lib/bot_store.js";
 
 export async function handleSaveUserProfile(request, env, userId) {
   const data = await request.json();
@@ -12,14 +13,14 @@ export async function handleSaveUserProfile(request, env, userId) {
     return jsonResponse({ error: "Invalid profile format" }, 400);
   }
 
-  const key = `profile_${userId}`;
-  await env.KV_LINE_STORAGE.put(key, JSON.stringify(profile));
+  const store = await openBotStore(env, userId);
+  await store.putUser('profile', profile);
   return jsonResponse({ ok: true, success: true, message: "已儲存使用者資訊", userId });
 }
 
 export async function handleCheckUserProfile(env, userId) {
-  const key = `profile_${userId}`;
-  const profile = await env.KV_LINE_STORAGE.get(key, { type: "json" });
+  const store = await openBotStore(env, userId);
+  const profile = await store.getUser('profile');
   return jsonResponse({
     exists: !!profile,
     profile: profile || null

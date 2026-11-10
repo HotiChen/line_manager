@@ -9,24 +9,21 @@ import { linkRichMenuToUser, unlinkRichMenuFromUser } from "./line_client.js";
 /**
  * 同步特定會員的圖文選單
  */
-export async function syncMemberRichMenu(env, ownerId, memberId) {
+export async function syncMemberRichMenu(store, memberId) {
     logger.info('SEGMENTED_RM', `同步會員選單: ${memberId}`);
 
     try {
         // 1. 取得會員 Tags
-        const profileKey = `member_profile_${ownerId}_${memberId}`;
-        const profileRaw = await env.KV_LINE_STORAGE.get(profileKey);
-        if (!profileRaw) {
+        const profile = await store.get('member', memberId);
+        if (!profile) {
             logger.warn('SEGMENTED_RM', '找不到會員資料，無法進行選單同步');
             return;
         }
-        const profile = JSON.parse(profileRaw);
         const userTags = profile.tags || [];
 
         // 2. 取得分眾規則 
         // 規則格式: [ { "tag": "VIP", "richMenuId": "richmenu-xxx", "priority": 1 } ]
-        const rulesKey = `richmenu_segmented_rules_${ownerId}`;
-        const rules = await env.KV_LINE_STORAGE.get(rulesKey, { type: 'json' }) || [];
+        const rules = await store.getOr('segmentedRichMenuRules', []);
 
         // 3. 尋找匹配的規則 (依優先級排序，數字愈小愈優先)
         const sortedRules = rules.sort((a, b) => (a.priority || 99) - (b.priority || 99));
@@ -39,8 +36,8 @@ export async function syncMemberRichMenu(env, ownerId, memberId) {
             }
         }
 
-        // 4. 取得 Access Token
-        const token = await getAccessToken(env, ownerId);
+        // 4. 取得 Access Token（token 的存放仍以 owner 為 key）
+        const token = await getAccessToken(store.env, store.userId);
         if (!token) {
             logger.error('SEGMENTED_RM', '找不到 Access Token');
             return;

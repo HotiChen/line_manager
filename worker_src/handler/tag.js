@@ -6,6 +6,7 @@ import {
   renameTag,
   ensureTagExists
 } from "../lib/tag_system.js";
+import { openBotStore } from "../lib/bot_store.js";
 
 // 建立或更新 tag
 export async function handleSaveTag(request, env, userId) {
@@ -14,21 +15,22 @@ export async function handleSaveTag(request, env, userId) {
     return jsonResponse({ success: false, error: "缺少或格式錯誤的 tag 名稱" }, 400);
   }
 
-  await ensureTagExists(env, userId, name);
+  const store = await openBotStore(env, userId);
+  await ensureTagExists(store, name);
 
   return jsonResponse({ success: true });
 }
 
 // 取得所有 tags (包含統計資訊)
 export async function handleListTags(env, userId) {
+  const store = await openBotStore(env, userId);
   try {
-    const tagsWithStats = await getAllTagsWithStats(env, userId);
+    const tagsWithStats = await getAllTagsWithStats(store);
     return jsonResponse({ success: true, data: tagsWithStats });
   } catch (error) {
     console.error("❌ 取得標籤列表失敗:", error);
     // fallback 到純清單
-    const listKey = `tag_list_${userId}`;
-    const list = JSON.parse(await env.KV_LINE_STORAGE.get(listKey) || "[]");
+    const list = await store.getOr('tags', []);
     return jsonResponse({ success: true, data: list.map(name => ({ name, total: 0 })) });
   }
 }
@@ -43,9 +45,10 @@ export async function handleDeleteTag(request, env, userId) {
 
   const tagsToDelete = names || [name];
 
+  const store = await openBotStore(env, userId);
   for (const tag of tagsToDelete) {
     if (tag) {
-      await deleteTag(env, userId, tag);
+      await deleteTag(store, tag);
     }
   }
 
@@ -60,7 +63,8 @@ export async function handleRenameTag(request, env, userId) {
     return jsonResponse({ success: false, error: "缺少 oldName 或 newName" }, 400);
   }
 
-  await renameTag(env, userId, oldName, newName);
+  const store = await openBotStore(env, userId);
+  await renameTag(store, oldName, newName);
 
   return jsonResponse({ success: true });
 }

@@ -1,6 +1,7 @@
 // worker_src/handler/quick_reply.js
 
 import { jsonResponse } from '../lib/utils.js';
+import { openBotStore } from '../lib/bot_store.js';
 
 /**
  * 儲存 Quick Reply 模板
@@ -13,8 +14,8 @@ async function handleSaveQuickReply(request, env, userId) {
         return jsonResponse({ success: false, error: '缺少 name 或 items' }, 400);
     }
 
-    const listKey = `quick_reply_list_${userId}`;
-    const existing = JSON.parse(await env.KV_LINE_STORAGE.get(listKey) || '[]');
+    const store = await openBotStore(env, userId);
+    const existing = await store.getOr('quickReplies', []);
 
     const qrItem = {
         id: id || `qr_${Date.now()}`,
@@ -31,7 +32,7 @@ async function handleSaveQuickReply(request, env, userId) {
         existing.push(qrItem);
     }
 
-    await env.KV_LINE_STORAGE.put(listKey, JSON.stringify(existing));
+    await store.put('quickReplies', existing);
     return jsonResponse({ success: true, data: qrItem });
 }
 
@@ -39,8 +40,8 @@ async function handleSaveQuickReply(request, env, userId) {
  * 列出所有 Quick Reply 模板
  */
 async function handleListQuickReplies(env, userId) {
-    const listKey = `quick_reply_list_${userId}`;
-    const list = JSON.parse(await env.KV_LINE_STORAGE.get(listKey) || '[]');
+    const store = await openBotStore(env, userId);
+    const list = await store.getOr('quickReplies', []);
     return jsonResponse({ success: true, data: list });
 }
 
@@ -58,11 +59,11 @@ async function handleDeleteQuickReply(request, env, userId) {
         return jsonResponse({ success: false, error: '缺少 id 或 ids' }, 400);
     }
 
-    const listKey = `quick_reply_list_${userId}`;
-    const list = JSON.parse(await env.KV_LINE_STORAGE.get(listKey) || '[]');
+    const store = await openBotStore(env, userId);
+    const list = await store.getOr('quickReplies', []);
     const updated = list.filter(item => !toDelete.includes(item.id));
 
-    await env.KV_LINE_STORAGE.put(listKey, JSON.stringify(updated));
+    await store.put('quickReplies', updated);
     return jsonResponse({ success: true, deleted: toDelete });
 }
 
@@ -70,8 +71,8 @@ async function handleDeleteQuickReply(request, env, userId) {
  * 取得單一 Quick Reply 模板
  */
 async function handleGetQuickReply(env, userId, qrId) {
-    const listKey = `quick_reply_list_${userId}`;
-    const list = JSON.parse(await env.KV_LINE_STORAGE.get(listKey) || '[]');
+    const store = await openBotStore(env, userId);
+    const list = await store.getOr('quickReplies', []);
     const item = list.find(qr => qr.id === qrId);
 
     if (!item) {

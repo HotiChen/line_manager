@@ -4,6 +4,7 @@ import { addTagsToEntity, removeTagsFromEntity } from "../lib/tag_system.js";
 import { syncMemberRichMenu } from "../lib/segmented_richmenu_logic.js";
 import { applyTierRichMenu, getTierConfig } from "../lib/tier_system.js";
 import { getCurrentAccessToken } from "../lib/token_store.js";
+import { openBotStore } from "../lib/bot_store.js";
 
 /**
  * handleSaveMember
@@ -45,10 +46,9 @@ export async function handleSaveMember(request, env, ownerId) {
     return jsonResponse({ success: false, error: "缺少或格式錯誤的 memberId/lineUserId" }, 400);
   }
 
-  const profileKey = `member_profile_${ownerId}_${memberId}`;
-  const listKey = `member_list_${ownerId}`;
+  const store = await openBotStore(env, ownerId);
 
-  const existingProfile = JSON.parse(await env.KV_LINE_STORAGE.get(profileKey) || "{}");
+  const existingProfile = await store.getOr('member', {}, memberId);
   const oldTags = existingProfile.tags || [];
 
   const profile = {
@@ -72,32 +72,32 @@ export async function handleSaveMember(request, env, ownerId) {
     temperatureScore: existingProfile.temperatureScore || 50
   };
 
-  await env.KV_LINE_STORAGE.put(profileKey, JSON.stringify(profile));
+  await store.put('member', profile, memberId);
 
   // 處理 Tag 變更
   const tagsToAdd = tags.filter(t => !oldTags.includes(t));
   const tagsToRemove = oldTags.filter(t => !tags.includes(t));
 
   if (tagsToAdd.length > 0) {
-    await addTagsToEntity(env, ownerId, 'member', memberId, tagsToAdd);
+    await addTagsToEntity(store, 'member', memberId, tagsToAdd);
   }
 
   if (tagsToRemove.length > 0) {
-    await removeTagsFromEntity(env, ownerId, 'member', memberId, tagsToRemove);
+    await removeTagsFromEntity(store, 'member', memberId, tagsToRemove);
   }
 
   // 加入 list (避免重複)
-  const list = JSON.parse(await env.KV_LINE_STORAGE.get(listKey) || "[]");
+  const list = await store.getOr('members', []);
   if (!list.includes(memberId)) {
     list.push(memberId);
-    await env.KV_LINE_STORAGE.put(listKey, JSON.stringify(list));
+    await store.put('members', list);
   }
 
   // 同步分眾 Rich Menu
-  await syncMemberRichMenu(env, ownerId, memberId);
+  await syncMemberRichMenu(store, memberId);
 
   // 同步等級 Rich Menu
-  await handleTierRichMenuSync(env, ownerId, memberId, profile.tier);
+  await handleTierRichMenuSync(store, memberId, profile.tier);
 
   return jsonResponse({ success: true, data: profile });
 }
@@ -110,19 +110,19 @@ export async function handleSaveMember(request, env, ownerId) {
  * - env, ownerId, memberId: 基礎參數
  * - tier: 會員目前的等級
  */
-async function handleTierRichMenuSync(env, ownerId, memberId, tier) {
-  const tierConfig = await getTierConfig(env, ownerId);
+async function handleTierRichMenuSync(store, memberId, tier) {
+  const tierConfig = await getTierConfig(store);
   const isBenefitEnabled = !!tierConfig.benefits?.richMenu?.enabled;
 
   if (!isBenefitEnabled) return;
 
   try {
-    const accessToken = await getCurrentAccessToken(env, ownerId);
+    const accessToken = await getCurrentAccessToken(store.env, store.userId);
 
     if (accessToken) {
-      await applyTierRichMenu(env, ownerId, memberId, tier, accessToken);
+      await applyTierRichMenu(store, memberId, tier, accessToken);
     } else {
-      console.warn(`⚠️ [Save] 無法取得有效 Access Token (owner: ${ownerId})`);
+      console.warn(`⚠️ [Save] 無法取得有效 Access Token (owner: ${store.userId})`);
     }
   } catch (e) {
     console.error("❌ [Save] 同步等級 Rich Menu 失敗:", e);
@@ -137,8 +137,8 @@ async function handleTierRichMenuSync(env, ownerId, memberId, tier) {
  * Post-conditions: 回傳包含會員 ID 陣列的 Response
  */
 export async function handleListMembers(env, ownerId) {
-  const listKey = `member_list_${ownerId}`;
-  const list = JSON.parse(await env.KV_LINE_STORAGE.get(listKey) || "[]");
+  const store = await openBotStore(env, ownerId);
+  const list = await store.getOr('members', []);
   return jsonResponse({ success: true, data: list });
 }
 
@@ -150,15 +150,11 @@ export async function handleListMembers(env, ownerId) {
  * Post-conditions: 回傳包含所有有效 Profile 對象的陣列
  */
 export async function handleListFullMembers(env, ownerId) {
-  const listKey = `member_list_${ownerId}`;
-  const memberIds = JSON.parse(await env.KV_LINE_STORAGE.get(listKey) || "[]");
+  const store = await openBotStore(env, ownerId);
+  const memberIds = await store.getOr('members', []);
 
   const profiles = await Promise.all(
-    memberIds.map(async memberId => {
-      const key = `member_profile_${ownerId}_${memberId}`;
-      const json = await env.KV_LINE_STORAGE.get(key);
-      return JSON.parse(json || "null");
-    })
+    memberIds.map(memberId => store.get('member', memberId))
   );
 
   return jsonResponse({
@@ -178,9 +174,9 @@ export async function handleGetMemberProfile(env, ownerId, memberId) {
   if (!memberId) {
     return jsonResponse({ success: false, error: "缺少 memberId" }, 400);
   }
-  const key = `member_profile_${ownerId}_${memberId}`;
-  const profile = await env.KV_LINE_STORAGE.get(key);
-  return jsonResponse({ success: true, data: JSON.parse(profile || "null") });
+  const store = await openBotStore(env, ownerId);
+  const profile = await store.get('member', memberId);
+  return jsonResponse({ success: true, data: profile });
 }
 
 /**
@@ -196,18 +192,16 @@ export async function handleDeleteMember(request, env, ownerId) {
     return jsonResponse({ success: false, error: "缺少 memberId" }, 400);
   }
 
-  const profileKey = `member_profile_${ownerId}_${memberId}`;
-  const logKey = `member_log_${ownerId}_${memberId}`;
-  const listKey = `member_list_${ownerId}`;
+  const store = await openBotStore(env, ownerId);
 
   await Promise.all([
-    env.KV_LINE_STORAGE.delete(profileKey),
-    env.KV_LINE_STORAGE.delete(logKey)
+    store.del('member', memberId),
+    store.del('memberLog', memberId)
   ]);
 
-  const list = JSON.parse(await env.KV_LINE_STORAGE.get(listKey) || "[]");
+  const list = await store.getOr('members', []);
   const updated = list.filter(id => id !== memberId);
-  await env.KV_LINE_STORAGE.put(listKey, JSON.stringify(updated));
+  await store.put('members', updated);
 
   return jsonResponse({ success: true });
 }
@@ -217,11 +211,11 @@ export async function handleDeleteMember(request, env, ownerId) {
  * 路由分發進入點
  *
  * 授權模型（對齊 team.js SEC-001 的精神）：
- * 會員 CRM 資料一律以擁有者的 userId 做命名空間
- * （member_profile_${ownerId}_..、member_list_${ownerId}），
- * 此處的 ownerId 必須是 index.js 認證後傳入的 userId，不接受任何
- * 由 request body / query 覆寫的身分。因此 handler 永遠只能讀寫
- * 「呼叫者本人」的命名空間，無法操作他人的會員資料。
+ * 會員 CRM 資料的命名空間由 bot_store 決定 —— 新路徑是
+ * bot:${botId}:member:*，botId 來自這個使用者在後台選定的 bot，
+ * 而他能選的 bot 來自 user:${userId}:bots。此處的 ownerId 必須是
+ * index.js 認證後傳入的 userId，不接受任何由 request body / query
+ * 覆寫的身分，所以 handler 無法跨到別人的 bot。
  *
  * 注意：LIFF 會員自助註冊（pages/member_register.html）也是打 /member/save，
  * 經認證後 ownerId 即為註冊者本人的 userId，仍落在自身命名空間，故維持可用。

@@ -2,6 +2,7 @@
  * LINE API Client 封裝
  */
 import * as logger from '../utils/logger.js';
+import { openBotStore } from './bot_store.js';
 
 /**
  * 取得 LINE 使用者 Profile
@@ -56,8 +57,13 @@ export async function formatReplyMessage(reply, env, userId) {
             let contents = reply.contents;
             // 如果只有 id，嘗試從 KV 抓取
             if (!contents && reply.id) {
-                const flexList = await env.KV_LINE_STORAGE.get(`bot:${userId}:flex_list`, { type: 'json' }) || [];
-                const found = flexList.find(f => f.id === reply.id);
+                // 原本讀的是 `bot:${userId}:flex_list` —— 把 userId 放進了 botId 的
+                // 位置，所以這個 key 永遠對不到任何東西（真正的 key 是
+                // `bot:${botId}:flex_list` 或舊的 `flex_list_${userId}`）。
+                // 結果是：webhook 回覆裡用 id 指定的 Flex 訊息一律被當成內容缺失丟掉。
+                const store = await openBotStore(env, userId);
+                const flexList = await store.getOr('flexList', []);
+                const found = Array.isArray(flexList) ? flexList.find(f => f.id === reply.id) : null;
                 if (found) contents = found.contents;
             }
             if (!contents) {

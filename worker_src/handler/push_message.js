@@ -1,6 +1,7 @@
 import { jsonResponse } from "../lib/utils.js";
 import { getAccessToken, pushMessage } from "../lib/line_api.js";
 import { incrementMessageCount } from "../lib/message_stats.js";
+import { openBotStore } from "../lib/bot_store.js";
 
 export async function handleSendPushMessage(request, env, userId) {
     try {
@@ -15,11 +16,11 @@ export async function handleSendPushMessage(request, env, userId) {
             return jsonResponse({ success: false, error: "No active LINE token found" }, 401);
         }
 
+        const store = await openBotStore(env, userId);
+
         // 🔹 變數替換邏輯 (Variable Replacement)
         // 取得會員資料
-        const profileKey = `member_profile_${userId}_${to}`;
-        const profileRaw = await env.KV_LINE_STORAGE.get(profileKey);
-        const profile = profileRaw ? JSON.parse(profileRaw) : null;
+        const profile = await store.get('member', to);
         const memberName = profile ? (profile.name || profile.lineName || "朋友") : "朋友";
 
         const now = new Date();
@@ -57,7 +58,7 @@ export async function handleSendPushMessage(request, env, userId) {
         const result = await pushMessage(token, to, processedMessages);
 
         // Track the message cost
-        await incrementMessageCount(env, userId, 'push');
+        await incrementMessageCount(store, 'push');
 
         return jsonResponse({ success: true, result });
     } catch (error) {
