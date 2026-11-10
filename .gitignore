@@ -34,3 +34,7 @@ backups/
 # Environment (避免洩漏 secrets)
 .env
 .env.*
+# wrangler dev 的本機 secrets（TOKEN_ENCRYPTION_KEY 等）。
+# 這是公開 repo —— 少了這行，git add -A 就會把金鑰推上去。
+.dev.vars
+.dev.vars.*
