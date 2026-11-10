@@ -3,6 +3,7 @@ import { jsonResponse } from "../lib/utils.js";
 import { addTagsToEntity, removeTagsFromEntity } from "../lib/tag_system.js";
 import { syncMemberRichMenu } from "../lib/segmented_richmenu_logic.js";
 import { applyTierRichMenu, getTierConfig } from "../lib/tier_system.js";
+import { getCurrentAccessToken } from "../lib/token_store.js";
 
 /**
  * handleSaveMember
@@ -116,15 +117,12 @@ async function handleTierRichMenuSync(env, ownerId, memberId, tier) {
   if (!isBenefitEnabled) return;
 
   try {
-    const tokenMap = await env.KV_LINE_STORAGE.get(`access_tokens_${ownerId}`, { type: 'json' }) || {};
-    const currentProject = await env.KV_LINE_STORAGE.get(`current_token_${ownerId}`);
-    const currentData = tokenMap[currentProject];
-    const accessToken = typeof currentData === 'string' ? currentData : currentData?.token;
+    const accessToken = await getCurrentAccessToken(env, ownerId);
 
     if (accessToken) {
       await applyTierRichMenu(env, ownerId, memberId, tier, accessToken);
     } else {
-      console.warn(`⚠️ [Save] 無法取得有效 Access Token (專案: ${currentProject})`);
+      console.warn(`⚠️ [Save] 無法取得有效 Access Token (owner: ${ownerId})`);
     }
   } catch (e) {
     console.error("❌ [Save] 同步等級 Rich Menu 失敗:", e);

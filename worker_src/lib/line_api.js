@@ -1,12 +1,13 @@
+import { getCurrentAccessToken } from "./token_store.js";
+
+/**
+ * 當前專案的 access token。
+ *
+ * 實作在 lib/token_store.js —— 讀寫一律走那裡，因為 token 現在是加密存放，
+ * 解密邏輯不可散落（見該檔案開頭的說明）。
+ */
 export async function getAccessToken(env, userId) {
-    const project = await env.KV_LINE_STORAGE.get(`current_token_${userId}`);
-    if (!project) return null;
-
-    const accessTokens = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {};
-    const info = accessTokens[project];
-
-    if (!info) return null;
-    return typeof info === "object" ? info.token : info;
+    return getCurrentAccessToken(env, userId);
 }
 
 export async function pushMessage(token, to, messages) {

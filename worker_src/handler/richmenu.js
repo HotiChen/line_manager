@@ -1,4 +1,5 @@
 import { jsonResponse } from "../lib/utils.js";
+import { getAccessTokenForProject, getCurrentAccessToken } from "../lib/token_store.js";
 
 /**
  * handleGetRichMenuList
@@ -16,9 +17,7 @@ export async function handleGetRichMenuList(env, userId) {
   const project = await env.KV_LINE_STORAGE.get(`current_token_${userId}`);
   if (!project) return jsonResponse({ error: "No current project set" }, 404);
 
-  const accessTokens = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {};
-  const info = accessTokens[project];
-  const token = (typeof info === "object" && info !== null) ? info.token : info;
+  const token = await getAccessTokenForProject(env, userId, project);
 
   if (!token) return jsonResponse({ error: "No token found for current project" }, 404);
 
@@ -260,12 +259,7 @@ export async function handleBatchSetAlias(request, env, userId) {
  * 取得當前用戶啟用的 Token (封裝重複邏輯)
  */
 async function getActiveToken(env, userId) {
-  const project = await env.KV_LINE_STORAGE.get(`current_token_${userId}`);
-  if (!project) return null;
-
-  const accessTokens = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {};
-  const info = accessTokens[project];
-  return (typeof info === "object" && info !== null) ? info.token : info;
+  return getCurrentAccessToken(env, userId);
 }
 
 async function handleAddMenus(add, token, results) {

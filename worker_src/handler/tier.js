@@ -8,6 +8,7 @@
 import { jsonResponse } from '../lib/utils.js';
 import { getTierConfig, updateTierConfig, setMemberTier, getTierStatistics, applyTierRichMenu } from '../lib/tier_system.js';
 import * as logger from '../utils/logger.js';
+import { getCurrentAccessToken } from '../lib/token_store.js';
 
 /**
  * 取得等級配置
@@ -69,10 +70,7 @@ export async function handleSetMemberTier(request, env, userId) {
             const config = await getTierConfig(env, userId);
             if (config.benefits?.richMenu?.enabled) {
                 try {
-                    const tokenMap = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: 'json' }) || {};
-                    const currentProject = await env.KV_LINE_STORAGE.get(`current_token_${userId}`);
-                    const currentData = tokenMap[currentProject];
-                    const accessToken = typeof currentData === 'string' ? currentData : currentData?.token;
+                    const accessToken = await getCurrentAccessToken(env, userId);
 
                     if (accessToken) {
                         // 不需要 await，在背景執行即可

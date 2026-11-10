@@ -1,5 +1,6 @@
 // lib/token.js
 import { jsonResponse } from "../lib/utils.js";
+import { saveAccessToken } from "../lib/token_store.js";
 
 /**
  * handleRegisterAccessToken
@@ -33,19 +34,43 @@ export async function handleRegisterAccessToken(request, env, userId) {
   const destination = info.userId;
   const displayName = info.displayName;
 
-  const accessTokensKey = `access_tokens_${userId}`;
-  const accessTokens = await env.KV_LINE_STORAGE.get(accessTokensKey, { type: "json" }) || {};
+  const accessTokens = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {};
 
-  accessTokens[project] = {
-    token,
-    destination,
-    displayName
-  };
+  // 暫時只允許一個官方帳號。
+  //
+  // 所有資料的 KV key 綁的是「登入的人」而不是「官方帳號」
+  // （member_list_${userId}、keyword_reply_list_${userId}…），所以同一個登入
+  // 底下的第二個帳號會跟第一個共用同一份關鍵字、會員與標籤。使用者看到的是
+  // 「我切了帳號但資料沒變」，而他會合理地把它當成資料遺失來回報。
+  //
+  // 在 botId 統一完成前（docs/ARCHITECTURE_PLATFORM.md 第十三節），明確拒絕
+  // 並說明原因，比讓人踩到再去懷疑資料不見要好。
+  // 只擋新增 —— 既有已經有兩個帳號的使用者不受影響。
+  const existing = Object.entries(accessTokens)
+    .find(([, data]) => data && typeof data === "object"
+      && typeof data.destination === "string" && data.destination !== destination);
 
-  await Promise.all([
-    env.KV_LINE_STORAGE.put(accessTokensKey, JSON.stringify(accessTokens)),
-    env.KV_LINE_STORAGE.put(`destination_user_${destination}`, userId)
-  ]);
+  if (existing) {
+    const [existingProject, existingData] = existing;
+    return jsonResponse({
+      error: "目前每個帳號只能綁定一個 LINE 官方帳號。多帳號支援還在開發中（資料隔離尚未完成，第二個帳號會與第一個共用關鍵字與會員資料）。",
+      existingProject,
+      existingDisplayName: existingData.displayName || existingProject
+    }, 409);
+  }
+
+  // 加密寫入。缺金鑰時 saveAccessToken 會丟錯 —— 不可降級存明文，
+  // 否則「已加密」就變成一個沒有根據的假設。
+  try {
+    await saveAccessToken(env, userId, project, { token, destination, displayName });
+  } catch (err) {
+    // 只記在伺服器端，不把設定細節回給呼叫端
+    console.error("[Token] 無法加密儲存 access token:", err.message);
+    return jsonResponse({ error: "Token storage is not configured" }, 503);
+  }
+
+  // 反查索引在加密寫入成功之後才建立，失敗時不留下半筆資料
+  await env.KV_LINE_STORAGE.put(`destination_user_${destination}`, userId);
 
   return jsonResponse({
     success: true,

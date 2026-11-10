@@ -3,6 +3,7 @@
  */
 import * as logger from '../utils/logger.js';
 import { linkRichMenuToUser, unlinkRichMenuFromUser } from './line_client.js';
+import { getCurrentAccessToken } from './token_store.js';
 
 const DEFAULT_TIER_CONFIG = {
     upgradeRules: {
@@ -179,9 +180,7 @@ export async function checkTierUpgrade(env, userId, lineUserId) {
 }
 
 async function syncTierRichMenu(env, userId, lineUserId, tierId) {
-    const tokenMap = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: 'json' }) || {};
-    const currentProject = await env.KV_LINE_STORAGE.get(`current_token_${userId}`);
-    const accessToken = tokenMap[currentProject]?.token || tokenMap[currentProject];
+    const accessToken = await getCurrentAccessToken(env, userId);
     if (accessToken) {
         await applyTierRichMenu(env, userId, lineUserId, tierId, accessToken);
     }

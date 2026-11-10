@@ -4,6 +4,7 @@
  */
 import { verifySignature } from '../lib/signature.js';
 import * as EventHandler from '../lib/event_handler.js';
+import { getAccessTokenForDestination, getCurrentAccessToken } from '../lib/token_store.js';
 import * as logger from '../utils/logger.js';
 
 /**
@@ -115,26 +116,17 @@ async function resolveProjectDetails(env, userId, destination) {
         return { accessToken: null, projectName: null };
     }
 
-    const tokenMap = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: 'json' }) || {};
-
     // 優先精確配置匹配
-    for (const [pName, pData] of Object.entries(tokenMap)) {
-        if (pData?.destination === destination) {
-            return {
-                accessToken: typeof pData === 'string' ? pData : pData.token,
-                projectName: pName
-            };
-        }
+    const byDestination = await getAccessTokenForDestination(env, userId, destination);
+    if (byDestination.token) {
+        return { accessToken: byDestination.token, projectName: byDestination.projectName };
     }
 
     // 降級兼容：使用當前選中專案 (支援舊版無 destination 標記的情況)
     const currentProject = await env.KV_LINE_STORAGE.get(`current_token_${userId}`);
-    if (currentProject && tokenMap[currentProject]) {
-        const currentData = tokenMap[currentProject];
-        return {
-            accessToken: typeof currentData === 'string' ? currentData : currentData?.token,
-            projectName: currentProject
-        };
+    const currentToken = await getCurrentAccessToken(env, userId);
+    if (currentToken) {
+        return { accessToken: currentToken, projectName: currentProject };
     }
 
     return { accessToken: null, projectName: null };
