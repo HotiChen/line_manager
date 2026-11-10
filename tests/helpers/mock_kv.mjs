@@ -76,9 +76,15 @@ export function createMockKV() {
          * @param {string} key
          * @returns {Promise<string|null>}
          */
-        async get(key) {
+        async get(key, options = {}) {
             const entry = store.get(key);
             if (!entry || isExpired(entry)) return null;
+            // 真實 KV 在 { type: 'json' } 時會自己 parse，parse 失敗回 null。
+            // 少了這段，每個用到 type:'json' 的測試都得自己再包一層 wrapper。
+            const type = typeof options === 'string' ? options : options.type;
+            if (type === 'json') {
+                try { return JSON.parse(entry.value); } catch { return null; }
+            }
             return entry.value;
         },
 
