@@ -29,7 +29,11 @@ import { toast, withButtonLoading } from "../helper/toast.js";
 // ====== 🌐 全域變數區 ======
 const canvas = document.getElementById('uploaded-image-canvas');
 const ctx = canvas.getContext('2d');
-const imageUpload = document.getElementById('image-upload');
+
+// LINE 的硬上限，與 worker_src/handler/richmenu.js 的 validateMenuShape 一致。
+// 前端先擋是為了讓使用者當場看到哪裡超過，而不是等同步時收到一個 400。
+const CHAT_BAR_TEXT_MAX = 14;
+const AREAS_MAX = 20;
 
 
 
@@ -67,12 +71,22 @@ function dataURLtoFile(dataurl, filename) {
   return new File([u8arr], filename, { type: mime });
 }
 
+/**
+ * Richmenu
+ *
+ * Why (為什麼 richMenuId 與 imageID 是同一個欄位):
+ * - 這個類別原本把 LINE 的選單 ID 存成 `imageID`，但程式裡有一半的地方讀
+ *   `menu.richMenuId`（深連結、設為預設、同步確認的下拉選單），全部拿到
+ *   undefined —— 而 undefined 不會報錯，只會讓功能安靜地不動作。
+ * - 現在以 `richMenuId` 為正名（跟 LINE API 與後端一致），`imageID` 留成
+ *   同一個值的別名，讓既有呼叫端不必一次改完。
+ */
 class Richmenu {
-  constructor(name, diamention, imageUrl, imageID, alias, areas, chatBarText, selected, imageFile = null) {
+  constructor(name, diamention, imageUrl, richMenuId, alias, areas, chatBarText, selected, imageFile = null) {
     this.name = name;
     this.diamention = diamention;
     this.imageUrl = imageUrl;
-    this.imageID = imageID;
+    this.richMenuId = richMenuId || "";
     this.alias = alias;
     this.areas = areas;
     this.chatBarText = chatBarText;
@@ -84,6 +98,27 @@ class Richmenu {
     this.isNew = false;
     this.isDeleted = false;
   }
+
+  /** @deprecated 舊名稱；與 richMenuId 是同一個值 */
+  get imageID() { return this.richMenuId; }
+  set imageID(value) { this.richMenuId = value || ""; }
+}
+
+/**
+ * validateMenuShape
+ * 與後端同一組規則，但在這裡失敗可以直接指出是哪一個欄位。
+ *
+ * @returns {string|null} 錯誤訊息，通過則回 null
+ */
+function validateMenuShape({ chatBarText, areas }) {
+  const text = chatBarText || "";
+  if ([...text].length > CHAT_BAR_TEXT_MAX) {
+    return `聊天列文字最多 ${CHAT_BAR_TEXT_MAX} 字（目前 ${[...text].length} 字）`;
+  }
+  if ((areas || []).length > AREAS_MAX) {
+    return `區域最多 ${AREAS_MAX} 個（目前 ${(areas || []).length} 個）`;
+  }
+  return null;
 }
 
 // ====== 🌐 全域變數區結束 ======
@@ -115,24 +150,6 @@ function resetUIState() {
   document.querySelectorAll(".richmenu-thumbnail-container").forEach(container => {
     container.setAttribute("data-selected", "false");
     container.style.backgroundColor = "#00000022";
-  });
-}
-
-function convertImageToDataURL(image) {
-  return new Promise((resolve, reject) => {
-    if (!image || !(image instanceof File)) {
-      reject(new Error('Invalid image file'));
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      resolve(reader.result);
-    };
-    reader.onerror = (error) => {
-      reject(new Error('Failed to read image file: ' + error.message));
-    };
-    reader.readAsDataURL(image);
   });
 }
 
@@ -891,6 +908,11 @@ function createRichmenuThumbnail(richmenu, index) {
   richmenuContainer.classList.add("richmenu-thumbnail-container");
   richmenuContainer.setAttribute("data-index", index);
   richmenuContainer.setAttribute("data-selected", "false");
+  // 「顯示預設」按鈕與 ?edit=<id> 深連結都靠這個屬性找到縮圖；
+  // 以前沒人設過它，所以兩個功能都只是安靜地不動作。
+  if (richmenu.richMenuId) {
+    richmenuContainer.setAttribute("data-richmenu-id", richmenu.richMenuId);
+  }
   richmenuContainer.style.position = "relative";
   richmenuContainer.style.margin = "10px";
   richmenuContainer.style.cursor = "pointer";
@@ -933,6 +955,10 @@ function createRichmenuThumbnail(richmenu, index) {
   richmenuName.style.marginBottom = "5px";
 
   const richmenuThumbnail = document.createElement("img");
+  richmenuThumbnail.classList.add("richmenu-thumbnail");
+  if (richmenu.richMenuId) {
+    richmenuThumbnail.setAttribute("data-richmenu-id", richmenu.richMenuId);
+  }
   richmenuThumbnail.src = richmenu.imageUrl;
   richmenuThumbnail.style.width = "110px";
   richmenuThumbnail.style.height = "auto";
@@ -1112,11 +1138,9 @@ export function generateDeterministicAlias(userId, suffix = "1") {
   return `alias_${hash}_${timestamp}`;
 }
 
-function createUniqueAlieasID() {
-  const timestamp = Date.now();
-  const random = Math.floor(Math.random() * 1000);
-  return `alias-${userId}-${timestamp}-${random}`;
-}
+// createUniqueAlieasID 已移除：沒有任何呼叫端，而且它引用一個不存在的
+// 全域 userId —— 一旦有人叫它就會丟 ReferenceError。
+// 產生別名請用 generateDeterministicAlias(getUserId())。
 
 /**
  * saveEditedRichmenu
@@ -1131,7 +1155,14 @@ function createUniqueAlieasID() {
  * - 若為新選單則 push 進全域陣列；若為舊選單則覆寫原有設定，標記 isUpdated = true 並更新 UI 預覽圖。
  */
 async function saveEditedRichmenu() {
-  const richmenuName = document.getElementById("menu-name").value;
+  // 沒有選單在編輯中就按儲存：以前會憑空造出一個沒有圖片、尺寸寫死 2500x1686
+  // 的新選單，同步時必定失敗。與其讓使用者去追那個 400，不如當場說清楚。
+  if (!currentRichmenu) {
+    toast.warning("請先從左側選擇一個選單，或用「新增 Richmenu」建立");
+    return;
+  }
+
+  const richmenuName = document.getElementById("menu-name").value.trim();
   if (!richmenuName) {
     toast.warning("請輸入 Richmenu 名稱");
     return;
@@ -1139,62 +1170,61 @@ async function saveEditedRichmenu() {
 
   const currentAreas = JSON.parse(sessionStorage.getItem("currentAreas") || "[]");
 
-  const canvas = document.getElementById("uploaded-image-canvas");
-  const file = document.getElementById("new-image-upload").files[0];
-  const imageUrl = file ? await convertImageToDataURL(file) : canvas.toDataURL();
-
   // 讀取詳細資訊欄位
   const chatBarInputField = document.getElementById("edit-chat-bar-text");
   const chatBarTextInput = (chatBarInputField && chatBarInputField.value.trim())
     ? chatBarInputField.value.trim()
-    : (currentRichmenu?.chatBarText || "Tap to open");
+    : (currentRichmenu.chatBarText || "Tap to open");
 
   const aliasInputField = document.getElementById("edit-alias");
-  const aliasInput = aliasInputField ? aliasInputField.value.trim() : (currentRichmenu?.alias || "");
+  const aliasInput = aliasInputField ? aliasInputField.value.trim() : (currentRichmenu.alias || "");
 
   const selectedCheckbox = document.getElementById("edit-selected");
   const selectedInput = selectedCheckbox ? selectedCheckbox.checked : false;
 
-  const existingIndex = allRichmenus.findIndex(menu => menu.name === currentRichmenu?.name);
-
-  if (existingIndex !== -1) {
-    const updatedMenu = allRichmenus[existingIndex];
-    updatedMenu.name = richmenuName;
-    updatedMenu.areas = currentAreas;
-    updatedMenu.chatBarText = chatBarTextInput;
-    updatedMenu.alias = aliasInput;
-    updatedMenu.selected = selectedInput;
-    updatedMenu.isUpdated = true;
-
-  } else {
-    // 如果 currentRichmenu 為 null，建立新的
-    if (!currentRichmenu) {
-      currentRichmenu = new Richmenu(
-        richmenuName,
-        [2500, 1686],
-        imageUrl,
-        null,
-        aliasInput || null,
-        currentAreas,
-        chatBarTextInput,
-        selectedInput
-      );
-      currentRichmenu.isNew = true;
-      currentRichmenu.isUpdated = true;
-    } else {
-      currentRichmenu.name = richmenuName;
-      currentRichmenu.diamention = [2500, 1686];
-      currentRichmenu.imageUrl = imageUrl;
-      currentRichmenu.areas = currentAreas;
-      currentRichmenu.chatBarText = chatBarTextInput;
-      currentRichmenu.alias = aliasInput;
-      currentRichmenu.selected = selectedInput;
-      currentRichmenu.isNew = true;
-      currentRichmenu.isUpdated = true;
-    }
-
-    allRichmenus.push(currentRichmenu);
+  const shapeError = validateMenuShape({ chatBarText: chatBarTextInput, areas: currentAreas });
+  if (shapeError) {
+    toast.error(shapeError);
+    return;
   }
+
+  // 換圖（選填）。沒換就沿用原圖 —— 後端會把舊選單的圖搬到新選單。
+  const replacementInput = document.getElementById("edit-image-upload");
+  const replacementFile = replacementInput?.files?.[0] || null;
+  let replacementImageUrl = null;
+  if (replacementFile) {
+    try {
+      replacementImageUrl = await processImageFor(replacementFile, 'richmenu');
+    } catch (error) {
+      toast.error(error.message);
+      return;
+    }
+  }
+
+  const existingIndex = allRichmenus.indexOf(currentRichmenu);
+  const target = existingIndex !== -1 ? allRichmenus[existingIndex] : currentRichmenu;
+
+  target.name = richmenuName;
+  target.areas = currentAreas;
+  target.chatBarText = chatBarTextInput;
+  target.alias = aliasInput;
+  target.selected = selectedInput;
+  target.isUpdated = true;
+
+  if (replacementImageUrl) {
+    target.imageUrl = replacementImageUrl;
+    target.imageFile = dataURLtoFile(
+      replacementImageUrl,
+      replacementFile.name.replace(/\.\w+$/, '.jpg')
+    );
+  }
+
+  if (existingIndex === -1) {
+    target.isNew = true;
+    allRichmenus.push(target);
+  }
+
+  if (replacementInput) replacementInput.value = "";
 
   redrawCanvasWithAreas();
   displayRichmenuThumbnails(allRichmenus);
@@ -1356,8 +1386,13 @@ function clearRichMenuDisplay() {
 
   setInnerHTML(document.querySelector("#areas-table tbody"), "");
 
-  document.getElementById("status").innerText = "";
+  // #status 這個元素在 richmenu.html 上並不存在；沒有防呆時這個函式
+  // 一被呼叫就丟 TypeError，連前面幾行清空都跟著失效。
+  const statusEl = document.getElementById("status");
+  if (statusEl) statusEl.innerText = "";
 
+  const detailsPanel = document.getElementById("richmenu-details-panel");
+  if (detailsPanel) detailsPanel.style.display = "none";
 }
 
 const deleteButton = document.getElementById("delete-selected-richmenu");
@@ -1430,7 +1465,7 @@ let isSyncingRichmenus = false;
  * Post-conditions:
  * - 同步成功後更新 UI 日誌，並重新 fetchRichMenuList() 清單確保與伺服器完全同步。
  */
-async function syncRichmenusToServer() {
+async function syncRichmenusToServer(desiredDefaultMenuName = null) {
   if (isSyncingRichmenus) {
     toast.warning("同步正在進行中，請稍候...");
     return;
@@ -1450,63 +1485,122 @@ async function syncRichmenusToServer() {
     log.appendChild(li);
   }
 
+  /**
+   * 後端對每一種操作都回 { added, updated, removed, errors, setDefault }。
+   * 只要 errors 不是空的就算這一步失敗 —— 原本有幾處只看 HTTP 有沒有丟例外，
+   * 於是 LINE 明明拒絕了，畫面還是顯示「✅ 已設定」。
+   */
+  function describeErrors(result) {
+    if (!result || !Array.isArray(result.errors) || result.errors.length === 0) return null;
+    return result.errors.map(e => e.error || JSON.stringify(e)).join("；");
+  }
+
+  /** 把本地選單轉成後端 sync 要的形狀 */
+  function toSyncItem(richmenu) {
+    return {
+      name: richmenu.name,
+      diamention: richmenu.diamention,
+      areas: (richmenu.areas || []).map(area => ({
+        bounds: area.bounds,
+        action: createAction(area.action, 'richmenu')
+      })),
+      alias: richmenu.alias || "",
+      chatBarText: richmenu.chatBarText || "Tap to open",
+      selected: richmenu.selected === true
+    };
+  }
+
   try {
-    const removeList = allRichmenus.filter(menu => menu.isDeleted && menu.imageID).map(menu => menu.imageID);
+    // 1. 刪除
+    const removeList = allRichmenus.filter(menu => menu.isDeleted && menu.richMenuId).map(menu => menu.richMenuId);
     if (removeList.length > 0) {
       addLog(`🗑️ 刪除 ${removeList.length} 個 Richmenu...`);
       const result = await api.post('/richmenu/sync', { add: [], update: [], remove: removeList, setDefault: null });
 
-      // 檢查是否有錯誤（有 errors 且長度 > 0 才算失敗）
-      if (result.errors && result.errors.length > 0) {
-        addLog("❌ 刪除失敗，停止後續同步", false);
-        console.error("❌ 刪除失敗", result.errors);
+      const failure = describeErrors(result);
+      if (failure) {
+        addLog(`❌ 刪除失敗，停止後續同步：${failure}`, false);
+        toast.error(`刪除失敗：${failure}`);
         return;
       }
       addLog("✅ 刪除成功");
     }
 
+    // 2. 新增
     for (const richmenu of allRichmenus) {
-      if (richmenu.isNew && !richmenu.isDeleted) {
-        const extraData = {
-          name: richmenu.name,
-          diamention: richmenu.diamention,
-          areas: richmenu.areas.map(area => ({
-            bounds: area.bounds,
-            action: createAction(area.action, 'richmenu')
-          })),
-          alias: richmenu.alias,
-          chatBarText: richmenu.chatBarText || "Tap to open"
-        };
+      if (!richmenu.isNew || richmenu.isDeleted) continue;
 
-        try {
-          const json = await api.upload('/richmenu/sync', richmenu.imageFile, 'imageFile', extraData);
-          if (json.added?.length > 0 && (!json.errors || json.errors.length === 0)) {
-            addLog(`✅ 成功新增 Richmenu: ${richmenu.name}`);
-            continue;
-          } else {
-            addLog(`❌ 新增失敗: ${richmenu.name}`, false);
-            toast.error("新增失敗：" + JSON.stringify(json));
-            return;
-          }
-        } catch (err) {
-          addLog(`❌ 新增失敗: ${richmenu.name}`, false);
+      try {
+        const result = await api.upload('/richmenu/sync', richmenu.imageFile, 'imageFile', toSyncItem(richmenu));
+        const failure = describeErrors(result);
+        if (failure || !(result.added?.length > 0)) {
+          addLog(`❌ 新增失敗: ${richmenu.name}${failure ? `（${failure}）` : ""}`, false);
+          toast.error(`新增「${richmenu.name}」失敗：${failure || "伺服器沒有回報新選單"}`);
           return;
         }
+        // 記住後端剛配給的 ID，稍後設定預設時要用
+        richmenu.richMenuId = result.added[0].richMenuId;
+        addLog(`✅ 成功新增 Richmenu: ${richmenu.name}`);
+      } catch (err) {
+        addLog(`❌ 新增失敗: ${richmenu.name}（${err.message || err}）`, false);
+        toast.error(`新增「${richmenu.name}」失敗：${err.message || err}`);
+        return;
       }
     }
 
-    const defaultMenu = allRichmenus.find(menu => menu.isDefault);
+    // 3. 編輯既有選單
+    //    LINE 沒有修改 API，後端會走「建新 → 傳圖 → 改別名 → 刪舊」，
+    //    所以編輯完成後選單會換一個新的 richMenuId。
+    for (const richmenu of allRichmenus) {
+      if (richmenu.isNew || richmenu.isDeleted || !richmenu.isUpdated || !richmenu.richMenuId) continue;
 
-    if (defaultMenu) {
+      const item = { ...toSyncItem(richmenu), richMenuId: richmenu.richMenuId };
+
+      try {
+        const result = richmenu.imageFile
+          ? await api.upload('/richmenu/sync', richmenu.imageFile, 'imageFile',
+            { ...item, op: 'update' })
+          : await api.post('/richmenu/sync', { add: [], update: [item], remove: [], setDefault: null });
+
+        const failure = describeErrors(result);
+        if (failure || !(result.updated?.length > 0)) {
+          addLog(`❌ 更新失敗: ${richmenu.name}${failure ? `（${failure}）` : ""}`, false);
+          toast.error(`更新「${richmenu.name}」失敗：${failure || "伺服器沒有回報更新結果"}`);
+          return;
+        }
+        richmenu.richMenuId = result.updated[0].richMenuId;
+        addLog(`✅ 成功更新 Richmenu: ${richmenu.name}`);
+      } catch (err) {
+        addLog(`❌ 更新失敗: ${richmenu.name}（${err.message || err}）`, false);
+        toast.error(`更新「${richmenu.name}」失敗：${err.message || err}`);
+        return;
+      }
+    }
+
+    // 4. 預設選單。呼叫端沒指定名稱就代表「不更動」—— 不要自作主張重設，
+    //    那會在使用者只是想同步區域改動時，意外改掉線上的預設選單。
+    const defaultMenu = desiredDefaultMenuName
+      ? allRichmenus.find(menu => menu.name === desiredDefaultMenuName)
+      : null;
+
+    if (defaultMenu && !defaultMenu.isDeleted) {
       addLog(`🌟 設定預設選單：${defaultMenu.name}`);
       try {
-        await api.post('/richmenu/sync', {
+        const result = await api.post('/richmenu/sync', {
           add: [], update: [], remove: [],
-          setDefault: { name: defaultMenu.name, richMenuId: defaultMenu.imageID }
+          setDefault: { name: defaultMenu.name, richMenuId: defaultMenu.richMenuId || "" }
         });
+
+        const failure = describeErrors(result);
+        if (failure || !result.setDefault) {
+          addLog(`❌ 設定預設選單失敗${failure ? `：${failure}` : ""}`, false);
+          toast.error(`設定預設選單失敗：${failure || "伺服器沒有確認"}`);
+          return;
+        }
         addLog("✅ 預設選單已設定");
       } catch (err) {
-        addLog("❌ 設定預設選單失敗", false);
+        addLog(`❌ 設定預設選單失敗（${err.message || err}）`, false);
+        toast.error(`設定預設選單失敗：${err.message || err}`);
         return;
       }
     }
@@ -1609,20 +1703,23 @@ export async function pageInit(pageData) {
     updateAllBtn.addEventListener("click", function () {
       setInnerHTML(defaultSelect, "");
 
-      const defaultMenu = allRichmenus.find(menu => menu.isDefault);
-      if (defaultMenu) {
-        const defaultOption = document.createElement("option");
-        defaultOption.value = defaultMenu.richMenuId;
-        defaultOption.textContent = `${defaultMenu.name}（預設）`;
-        defaultOption.selected = true;
-        defaultSelect.appendChild(defaultOption);
-      }
+      // 「維持現狀」必須是一個明確的選項。沒有它的話，下拉選單一開啟就等於
+      // 在替使用者挑一個預設選單，而他可能只是想同步區域的改動。
+      const keepOption = document.createElement("option");
+      keepOption.value = "";
+      keepOption.textContent = "不更動預設選單";
+      defaultSelect.appendChild(keepOption);
 
-      allRichmenus.forEach((menu, index) => {
-        if (menu.richMenuId === defaultRichmenuId) return;
+      const currentDefault = allRichmenus.find(menu => menu.isDefault);
+
+      allRichmenus.forEach(menu => {
+        if (menu.isDeleted) return;
         const option = document.createElement("option");
-        option.value = menu.richMenuId || `index-${index}`;
-        option.textContent = menu.name;
+        // 還沒同步的新選單沒有 ID，用名稱當 value；同步時會先新增再回頭對上
+        option.value = menu.richMenuId || "";
+        option.textContent = menu === currentDefault ? `${menu.name}（目前預設）` : menu.name;
+        option.dataset.menuName = menu.name;
+        if (menu === currentDefault) option.selected = true;
         defaultSelect.appendChild(option);
       });
 
@@ -1631,9 +1728,14 @@ export async function pageInit(pageData) {
     });
 
     confirmUpdateBtn.addEventListener("click", async function () {
+      // 下拉選單是這次同步的意圖來源；選「不更動預設選單」時就不碰它。
+      const chosenName = defaultSelect.selectedOptions[0]?.dataset.menuName || null;
+      if (chosenName) {
+        allRichmenus.forEach(menu => { menu.isDefault = (menu.name === chosenName); });
+      }
 
       await withButtonLoading(confirmUpdateBtn, async () => {
-        await syncRichmenusToServer();
+        await syncRichmenusToServer(chosenName);
       }, '同步中...');
 
       const modal = bootstrap.Modal.getInstance(document.getElementById("confirm-update-modal"));
@@ -1882,6 +1984,12 @@ export async function pageInit(pageData) {
     const aliasValue = document.getElementById("new-richmenu-alias").value.trim() || generateDeterministicAlias(getUserId());
     const chatBarText = document.getElementById("new-chat-bar-text").value.trim() || "Tap to open";
     const isSelected = document.getElementById("new-menu-selected").checked;
+
+    const shapeError = validateMenuShape({ chatBarText, areas: areasForNewMenu });
+    if (shapeError) {
+      toast.error(shapeError);
+      return;
+    }
 
     currentRichmenu = new Richmenu(
       menuName,

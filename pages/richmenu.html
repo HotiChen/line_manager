@@ -96,12 +96,38 @@
                   placeholder="Tap to open" style="width: 180px;">
               </div>
               <div class="col-auto">
+                <label class="col-form-label small text-muted" for="edit-alias">
+                  <i class="bi bi-link-45deg"></i> 別名
+                </label>
+              </div>
+              <div class="col-auto">
+                <input type="text" id="edit-alias" class="form-control form-control-sm"
+                  placeholder="例如：main-menu" style="width: 180px;">
+              </div>
+              <div class="col-auto">
                 <div class="form-check">
                   <input class="form-check-input" type="checkbox" id="edit-selected">
                   <label class="form-check-label small text-muted" for="edit-selected">
                     <i class="bi bi-eye"></i> 預設開啟
                   </label>
                 </div>
+              </div>
+              <div class="col-auto">
+                <label class="col-form-label small text-muted" for="edit-image-upload">
+                  <i class="bi bi-image"></i> 更換圖片
+                </label>
+              </div>
+              <div class="col-auto">
+                <input type="file" id="edit-image-upload" class="form-control form-control-sm"
+                  accept="image/png,image/jpeg" style="width: 220px;">
+              </div>
+            </div>
+            <div class="row mt-2">
+              <div class="col">
+                <small class="text-muted">
+                  改動會在按「儲存此選單變更」後暫存，需再按「同步所有變更至 Line@」才會送到 LINE。
+                  LINE 沒有修改 API，同步時會以新選單取代舊的（ID 會變）。
+                </small>
               </div>
             </div>
           </div>
