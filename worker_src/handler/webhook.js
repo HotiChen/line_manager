@@ -80,7 +80,7 @@ export async function handleWebhookRequest(request, env, ctx) {
             for (const event of events) {
                 try {
                     logger.info('EVENT', `處理背景事件: ${event.type}`, { replyToken: event.replyToken });
-                    await routeEvent(event, env, userId, accessToken, ctx);
+                    await routeEvent(event, env, userId, accessToken, ctx, destination);
                 } catch (err) {
                     logger.error('EVENT', `處理事件 ${event.type} 失敗`, err);
                 }
@@ -146,7 +146,7 @@ async function resolveProjectDetails(env, userId, destination) {
  * 
  * Pre-conditions: 事件類型、環境變數與 Token 已就緒
  */
-async function routeEvent(event, env, userId, accessToken, ctx) {
+async function routeEvent(event, env, userId, accessToken, ctx, destination) {
     if (!event || !event.type || !env || !userId) {
         logger.error('EVENT', 'routeEvent 收到無效的事件結構');
         return null;
@@ -156,7 +156,9 @@ async function routeEvent(event, env, userId, accessToken, ctx) {
         case 'message':
             return EventHandler.handleMessageEvent(event, env, userId, accessToken, ctx);
         case 'follow':
-            return EventHandler.handleFollowEvent(event, env, userId, accessToken, ctx);
+            // destination 就是 botId。傳下去讓會員資料記得自己屬於哪個官方帳號 ——
+            // 少了它，同一個 owner 底下兩個帳號的會員會混在一起且事後分不回去。
+            return EventHandler.handleFollowEvent(event, env, userId, accessToken, ctx, destination);
         case 'unfollow':
             return EventHandler.handleUnfollowEvent(event, env, userId);
         case 'postback':

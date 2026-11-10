@@ -11,9 +11,33 @@ import { addTagsToEntity, removeTagsFromEntity } from './tag_system.js';
 import { getMemberTier, checkTierUpgrade } from './tier_system.js';
 
 /**
- * 助手函數：紀錄新會員或更新互動
+ * 把 botId 併進會員的 botIds。
+ *
+ * 會員資料的 key 綁 owner 不綁 bot（member_profile_${ownerId}_${lineUserId}），
+ * 所以同一個人追蹤同一個 owner 的兩個官方帳號時只有一筆記錄 —— 單一欄位
+ * 記不下兩個，記成陣列，將來 migration 才能把他複製到兩邊的命名空間。
+ *
+ * botId 無效時原樣回傳，不寫入任何東西：寧可留著「不知道」，也不要存一個
+ * 看起來有答案的垃圾值。
+ *
+ * @param {Object} profile
+ * @param {unknown} botId - LINE 的 destination
+ * @returns {Object} 同一個 profile 物件
  */
-async function recordMemberInteraction(event, env, userId, accessToken) {
+function withBotId(profile, botId) {
+    if (typeof botId !== 'string' || botId === '' || botId.includes(':')) return profile;
+    const existing = Array.isArray(profile.botIds) ? profile.botIds : [];
+    profile.botIds = existing.includes(botId) ? existing : [...existing, botId];
+    return profile;
+}
+
+/**
+ * 助手函數：紀錄新會員或更新互動
+ *
+ * @param {string} [botId] - 事件來源的 LINE destination。缺少時會員照常建立，
+ *   只是這筆資料無法歸屬到特定官方帳號。
+ */
+async function recordMemberInteraction(event, env, userId, accessToken, botId) {
     try {
         const lineUserId = event.source.userId;
         const profileKey = `member_profile_${userId}_${lineUserId}`;
@@ -39,6 +63,7 @@ async function recordMemberInteraction(event, env, userId, accessToken) {
                 totalInteractions: 1,
                 lastInteraction: new Date().toISOString()
             };
+            withBotId(profile, botId);
 
             // 更新會員列表
             const list = JSON.parse(await env.KV_LINE_STORAGE.get(listKey) || "[]");
@@ -51,6 +76,8 @@ async function recordMemberInteraction(event, env, userId, accessToken) {
             profile.status = "active";
             profile.totalInteractions = (profile.totalInteractions || 0) + 1;
             profile.lastInteraction = new Date().toISOString();
+            // 既有會員在下次互動時補上歸屬，讓舊資料逐步收斂
+            withBotId(profile, botId);
             logger.info('RECORD_MEMBER', '現有會員資料已更新');
         }
 
@@ -304,12 +331,12 @@ export async function handleMessageEvent(event, env, userId, accessToken, ctx) {
 /**
  * 處理 Follow 事件
  */
-export async function handleFollowEvent(event, env, userId, accessToken) {
+export async function handleFollowEvent(event, env, userId, accessToken, ctx, botId) {
     const lineUserId = event.source.userId;
     logger.info('FOLLOW', `新用戶加入: ${lineUserId}`);
 
     // 紀錄會員並同步選單
-    await recordMemberInteraction(event, env, userId, accessToken);
+    await recordMemberInteraction(event, env, userId, accessToken, botId);
     await syncMemberRichMenu(env, userId, lineUserId);
 
     try {
