@@ -96,7 +96,10 @@ describe('handleGetCurrentToken', () => {
         assert.equal(res.status, 404);
     });
 
-    it('設定後能取回 project 名稱與 token', async () => {
+    it('設定後能取回 project 名稱與 botId，但不回傳 token', async () => {
+        // 原本這裡斷言 body.token === 'secret-tok'，也就是斷言端點會把 LINE
+        // channel access token 交給呼叫端。那是這次要修掉的漏洞本身，所以
+        // 斷言必須反轉：現在驗證專案資訊仍可取得，而祕密不外流。
         const userId = 'user-get-02';
         await seedToken(env.KV_LINE_STORAGE, userId, 'proj-beta', 'secret-tok');
         await env.KV_LINE_STORAGE.put(`current_token_${userId}`, 'proj-beta');
@@ -105,7 +108,8 @@ describe('handleGetCurrentToken', () => {
         assert.equal(res.status, 200);
         const body = await res.json();
         assert.equal(body.project, 'proj-beta');
-        assert.equal(body.token, 'secret-tok');
+        assert.equal(body.botId, 'dest-proj-beta');
+        assert.ok(!('token' in body), 'token 不可出現在回應裡');
     });
 });
 
@@ -246,7 +250,9 @@ describe('Token 命名空間隔離', () => {
         const resB = await handleGetCurrentToken(env, userB);
         assert.equal(resB.status, 200);
         const bodyB = await resB.json();
-        assert.equal(bodyB.token, 'tok-B');
+        // 原本用 token 值當 A/B 的區分工具。隔離的證明其實是「A 的回 404、
+        // B 的仍回 200 且專案在」——不需要祕密就成立。
+        assert.equal(bodyB.project, 'shared-name');
     });
 });
 

@@ -102,9 +102,14 @@ export async function handleDeleteAccessToken(request, env, userId) {
 
 /**
  * handleGetCurrentToken
- * 取得當前專案使用的 Token 詳情
- * 
- * Post-conditions: 回傳 project 名稱與密鑰 token
+ * 取得當前選定的專案
+ *
+ * Post-conditions: 回傳 project 名稱與 botId（destination）。
+ *
+ * 絕不回傳 access token。先前這裡會回 `{ project, token }`，而那是 LINE
+ * channel 的完全控制權；全 repo 沒有任何呼叫端，前端也完全不直接呼叫
+ * api.line.me，所以沒有任何正當需求。端點保留（萬一有看不見的呼叫端還是能
+ * 知道當前專案），但祕密不外流。
  */
 export async function handleGetCurrentToken(env, userId) {
   const project = await env.KV_LINE_STORAGE.get(`current_token_${userId}`);
@@ -113,12 +118,20 @@ export async function handleGetCurrentToken(env, userId) {
   const accessTokens = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {};
   const projectInfo = accessTokens[project];
 
-  // 支援舊版字串格式與新版物件格式
-  const token = (typeof projectInfo === "object" && projectInfo !== null) ? projectInfo.token : projectInfo;
+  // 舊版把 token 直接存成字串，新版是 { token, destination, displayName }。
+  // 兩種都只用來判斷「這個專案是否已設定」，值本身不外流。
+  const configured = typeof projectInfo === "object" && projectInfo !== null
+    ? Boolean(projectInfo.token)
+    : Boolean(projectInfo);
 
-  if (!token) return jsonResponse({ error: "No token found for current project" }, 404);
+  if (!configured) return jsonResponse({ error: "No token found for current project" }, 404);
 
-  return jsonResponse({ project, token });
+  const botId = (typeof projectInfo === "object" && projectInfo !== null
+    && typeof projectInfo.destination === "string")
+    ? projectInfo.destination
+    : null;
+
+  return jsonResponse({ project, botId });
 }
 
 /**
@@ -128,28 +141,51 @@ export async function handleGetCurrentToken(env, userId) {
  * Post-conditions: 回傳合併後的專案列表物件 { name: id }
  */
 export async function handleListUserProjects(env, userId) {
+  // 注意 Promise.all 裡不要寫 `kv.get(..) || {}` —— `||` 會作用在 Promise 上，
+  // 而 Promise 永遠 truthy，預設值從來不會生效。先前就是這樣寫的，於是沒有
+  // user:<id>:bots 的使用者在 `userBotsData.bots` 這行拋 TypeError，整個
+  // /token/list 回 500；而後台列出專案只靠這一個端點。
   const [accessTokens, userBotsData] = await Promise.all([
-    env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {},
-    env.KV_LINE_STORAGE.get(`user:${userId}:bots`, { type: "json" }) || { bots: [] }
+    env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }),
+    env.KV_LINE_STORAGE.get(`user:${userId}:bots`, { type: "json" })
   ]);
 
-  const mergedProjects = { ...accessTokens };
-
-  for (const bot of userBotsData.bots) {
-    const botInfo = await env.KV_LINE_STORAGE.get(`bot:${bot.botId}:info`, { type: "json" });
-    const projectName = botInfo?.name || `Bot (${bot.botId.substring(0, 8)}...)`;
-
-    if (!Object.values(mergedProjects).includes(bot.botId)) {
-      let finalProjectName = projectName;
-      if (mergedProjects[finalProjectName]) {
-        finalProjectName = `${projectName} (${bot.botId.substring(0, 4)})`;
-      }
-      mergedProjects[finalProjectName] = bot.botId;
-    }
+  // 值一律是 botId 字串。
+  //
+  // 不可回傳 access token：那是 LINE channel 的完全控制權，前端沒有任何地方
+  // 需要它，而前端還有裸 innerHTML，任何一處 XSS 都能把它拿走。
+  //
+  // 形狀統一成字串而不是挖掉 token 欄位，是因為前端三個消費者
+  // （token_manager.js、team_management.js、flow_designer_data_loader.js）
+  // 都把值當 botId 用，而先前的回應是混合的 —— access_tokens 來的是物件、
+  // user:<id>:bots 來的是字串，所以那三處一直在渲染 [object Object]。
+  const projects = {};
+  for (const [name, info] of Object.entries(accessTokens || {})) {
+    // 舊格式把 token 直接存成字串，沒有 destination 可用 —— 回 null，
+    // 絕不回那個字串本身
+    projects[name] = (info && typeof info === "object" && typeof info.destination === "string")
+      ? info.destination
+      : null;
   }
 
-  return jsonResponse(mergedProjects);
+  const bots = Array.isArray(userBotsData?.bots) ? userBotsData.bots : [];
+  for (const bot of bots) {
+    if (!bot || typeof bot.botId !== "string" || bot.botId === "") continue;
+    // 先前的去重寫成 `Object.values(mergedProjects).includes(bot.botId)`，
+    // 但那時 values 是物件，跟字串永遠不相等，所以從來沒去重成功
+    if (Object.values(projects).includes(bot.botId)) continue;
+
+    const botInfo = await env.KV_LINE_STORAGE.get(`bot:${bot.botId}:info`, { type: "json" });
+    const projectName = botInfo?.name || `Bot (${bot.botId.substring(0, 8)}...)`;
+    const finalName = projects[projectName] === undefined
+      ? projectName
+      : `${projectName} (${bot.botId.substring(0, 4)})`;
+    projects[finalName] = bot.botId;
+  }
+
+  return jsonResponse(projects);
 }
+
 
 /**
  * route
