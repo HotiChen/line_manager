@@ -30,6 +30,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # 缺 token 時直接講清楚缺什麼，而不是讓 wrangler 丟一個
+      # 「Authentication error [code: 10000]」讓人去猜。
+      - name: Check deploy credentials
+        run: |
+          if [ -z "${{ secrets.CLOUDFLARE_API_TOKEN }}" ]; then
+            echo "::error::缺少 repository secret CLOUDFLARE_API_TOKEN。"
+            echo "::error::Cloudflare → My Profile → API Tokens → Edit Cloudflare Workers 模板，"
+            echo "::error::Zone Resources 要包含 imhoti.tw（部署會寫 Workers Route）。"
+            exit 1
+          fi
+
       # 測試與 lint 在這裡再跑一次，不是重複 ci.yml。
       # ci.yml 跑在 PR 上，而直接推到 main（或 merge 之後的 main）可能
       # 是從沒被 PR 測過的樹 —— 兩個綠勾都是針對「即將上線的那個 commit」。
@@ -42,11 +53,12 @@ jobs:
       - name: Pre-deploy checks
         run: npm run deploy:check
 
+      # 不需要 accountId：這個登入底下只有一個 Cloudflare 帳號，wrangler 會
+      # 從 token 自己推出來。多設一個 secret 只是多一個會過期、會設錯的東西。
       - name: Deploy to Cloudflare
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       # 部署完驗兩件事，失敗就讓這個 job 紅燈：
       #   1. 認證沒有退回「接受自報身分」
