@@ -15,6 +15,7 @@ import * as TeamHandler from "./handler/team.js";
 import * as BotHandler from "./handler/bot.js";
 import * as MigrationHandler from "./migration/migrate.js";
 import { openBotStore } from "./lib/bot_store.js";
+import { normalizeMount, stripMount } from "./lib/mount.js";
 import { getMessageStats } from "./lib/message_stats.js";
 
 
@@ -34,7 +35,23 @@ import * as FlowHandler from "./handler/flow.js";
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const pathname = url.pathname;
+
+    // 掛載前綴只在這裡處理一次，底下所有路由比對與靜態資源查找都看到
+    // 切過的路徑。見 lib/mount.js 的註解。
+    const mount = normalizeMount(env.MOUNT_PATH);
+    const mounted = stripMount(url.pathname, mount);
+
+    if (mounted.redirect) {
+      // 301 而不是直接服務內容：相對路徑要有尾斜線才會解析到 /lm/ 底下
+      return Response.redirect(`${url.origin}${mounted.redirect}${url.search}`, 301);
+    }
+
+    const pathname = mounted.pathname;
+
+    // 靜態資源要用切過的路徑去查 site bucket（存的 key 是 `css/a.css`）
+    const assetRequest = mount === "" || pathname === url.pathname
+      ? request
+      : new Request(`${url.origin}${pathname}${url.search}`, request);
 
     // 🔹 處理 CORS 預檢請求 (OPTIONS)
     if (request.method === "OPTIONS") {
@@ -75,7 +92,7 @@ export default {
     if (!isApiRequest) {
       try {
         return await getAssetFromKV(
-          { request, waitUntil: ctx.waitUntil.bind(ctx) },
+          { request: assetRequest, waitUntil: ctx.waitUntil.bind(ctx) },
           { ASSET_NAMESPACE: env.__STATIC_CONTENT, ASSET_MANIFEST: assetManifest }
         );
       } catch (e) {
