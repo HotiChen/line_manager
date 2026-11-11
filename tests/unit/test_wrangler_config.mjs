@@ -90,6 +90,44 @@ describe('wrangler.jsonc — AUTH_MODE', () => {
     });
 });
 
+describe('wrangler.jsonc — MOUNT_PATH 與 routes 必須一致', () => {
+    // 這兩個分開設定，但必須講同一件事。不一致時每個請求都會 404 —— route
+    // 把 /lm/x 送進來，worker 卻以為自己掛在別的地方、切不掉前綴，於是
+    // 路由表比對不到、靜態資源 key 也對不上。沒有任何程式碼會報錯。
+    it('每條 route 的路徑前綴都要等於 MOUNT_PATH', () => {
+        const cfg = readWranglerConfig();
+        const mount = cfg.vars.MOUNT_PATH || '';
+
+        for (const route of cfg.routes || []) {
+            const pattern = typeof route === 'string' ? route : route.pattern;
+            const path = pattern.replace(/^[^/]*/, '');       // 去掉 host
+            const prefix = path.replace(/\*+$/, '')           // 去掉結尾的 *
+                .replace(/\/$/, '');                          // 去掉結尾的 /
+
+            assert.equal(prefix, mount,
+                `route "${pattern}" 的前綴是 "${prefix}"，但 MOUNT_PATH 是 "${mount}"`);
+        }
+    });
+
+    it('有 route 時 MOUNT_PATH 不可為空，否則前綴不會被切掉', () => {
+        const cfg = readWranglerConfig();
+        if ((cfg.routes || []).length > 0) {
+            assert.ok(cfg.vars.MOUNT_PATH, '設了 route 卻沒設 MOUNT_PATH');
+        }
+    });
+
+    it('route 的 pattern 要用 /lm* 而不是 /lm/*', () => {
+        // /lm/* 不會匹配沒有尾斜線的 /lm，於是那個網址會落到 WordPress，
+        // 而我們的 301 永遠沒機會執行。
+        const cfg = readWranglerConfig();
+        for (const route of cfg.routes || []) {
+            const pattern = typeof route === 'string' ? route : route.pattern;
+            assert.ok(!pattern.endsWith('/*'),
+                `route "${pattern}" 以 /* 結尾，沒有尾斜線的網址不會進到這個 worker`);
+        }
+    });
+});
+
 describe('wrangler.jsonc — LIFF_CHANNEL_ID', () => {
     it('prod 與 dev 都必須設定（否則 authenticate 會全部拒絕）', () => {
         const cfg = readWranglerConfig();

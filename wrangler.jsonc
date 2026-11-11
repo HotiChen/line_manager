@@ -8,7 +8,26 @@
       "binding": "KV_LINE_STORAGE"
     }
   ],
+  // 掛在 imhoti.tw 的 /lm 底下。imhoti.tw 的根是 WordPress，route 只接這一條
+  // 路徑，其餘流量照原樣走回源站。
+  //
+  // `/lm*`（不是 `/lm/*`）是刻意的：要讓沒有尾斜線的 `/lm` 也進到這個 worker，
+  // 它才能 301 到 `/lm/`。前端的資源參照全部是相對路徑，少了那個尾斜線
+  // `css/a.css` 會解析到 `imhoti.tw/css/a.css`，也就是 WordPress 的地盤。
+  "routes": [
+    {
+      "pattern": "imhoti.tw/lm*",
+      "zone_name": "imhoti.tw"
+    }
+  ],
   "vars": {
+    // 這個 worker 掛在哪個子路徑底下（見 lib/mount.js）。
+    // 必須與上面 routes 的前綴一致 —— 不一致的話每個請求都會 404，而且
+    // 沒有任何程式碼會報錯。tests/unit/test_wrangler_config.mjs 會比對。
+    //
+    // 注意：MOUNT_PATH 是對所有 host 生效的，所以 workers.dev 的網址也變成
+    // pinti-line.hotichen.workers.dev/lm/… —— 根路徑不再回應。
+    "MOUNT_PATH": "/lm",
     "LIFF_ID": "1653928585-8Kkz0jnz",
     // Channel ID 就是 LIFF_ID 的前半段，前端 env/config.js 也會送到瀏覽器，
     // 本身不是機密；放在 vars 讓 authenticate() 能比對 token 的 client_id。

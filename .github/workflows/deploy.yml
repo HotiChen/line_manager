@@ -1,0 +1,66 @@
+name: Deploy
+
+# merge 到 main 就部署正式環境（imhoti.tw/lm）。
+#
+# 刻意只在 push 到 main 時觸發，不在 pull_request —— PR 來自分叉時
+# secrets 不會被帶過去，而且 PR 本來就不該動到正式環境。
+on:
+  push:
+    branches: [main]
+  # 手動重跑（例如上一次部署因為 Cloudflare 暫時性錯誤失敗）
+  workflow_dispatch:
+
+# 同時只跑一個部署。兩個 merge 間隔很短時，後者等前者結束，
+# 避免兩份 wrangler 同時上傳 site bucket 的資產。
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # 測試與 lint 在這裡再跑一次，不是重複 ci.yml。
+      # ci.yml 跑在 PR 上，而直接推到 main（或 merge 之後的 main）可能
+      # 是從沒被 PR 測過的樹 —— 兩個綠勾都是針對「即將上線的那個 commit」。
+      - name: Unit tests
+        run: npm test
+
+      - name: Lint (backend + tests, errors only)
+        run: npx eslint worker_src tests --quiet
+
+      - name: Pre-deploy checks
+        run: npm run deploy:check
+
+      - name: Deploy to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      # 部署完驗兩件事，失敗就讓這個 job 紅燈：
+      #   1. 認證沒有退回「接受自報身分」
+      #   2. /lm 會 301 到 /lm/（少了尾斜線，相對路徑會解析到 WordPress）
+      - name: Smoke test — auth is fail-closed
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H 'X-User-Id: Uzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz00' \
+            https://imhoti.tw/lm/member/list)
+          echo "X-User-Id 自報身分 -> HTTP $code"
+          test "$code" = "401"
+
+      - name: Smoke test — /lm redirects to /lm/
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' https://imhoti.tw/lm)
+          echo "/lm -> HTTP $code"
+          test "$code" = "301"
