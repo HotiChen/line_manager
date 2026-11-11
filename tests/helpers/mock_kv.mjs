@@ -56,9 +56,24 @@ export function createMockKV() {
         return entry.expiresAt !== null && now() >= entry.expiresAt;
     }
 
+    /**
+     * KV 操作次數。Cloudflare 的 subrequest 上限（付費方案每個請求 1000 次）
+     * 是「程式正確但在正式資料量下跑不完」這類 bug 的來源，而單元測試用小
+     * 資料量永遠量不到。暴露計數器，測試才能對「一次呼叫用掉多少次操作」
+     * 下斷言，而不是只驗證結果對不對。
+     */
+    const ops = { get: 0, put: 0, delete: 0, list: 0, get total() { return this.get + this.put + this.delete + this.list; } };
+
     return {
         /** 暴露內部 store，方便測試直接檢查狀態（非正式 API） */
         _store: store,
+
+        /** KV 操作計數（非正式 API）。`_resetOps()` 歸零。 */
+        _ops: ops,
+
+        _resetOps() {
+            ops.get = 0; ops.put = 0; ops.delete = 0; ops.list = 0;
+        },
 
         /**
          * 模擬時間前進（毫秒）。可在測試中使用以觸發 TTL 過期。
@@ -77,6 +92,7 @@ export function createMockKV() {
          * @returns {Promise<string|null>}
          */
         async get(key, options = {}) {
+            ops.get += 1;
             const entry = store.get(key);
             if (!entry || isExpired(entry)) return null;
             // 真實 KV 在 { type: 'json' } 時會自己 parse，parse 失敗回 null。
@@ -97,6 +113,7 @@ export function createMockKV() {
          * @returns {Promise<void>}
          */
         async put(key, value, options = {}) {
+            ops.put += 1;
             // eslint-disable-next-line eqeqeq
             const expiresAt = options.expirationTtl != null
                 ? now() + options.expirationTtl * 1000
@@ -111,6 +128,7 @@ export function createMockKV() {
          * @returns {Promise<void>}
          */
         async delete(key) {
+            ops.delete += 1;
             store.delete(key);
         },
 
@@ -127,6 +145,7 @@ export function createMockKV() {
          * @returns {Promise<{ keys: Array<{name: string}>, list_complete: boolean, cursor: string }>}
          */
         async list(options = {}) {
+            ops.list += 1;
             const prefix = options.prefix || '';
             const limit = options.limit || 1000;
             const cursorOffset = options.cursor

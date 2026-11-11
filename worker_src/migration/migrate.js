@@ -39,6 +39,18 @@ export const BACKFILL_CURSOR_KEY = "migration:botid:cursor";
 /** 一次 handleMigrate 呼叫最多處理幾個使用者（避免撞上 Worker 的 CPU 上限） */
 const DEFAULT_BATCH_SIZE = 10;
 
+/**
+ * 一次 migrateUser 呼叫最多複製幾筆帶 id 的資源。
+ *
+ * Cloudflare 的 subrequest 上限是每個請求 1000 次，KV 操作計入。每筆複製是
+ * 2 次操作（讀來源、寫入），加上每個資源各 2 次列舉與中繼資料的零頭，400
+ * 筆約 850 次 —— 留了餘裕，因為超過上限不是變慢而是整個請求被切斷。
+ *
+ * 正式環境有一個 owner 名下 845 位會員，所以這不是理論問題：沒有預算的版本
+ * 在那個 owner 身上量到 2732 次操作。
+ */
+const DEFAULT_COPY_BUDGET = 400;
+
 async function readText(env, key) {
     try {
         return await env.KV_LINE_STORAGE.get(key);
@@ -67,6 +79,74 @@ async function copyKey(env, fromKey, toKey, force) {
 }
 
 /**
+ * 這個資源在某個 bot 的新命名空間底下已經有哪些 key（完整 key 名稱）。
+ *
+ * 帶 id 的資源不逐筆讀目標來判斷「是否已存在」，而是整個資源前綴列舉一次。
+ * 理由是收斂：逐筆讀的話，跳過一筆也要花 1 次操作，於是第 N 輪要先為前
+ * N-1 輪複製過的每一筆各付一次，輪數越多能用的預算越少，到後面永遠跑不完。
+ * 改成列舉之後，已完成的部分是 0 次操作，每一輪的預算都完整用在新資料上。
+ *
+ * 前綴取到「第一個 id 之前」，所以 args 是 1 或 2 都只需要一次列舉。
+ *
+ * @returns {Promise<Set<string>>} 完整 key 名稱
+ */
+async function listExistingKeys(env, botId, spec) {
+    const probe = Array(spec.args).fill(SENTINEL);
+    const prefix = spec.bot(botId, ...probe).split(SENTINEL)[0];
+    const suffixes = await listSuffixes(env, prefix);
+    return new Set(suffixes.map(s => prefix + s));
+}
+
+/**
+ * 把一個帶 id 的資源從舊命名空間複製到新命名空間，受預算限制。
+ *
+ * 預算歸零之後不再複製，但仍然把剩下的筆數數完 —— 數是免費的（id 清單
+ * 已經列舉過了），而呼叫端需要知道還差多少才能決定要不要再跑一輪。
+ *
+ * @param {{left: number, remaining: number}} budget
+ * @returns {Promise<{copied: number, skipped: number}>}
+ */
+async function copyIndexedResource(env, userId, botId, spec, argTuples, force, budget, counts) {
+    const existing = force ? new Set() : await listExistingKeys(env, botId, spec);
+
+    let copied = 0;
+    let skipped = 0;
+
+    for (const args of argTuples) {
+        let toKey;
+        try {
+            toKey = spec.bot(botId, ...args);
+        } catch {
+            // id 含有分隔符，進不了新命名空間。這是資料問題，不是預算問題，
+            // 所以不佔預算也不算 pending —— 再跑幾輪都不會變。
+            counts.skipped_empty += 1;
+            continue;
+        }
+
+        if (existing.has(toKey)) {
+            skipped += 1;
+            counts.skipped_exists += 1;
+            continue;
+        }
+
+        if (budget.left <= 0) {
+            budget.remaining += 1;
+            continue;
+        }
+
+        // 已經用列舉確認過目標不存在，所以這裡不必再讀一次目標
+        const outcome = await copyKey(env, spec.v1(userId, ...args), toKey, true);
+        counts[outcome] += 1;
+        if (outcome === "copied") {
+            copied += 1;
+            budget.left -= 1;
+        }
+    }
+
+    return { copied, skipped };
+}
+
+/**
  * 回填單一使用者。
  *
  * @param {Object} env
@@ -78,6 +158,12 @@ export async function migrateUser(env, userId, options = {}) {
     const logs = [];
     const log = (msg) => logs.push(msg);
     const counts = { copied: 0, skipped_exists: 0, skipped_empty: 0 };
+
+    // left 歸零之後只數不複製；remaining 是「這一輪沒做到的筆數」。
+    const budget = {
+        left: options.budget || DEFAULT_COPY_BUDGET,
+        remaining: 0,
+    };
 
     const bots = await listBotsOfUser(env, userId);
 
@@ -95,7 +181,7 @@ export async function migrateUser(env, userId, options = {}) {
         } else {
             log(`⚠️ ${userId} 沒有任何 project (access_tokens)，跳過。`);
         }
-        return { success: true, userId, bots: [], counts, logs };
+        return { success: true, userId, bots: [], counts, logs, done: true, remaining: 0 };
     }
 
     const currentBot = bots.find(b => b.isCurrent) || bots[0];
@@ -165,18 +251,17 @@ export async function migrateUser(env, userId, options = {}) {
                 continue;
             }
 
-            for (const args of argTuples) {
-                let toKey;
-                try {
-                    toKey = spec.bot(botId, ...args);
-                } catch {
-                    log(`  ⚠️ ${name}/${args.join('/')}：id 含有分隔符，無法進新命名空間`);
-                    continue;
-                }
-                const outcome = await copyKey(env, spec.v1(userId, ...args), toKey, force);
-                counts[outcome] += 1;
+            const before = budget.remaining;
+            const { copied, skipped } = await copyIndexedResource(
+                env, userId, botId, spec, argTuples, force, budget, counts,
+            );
+            const deferred = budget.remaining - before;
+
+            if (deferred > 0) {
+                log(`  ⏳ ${name}：複製 ${copied}、已存在 ${skipped}、本輪預算不足 ${deferred}`);
+            } else if (copied > 0) {
+                log(`  ✅ ${name}（複製 ${copied}、已存在 ${skipped}）`);
             }
-            log(`  ✅ ${name}（${argTuples.length} 筆）`);
         }
     }
 
@@ -215,8 +300,23 @@ export async function migrateUser(env, userId, options = {}) {
         log(`ℹ️ 尚未切換、因此刻意不回填的資源：${pending.map(([n]) => n).join(", ")}`);
     }
 
-    log(`🎉 ${userId} 完成：複製 ${counts.copied}、跳過（已有值）${counts.skipped_exists}、無舊資料 ${counts.skipped_empty}`);
-    return { success: true, userId, bots: bots.map(b => b.botId), counts, logs };
+    const done = budget.remaining === 0;
+
+    if (done) {
+        log(`🎉 ${userId} 完成：複製 ${counts.copied}、跳過（已有值）${counts.skipped_exists}、無舊資料 ${counts.skipped_empty}`);
+    } else {
+        log(`⏳ ${userId} 這一輪複製 ${counts.copied} 筆，還剩 ${budget.remaining} 筆 —— 再打一次同樣的網址即可接著做。`);
+    }
+
+    return {
+        success: true,
+        userId,
+        bots: bots.map(b => b.botId),
+        counts,
+        logs,
+        done,
+        remaining: budget.remaining,
+    };
 }
 
 const SENTINEL = "\u0000ID\u0000";
@@ -300,23 +400,39 @@ export async function migrateAll(env, options = {}) {
         const userId = key.name.slice(prefix.length);
         if (!userId) continue;
         const result = await migrateUser(env, userId, { force });
-        results.push({ userId, bots: result.bots, counts: result.counts });
+        results.push({
+            userId,
+            bots: result.bots,
+            counts: result.counts,
+            done: result.done,
+            remaining: result.remaining,
+        });
     }
+
+    // 這一批裡只要有人沒回填完（會員數撞到單次預算），游標就不能前進 ——
+    // 前進等於把那個人剩下的會員永久跳過，而且不會有任何錯誤。
+    // 重做這一批沒有代價：已複製的部分是用列舉判斷的，0 次 KV 操作。
+    const batchDone = results.every(r => r.done !== false);
+    const remaining = results.reduce((sum, r) => sum + (r.remaining || 0), 0);
 
     // 游標在這一批真的做完之後才前進；中途失敗會丟出去，游標留在原處，
     // 重跑會重做這一批 —— 因為單一使用者是冪等的，重做沒有代價。
-    const done = page.list_complete === true;
-    if (done) {
-        await env.KV_LINE_STORAGE.delete(BACKFILL_CURSOR_KEY);
-    } else {
-        await env.KV_LINE_STORAGE.put(BACKFILL_CURSOR_KEY, page.cursor);
+    const done = batchDone && page.list_complete === true;
+
+    if (batchDone) {
+        if (page.list_complete === true) {
+            await env.KV_LINE_STORAGE.delete(BACKFILL_CURSOR_KEY);
+        } else {
+            await env.KV_LINE_STORAGE.put(BACKFILL_CURSOR_KEY, page.cursor);
+        }
     }
 
     return {
         success: true,
         processed: results.length,
         done,
-        nextCursor: done ? null : page.cursor,
+        remaining,
+        nextCursor: done || !batchDone ? null : page.cursor,
         results,
     };
 }

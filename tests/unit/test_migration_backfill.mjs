@@ -440,3 +440,141 @@ describe('rollbackUser', () => {
         assert.equal(result.success, true);
     });
 });
+
+// ---------------------------------------------------------------------------
+
+/**
+ * 以下這組守的是「程式正確但跑不完」。
+ *
+ * 正式環境有一個 owner 名下 845 位會員。帶 id 的資源原本是逐筆
+ * 「列舉 → 讀目標 → 讀來源 → 寫入」，845 筆就是約 2500 次 KV 操作，而
+ * Cloudflare 付費方案的 subrequest 上限是每個請求 1000 次。結果是那個
+ * owner 每次都在同一個地方被切斷，而且因為回填本身是冪等的，重跑會重新
+ * 付一次「讀目標」的代價，所以永遠跑不完。
+ *
+ * 小資料量的測試量不到這件事，所以這裡直接灌 900 筆並對操作次數下斷言。
+ */
+describe('migrateUser — 大量會員不可超出 Worker 的 subrequest 上限', () => {
+    /** Cloudflare 付費方案：每個請求 1000 次 subrequest。KV 操作計入。 */
+    const SUBREQUEST_LIMIT = 1000;
+    const MEMBER_COUNT = 900;
+
+    let env;
+
+    beforeEach(async () => {
+        env = createEnv();
+        await env.KV_LINE_STORAGE.put(V1Keys.accessTokens(USER), JSON.stringify({
+            主帳號: { token: 'tok-a', destination: BOT_A, displayName: '主帳號' },
+        }));
+        await env.KV_LINE_STORAGE.put(V1Keys.currentToken(USER), '主帳號');
+
+        for (let i = 0; i < MEMBER_COUNT; i++) {
+            const lineUserId = `U${String(i).padStart(31, '0')}`;
+            await env.KV_LINE_STORAGE.put(
+                V1Keys.memberProfile(USER, lineUserId),
+                JSON.stringify({ lineUserId, displayName: `會員${i}` }),
+            );
+        }
+        env.KV_LINE_STORAGE._resetOps();
+    });
+
+    /** `bot:<id>:member:` —— assertComponent 不收空字串，所以借一個字再切掉 */
+    const memberPrefix = BotKeys.member(BOT_A, 'X').slice(0, -1);
+
+    function copiedMembers() {
+        return [...env.KV_LINE_STORAGE._store.keys()]
+            .filter(k => k.startsWith(memberPrefix)).length;
+    }
+
+    it('單次呼叫不得超過 subrequest 上限', async () => {
+        await migrateUser(env, USER);
+        assert.ok(
+            env.KV_LINE_STORAGE._ops.total < SUBREQUEST_LIMIT,
+            `單次回填用掉 ${env.KV_LINE_STORAGE._ops.total} 次 KV 操作，超過上限 ${SUBREQUEST_LIMIT}`,
+        );
+    });
+
+    it('沒做完要明確回報 done:false 與剩餘筆數', async () => {
+        const result = await migrateUser(env, USER);
+        assert.equal(result.done, false, '預算用完卻回報做完了，呼叫端不會知道要再跑一次');
+        assert.ok(result.remaining > 0, `remaining 應為正數，實際 ${result.remaining}`);
+    });
+
+    it('重跑會接著做，最後全部 900 筆都在新命名空間', async () => {
+        let done = false;
+        let rounds = 0;
+        while (!done) {
+            const result = await migrateUser(env, USER);
+            done = result.done;
+            rounds += 1;
+            assert.ok(rounds <= 20, '跑了 20 輪還沒完，等於沒有前進');
+        }
+        assert.equal(copiedMembers(), MEMBER_COUNT);
+    });
+
+    it('每一輪都不可超過上限（不只第一輪）', async () => {
+        let done = false;
+        let rounds = 0;
+        while (!done) {
+            env.KV_LINE_STORAGE._resetOps();
+            done = (await migrateUser(env, USER)).done;
+            rounds += 1;
+            assert.ok(
+                env.KV_LINE_STORAGE._ops.total < SUBREQUEST_LIMIT,
+                `第 ${rounds} 輪用掉 ${env.KV_LINE_STORAGE._ops.total} 次操作`,
+            );
+            assert.ok(rounds <= 20, '跑了 20 輪還沒完，等於沒有前進');
+        }
+    });
+
+    it('已複製過的部分不可逐筆再讀一次 —— 否則輪數越多越貴，無法收斂', async () => {
+        await migrateUser(env, USER);          // 第一輪：複製了一部分
+        const firstRoundCopied = copiedMembers();
+        assert.ok(firstRoundCopied > 0);
+
+        env.KV_LINE_STORAGE._resetOps();
+        await migrateUser(env, USER);          // 第二輪
+        const secondRoundCopied = copiedMembers() - firstRoundCopied;
+
+        // 第二輪自己複製的那些筆，每筆本來就要讀一次來源 —— 那是真工作。
+        // 要守的是「跳過前一輪那 firstRoundCopied 筆是免費的」：如果跳過也要
+        // 各付一次 get，次數會是 secondRoundCopied + firstRoundCopied，
+        // 於是每一輪的有效預算越來越小，最後永遠跑不完。
+        const overhead = env.KV_LINE_STORAGE._ops.get - secondRoundCopied;
+        assert.ok(
+            overhead < firstRoundCopied,
+            `第二輪複製 ${secondRoundCopied} 筆卻花了 ${env.KV_LINE_STORAGE._ops.get} 次 get，`
+            + `多出的 ${overhead} 次接近前一輪的 ${firstRoundCopied} 筆 —— 跳過的成本累積了`,
+        );
+    });
+
+    it('全部做完之後再跑一次是幾乎零成本的 no-op', async () => {
+        let done = false;
+        let rounds = 0;
+        while (!done) {
+            done = (await migrateUser(env, USER)).done;
+            rounds += 1;
+            assert.ok(rounds <= 20, '跑了 20 輪還沒完，等於沒有前進');
+        }
+
+        env.KV_LINE_STORAGE._resetOps();
+        const result = await migrateUser(env, USER);
+
+        assert.equal(result.done, true);
+        assert.equal(copiedMembers(), MEMBER_COUNT, '收斂後重跑不可改變結果');
+        assert.ok(
+            env.KV_LINE_STORAGE._ops.put <= 2,
+            `收斂後重跑寫了 ${env.KV_LINE_STORAGE._ops.put} 次，應該幾乎不寫`,
+        );
+    });
+
+    it('migrateAll 遇到沒做完的使用者不可前進游標', async () => {
+        const result = await migrateAll(env, { batchSize: 10 });
+
+        assert.equal(result.done, false, '使用者還沒回填完，整批不算完成');
+        assert.equal(
+            await read(env, BACKFILL_CURSOR_KEY), null,
+            '游標前進（或被刪掉）會讓這個使用者剩下的會員永遠不被回填',
+        );
+    });
+});
