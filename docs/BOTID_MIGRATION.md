@@ -19,11 +19,47 @@
 | `lib/bot_store.js` — 雙讀雙寫存取層 | ✅ |
 | `migration/migrate.js` — 可重入回填 + 回滾 | ✅ |
 | handler 切換 | ✅ 16 / 17 個資源（剩 1 個是死資料） |
-| 回填 prod | ⬜ 還沒跑 |
+| 部署 prod worker | ✅ 2026-11-11（在那之前線上跑的是 2026-04 的版本） |
+| 回填 prod | ⬜ 卡在 `MIGRATION_SECRET` 未設定 |
+| LINE console 切到 prod worker | ⬜ 見下方「零之二」 |
 | 停雙寫、刪舊 key | ⬜ |
 
 切換進度的權威來源是 `lib/bot_store.js` 的 `RESOURCES` 表，每個資源一個
 `switched` 欄位。`GET /admin/migrate?mode=status` 會把它列出來。
+
+## 零之二、線上實際跑哪一台（2026-11-11 查到的）
+
+這件事會讓上面每一列的意義都改變，所以放在最前面。
+
+`env/config.js` 的 `apiBase` 原本指向 **dev** worker，也就是線上後台打的
+一直是 `pinti-line-dev`。而那台最後一次部署是 2026-02-20，當時 dev 與 prod
+還共用 KV namespace —— **binding 是部署時烘進去的**，所以它至今仍讀寫正式
+資料，`wrangler.jsonc` 在 2026-11-10 把 dev 改指新 namespace 的那個改動
+根本還沒生效。
+
+後果是一個實測到的認證洞：
+
+```
+GET /member/list                    → 401
+GET /member/list  X-User-Id: U…隨便 → 200
+```
+
+dev 的 vars 帶 `AUTH_MODE=legacy`（接受自報的 `X-User-Id` 當身分），於是
+任何知道某個 owner userId 的人都讀得到他全部資料，包含 845 筆會員個資。
+
+已經做的：
+
+- `apiBase` 改指 `https://pinti-line.hotichen.workers.dev`
+- dev 的 `AUTH_MODE` 從 `wrangler.jsonc` 移除（缺值時 fail-closed 視同
+  `liff`）。本機要用 legacy 寫進 `.dev.vars`，那個檔案不會被部署。
+  `tests/unit/test_wrangler_config.mjs` 會擋住再寫回來。
+- prod worker 部署並實測：`X-User-Id` 與 `?userId=` 兩種都回 401。
+
+**還沒做、而且只有在 LINE console 裡能做的：** 把 LIFF endpoint URL 與
+Webhook URL 都改指 `pinti-line.hotichen.workers.dev`。在那之前 dev 那台
+仍然開著，而且**不可以部署 dev** —— 一旦部署，它的 KV binding 會切到空的
+namespace，所有打到 dev 的 webhook 事件（新追蹤、關鍵字回覆、會員登錄）
+就會寫進一個空的命名空間。順序是先改 console，再部署 dev。
 
 **已切換**（全部走 `lib/bot_store.js`）：`keywords`、`keywordStats`、
 `keyword`、`flexList`、`images`、`imagemaps`、`quickReplies`、`welcome`、
@@ -128,8 +164,16 @@ curl -s "https://<worker>/admin/migrate?key=$SECRET&userId=U<你的id>" | jq .lo
 `done: true`。游標存在 KV 的 `migration:botid:cursor`，中斷後重跑會從
 上次的位置繼續。
 
+**同一個使用者也可能需要跑好幾輪。** 單次呼叫最多複製 400 筆帶 id 的資源
+（`DEFAULT_COPY_BUDGET`），因為 Cloudflare 的 subrequest 上限是每個請求
+1000 次而 KV 操作計入 —— 正式環境有一個 owner 名下 845 位會員，沒有預算的
+版本在他身上量到 2732 次操作，會直接被切斷。沒做完時回傳
+`done: false` 與 `remaining`，而且**游標不會前進**（前進等於把那個人剩下的
+會員永久跳過）。重複呼叫同一個網址即可，已複製的部分是用前綴列舉判斷的，
+0 次 KV 操作，所以每一輪的預算都完整用在新資料上。
+
 ```bash
-curl -s "https://<worker>/admin/migrate?key=$SECRET&mode=all" | jq '{processed, done}'
+curl -s "https://<worker>/admin/migrate?key=$SECRET&mode=all" | jq '{processed, done, remaining}'
 ```
 
 重跑是安全的：單一使用者的回填是冪等的，重做沒有代價。
@@ -179,7 +223,7 @@ curl -s "https://<worker>/admin/migrate?key=$SECRET&userId=U<id>&mode=rollback" 
 
 1. `RESOURCES` 裡每個資源都 `switched: true`
 2. `mode=status` 的 `pendingResources` 是空的
-3. `mode=all` 回 `done: true`，且游標已被清掉
+3. `mode=all` 回 `done: true`、`remaining: 0`，且游標已被清掉
 4. `legacy_fallback` log 連續數天為 0
 5. 備份 KV
 6. 停掉 `bot_store` 的雙寫（`put` / `del` 只寫新 key）
