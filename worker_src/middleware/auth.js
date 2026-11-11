@@ -82,7 +82,11 @@ async function verifyLiffToken(accessToken, env) {
  * 不是空的就照用——打成 "dev"、"LEGACY"、"production" 之類的任何字串，
  * authMode 都不等於 "liff"，於是掉進 legacy 分支讓 X-User-Id 直接通行。
  * fail-closed 是「只有明確開啟才開」，不是「不是 liff 就開」。
- * wrangler.jsonc 已明確為 prod 設定 "liff"、dev 設定 "legacy"。
+ *
+ * legacy 只存在於本機：`.dev.vars` 的 `AUTH_MODE=legacy` 餵給 `wrangler dev`。
+ * wrangler.jsonc 的 vars 是部署出去的值，裡面一律不出現 legacy
+ * （prod 明確寫 "liff"，dev 不設、靠這裡的 fail-closed 落在 liff），
+ * 由 tests/unit/test_wrangler_config.mjs 釘住。
  *
  * @param {Request} request
  * @param {Object} env

@@ -35,8 +35,18 @@
       "vars": {
         "LIFF_ID": "1653928585-8Kkz0jnz",
         "LIFF_CHANNEL_ID": "1653928585",
-        "BASE_URL": "http://127.0.0.1:5500",
-        "AUTH_MODE": "legacy"
+        "BASE_URL": "http://127.0.0.1:5500"
+        // AUTH_MODE 刻意不設 —— 缺值時 middleware/auth.js 視同 "liff"（fail-closed）。
+        //
+        // 這裡原本是 "legacy"，而 legacy 接受自報的 X-User-Id 當身分。vars 是
+        // **部署**出去的值，所以那等於讓線上的 dev worker 對任何知道某個
+        // owner userId 的人全開。2026-11-11 量到的就是這個：無身分 401、
+        // 隨手編一個 X-User-Id 回 200。
+        //
+        // 本機要用 legacy 請寫進 .dev.vars（已被 .gitignore 擋住）：
+        //     AUTH_MODE=legacy
+        // 那個檔案只餵 `wrangler dev`，不會被部署。
+        // tests/unit/test_wrangler_config.mjs 會擋住再寫回來。
       }
       // Queue configuration (需付費方案)
       // "queues": {

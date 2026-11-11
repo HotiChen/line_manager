@@ -69,13 +69,24 @@ describe('wrangler.jsonc — AUTH_MODE', () => {
         assert.equal(cfg.vars.AUTH_MODE, 'liff');
     });
 
-    it('legacy 只准出現在 dev', () => {
-        const cfg = readWranglerConfig();
-        for (const [name, scope] of Object.entries(cfg.env || {})) {
-            if (name === 'dev') continue;
+    it('沒有任何 env 可以把 legacy 寫進 wrangler.jsonc', () => {
+        // wrangler.jsonc 的 vars 是**部署**出去的值，不是本機的值。
+        // 2026-11-11 量到的實況：線上兩個 worker 對沒帶身分的請求回 401，
+        // 帶一個隨手編的 X-User-Id 就回 200 —— legacy 的行為真的在線上開著，
+        // 而 dev worker 當時綁的是正式 namespace，等於 845 筆會員個資只隔著
+        // 一個「知道 owner 的 userId」。
+        //
+        // legacy 只該存在於跑在本機的那個 process。那是 .dev.vars 的職責
+        // （已被 .gitignore 擋住），不是 wrangler.jsonc 的。
+        for (const [name, scope] of Object.entries(readWranglerConfig().env || {})) {
             assert.notEqual(scope.vars && scope.vars.AUTH_MODE, 'legacy',
-                `env.${name} 的 AUTH_MODE 是 legacy，會接受自報的 X-User-Id`);
+                `env.${name} 的 AUTH_MODE 是 legacy，部署出去會接受自報的 X-User-Id；`
+                + '本機要用 legacy 請寫進 .dev.vars');
         }
+    });
+
+    it('prod 的 vars 也不可以是 legacy', () => {
+        assert.notEqual(readWranglerConfig().vars.AUTH_MODE, 'legacy');
     });
 });
 

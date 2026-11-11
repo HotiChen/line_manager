@@ -1,6 +1,15 @@
 // env/config.js
 const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-export const apiBase = isLocal ? "http://localhost:8787" : "https://pinti-line-dev.hotichen.workers.dev";
+// 非本機一律打 prod worker（pinti-line）。
+//
+// 這裡原本指向 pinti-line-dev —— 也就是線上後台實際打的是 dev worker。
+// 那台的 vars 帶 AUTH_MODE=legacy（接受自報的 X-User-Id），而它 2026-02 部署時
+// 綁的還是正式 KV namespace，等於正式資料只隔著一個「知道 owner 的 userId」。
+// prod worker 是 AUTH_MODE=liff、有 TOKEN_ENCRYPTION_KEY 的那一台。
+//
+// ⚠️ LINE console 的 LIFF endpoint URL 也要指向同一台，否則使用者載到的
+// 仍然是 dev worker 上的舊前端。
+export const apiBase = isLocal ? "http://localhost:8787" : "https://pinti-line.hotichen.workers.dev";
 export const debug = isLocal; // 只在本地開發時啟用 debug
 
 // LIFF IDs（一個 Channel 可以有多個 LIFF App）
