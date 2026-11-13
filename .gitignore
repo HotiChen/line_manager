@@ -38,3 +38,6 @@ backups/
 # 這是公開 repo —— 少了這行，git add -A 就會把金鑰推上去。
 .dev.vars
 .dev.vars.*
+
+# Claude Code 的本機設定（settings.local.json 是個人權限；launch.json 是本機預覽設定）
+.claude/
