@@ -1,0 +1,122 @@
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4">
+        <div>
+            <h2 class="mb-1">系統整合</h2>
+            <p class="text-muted mb-0" id="system-bot-label">載入中...</p>
+        </div>
+        <button class="btn btn-primary" id="btn-register-system" type="button">
+            <i class="bi bi-plus-lg me-2"></i>註冊新系統
+        </button>
+    </div>
+
+    <div class="alert alert-secondary small">
+        「系統」是接到這個 LINE 官方帳號上的其他程式（例如你自己的預約或訂單後端）。
+        每個系統拿到一把 API 金鑰，就能用它推播訊息，不必另外處理 LINE 的認證與額度。
+    </div>
+
+    <div class="alert alert-warning d-none" id="system-notice" role="alert"></div>
+
+    <!-- 系統清單 -->
+    <div id="system-section">
+        <div class="row g-3" id="system-list"></div>
+
+        <div class="text-center text-muted py-5 d-none" id="system-empty">
+            <i class="bi bi-plug fs-1 d-block mb-2"></i>
+            還沒有註冊任何系統
+        </div>
+
+        <div class="text-center text-muted py-5" id="system-loading">
+            <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+            載入中...
+        </div>
+
+        <!-- 呼叫範例 -->
+        <div class="card shadow-sm border-0 mt-4">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <span class="fw-semibold">呼叫範例（推播）</span>
+                <button class="btn btn-sm btn-outline-secondary" id="btn-copy-usage" type="button">
+                    <i class="bi bi-clipboard me-1"></i>複製
+                </button>
+            </div>
+            <div class="card-body">
+                <pre class="mb-2 small" id="system-usage" style="white-space: pre-wrap; word-break: break-all;"></pre>
+                <div class="form-text">
+                    &lt;API_KEY&gt; 換成註冊時拿到的金鑰。
+                    <code>X-Idempotency-Key</code> 建議每次都帶：網路逾時重試時，同一個字串不會讓客人收到兩則。
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 註冊新系統 -->
+<div class="modal fade" id="registerSystemModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form id="system-form" novalidate autocomplete="off">
+                <div class="modal-header">
+                    <h5 class="modal-title">註冊新系統</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label" for="system-id-input">系統代號</label>
+                        <input type="text" class="form-control" id="system-id-input" placeholder="例如 imgpicker"
+                            maxlength="32" autocapitalize="none" autocorrect="off" spellcheck="false">
+                        <div class="form-text">小寫英文、數字、- 與 _，2–32 字。註冊後不能改。</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label" for="system-name-input">系統名稱</label>
+                        <input type="text" class="form-control" id="system-name-input" placeholder="例如 圖片挑選系統"
+                            maxlength="100">
+                    </div>
+
+                    <div class="mb-1">
+                        <div class="form-label">權限</div>
+                        <div id="system-scopes"></div>
+                        <div class="form-text">註冊後不能改權限；要換權限請重新註冊。</div>
+                    </div>
+
+                    <div class="text-danger small mt-3 d-none" id="system-form-error" role="alert"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary" id="btn-submit-system">註冊</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- 金鑰（只顯示一次） -->
+<div class="modal fade" id="systemKeyModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">請立刻複製 API 金鑰</h5>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-danger small">
+                    <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                    這把金鑰<strong>只會顯示這一次</strong>。關閉後無法再看到，只能輪替成新的。
+                    請存在密碼管理員，不要貼到聊天或 Git。
+                </div>
+
+                <div class="small text-muted mb-1">系統：<code id="system-key-system"></code></div>
+                <div class="input-group">
+                    <input type="text" class="form-control font-monospace" id="system-key-value" readonly
+                        autocomplete="off" spellcheck="false">
+                    <button class="btn btn-outline-secondary" type="button" id="btn-copy-key">
+                        <i class="bi bi-clipboard"></i> 複製
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" id="btn-close-key" data-bs-dismiss="modal">
+                    我已經存好了
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
