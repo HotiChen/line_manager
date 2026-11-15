@@ -124,3 +124,26 @@ export async function broadcastMessage(token, messages) {
 
     return await response.json();
 }
+
+async function getJson(label, url, token) {
+    const response = await fetch(url, { headers: { "Authorization": `Bearer ${token}` } });
+    const body = await readJsonLoose(response);
+    if (!response.ok) {
+        console.error(`[LINE API] ${label} failed: ${response.status}`, body);
+        throw new LineApiError(`LINE API ${label} failed: ${JSON.stringify(body)}`, {
+            status: response.status,
+            body,
+        });
+    }
+    return body;
+}
+
+/** 本月訊息上限。{ type: "limited", value: 200 } 或 { type: "none" }（無上限）。查詢本身不計費。 */
+export function getMessageQuota(token) {
+    return getJson("Quota", "https://api.line.me/v2/bot/message/quota", token);
+}
+
+/** 本月已用量。{ totalUsage: N }。查詢本身不計費。 */
+export function getMessageQuotaConsumption(token) {
+    return getJson("Quota consumption", "https://api.line.me/v2/bot/message/quota/consumption", token);
+}
