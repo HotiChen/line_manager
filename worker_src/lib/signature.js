@@ -1,3 +1,5 @@
+import { timingSafeEqual } from './crypto_util.js';
+
 /**
  * LINE Webhook 簽章驗證
  */
@@ -24,13 +26,4 @@ export async function verifySignature(request, bodyText, channelSecret) {
     const hmac = await crypto.subtle.sign('HMAC', key, encoder.encode(bodyText));
 
     return timingSafeEqual(new Uint8Array(hmac), signatureBytes);
-}
-
-function timingSafeEqual(a, b) {
-    if (a.length !== b.length) return false;
-    let result = 0;
-    for (let i = 0; i < a.length; i++) {
-        result |= a[i] ^ b[i];
-    }
-    return result === 0;
 }
