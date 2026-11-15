@@ -289,6 +289,33 @@ quota_${botId}_${YYYYMM}                { pushed, free, plan, updatedAt }
 
 ## 七、API 介面（全部行業無關）
 
+> **實作狀態（2026-11-15）**
+>
+> | 範圍 | 狀態 |
+> |---|---|
+> | `POST/GET/PATCH/DELETE /api/v1/systems`、`keys/rotate` | ✅ `handler/systems.js` |
+> | service key 認證、scope、per-(bot, system) 限流 | ✅ `middleware/bridge_auth.js`、`rate_limiter.js` |
+> | `POST /api/v1/messages/push`、`multicast`、冪等、額度對帳 | ✅ `handler/bridge_messages.js`、`lib/quota.js` |
+> | `/api/v1/messages/reply` | ⬜ 未做 |
+> | CRM（`/members*`、tags） | ⬜ 未做 |
+> | 身分綁定（`/link/*`） | ⬜ 未做 |
+> | 事件轉發（webhook 出去、`member.unfollowed` 等） | ⬜ 未做 |
+> | 管理後台的「系統」頁面 | ⬜ 未做（目前註冊只能用 LIFF token 直接呼叫 API） |
+>
+> 與下面設計稿的差異：
+> - 系統限流 key 放在 `bot:${botId}:sys_rl:…`（不是 `rl_sys_…`），租戶刪除時才會一起清掉。
+> - 額度低於 20%（含已耗盡）時，對帳間隔最短 60 秒，避免每則 push 都打 LINE。
+> - 冪等紀錄同時存請求指紋：同一把 key 對應到不同內容回 `422 idempotency_key_reuse`。
+> - 處理中的紀錄只存 2 分鐘，Worker 被回收時不會把鍵永遠鎖死；由 `X-Line-Retry-Key`
+>   （自冪等鍵衍生的 UUID）擋住這段時間內的重複投遞。
+> - KV 沒有原子操作：冪等與額度扣減是 best-effort。嚴格去重需要 Durable Object。
+> - 目前 scope 只有 `messages:push`（push 與 multicast 共用）、`members:read`、`tags:write`；
+>   後兩者尚無對應端點。
+> - 對「從未見過的 `U…` 會員」回 404；群組／聊天室 id 不查表（尚無群組紀錄）。
+> - 403 封鎖只標記 `member.inactiveAt`，尚未扇出 `member.unfollowed`（事件轉發未做）。
+>   也沒有在 follow 事件時清除 `inactiveAt` —— 做事件轉發時要一併處理。
+> - 尚未更新 `lastUsedAt`（避免每次呼叫多一次 KV 寫入）。
+
 版本化在 `/api/v1/` 之下，與現有的前端端點分開。
 
 ### 傳輸

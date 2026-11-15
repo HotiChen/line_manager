@@ -225,6 +225,94 @@
     .sidebar-container::-webkit-scrollbar { width: 4px; }
     .sidebar-container::-webkit-scrollbar-track { background: transparent; }
     .sidebar-container::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
+
+    /* ── 手機版：側邊欄收成抽屜 ──
+       桌機的側邊欄固定 240px，主內容 margin-left: 240px。手機（~390px）上內容只剩
+       ~150px，所以 < 992px 時側邊欄改成從左邊滑出，內容吃滿寬度。
+       開關見 js/mobile_nav.js（切換 body.sidebar-open）。 */
+    .mobile-topbar,
+    .mobile-nav-backdrop {
+      display: none;
+    }
+
+    @media (max-width: 991.98px) {
+      .mobile-topbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 52px;
+        padding: 0 12px;
+        z-index: 1010;
+        background-color: #0f172a;
+        color: #f1f5f9;
+      }
+
+      .mobile-topbar button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 40px;
+        height: 40px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: inherit;
+        font-size: 1.5rem;
+      }
+
+      .mobile-topbar button:active {
+        background-color: #1e293b;
+      }
+
+      .mobile-topbar-title {
+        font-weight: 600;
+      }
+
+      .mobile-topbar-title span {
+        color: #22c55e;
+      }
+
+      .sidebar-container {
+        width: min(280px, 85vw);
+        transform: translateX(-100%);
+        transition: transform 0.25s ease;
+      }
+
+      body.sidebar-open .sidebar-container {
+        transform: none;
+        box-shadow: 4px 0 24px rgba(0, 0, 0, 0.35);
+      }
+
+      .main-content-area {
+        margin-left: 0;
+        min-width: 0;
+        padding: 64px 12px 16px;
+      }
+
+      .mobile-nav-backdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: 1015;
+        background-color: rgba(15, 23, 42, 0.5);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.25s ease;
+      }
+
+      body.sidebar-open .mobile-nav-backdrop {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      body.sidebar-open {
+        overflow: hidden;
+      }
+    }
   </style>
 </head>
 
@@ -232,8 +320,22 @@
   <!-- Toast Container for Notifications -->
   <div class="toast-container" id="toast-container" aria-live="polite" aria-atomic="true"></div>
 
+  <!-- 手機版頂欄與遮罩（桌機隱藏，見上方 CSS） -->
+  <header class="mobile-topbar">
+    <button type="button" id="mobile-nav-toggle" aria-label="開啟選單" aria-controls="sidebar-nav" aria-expanded="false">
+      <!-- 內嵌 SVG：不依賴圖示字型，CDN 載入失敗時按鈕仍然看得到 -->
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <line x1="4" y1="7" x2="20" y2="7"></line>
+        <line x1="4" y1="12" x2="20" y2="12"></line>
+        <line x1="4" y1="17" x2="20" y2="17"></line>
+      </svg>
+    </button>
+    <span class="mobile-topbar-title"><span>LINE</span> 管理後台</span>
+  </header>
+  <div class="mobile-nav-backdrop" id="mobile-nav-backdrop"></div>
+
   <!-- New Sidebar -->
-  <nav class="sidebar-container">
+  <nav class="sidebar-container" id="sidebar-nav">
     <!-- Brand -->
     <div class="sidebar-brand">
       <div class="sidebar-brand-icon"><i class="bi bi-diagram-3"></i></div>
@@ -407,6 +509,7 @@
 
 
   <script src="./js/animation.js" defer></script>
+  <script src="./js/mobile_nav.js" defer></script>
   <script type="module" src="./js/flex2html.js"></script>
 </body>
 

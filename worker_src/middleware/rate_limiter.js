@@ -9,6 +9,7 @@
  * fails open (allows all requests) rather than blocking legitimate traffic.
  */
 import { jsonResponse } from "../lib/utils.js";
+import { BotKeys } from "../lib/kv_schema.js";
 
 const DEFAULT_LIMIT = 100;       // 預設：每分鐘 100 次
 const DEFAULT_WINDOW_SEC = 60;   // 時間窗口：60 秒
@@ -32,6 +33,17 @@ const DEFAULT_WINDOW_SEC = 60;   // 時間窗口：60 秒
  * @returns {Promise<{allowed: boolean, remaining: number, resetAt: number}>}
  */
 export async function checkRateLimit(env, userId, options = {}) {
+    return checkBucket(env, (windowIndex) => `rl_${userId}_${windowIndex}`, options);
+}
+
+/**
+ * 共用的 fixed-window 計數核心。
+ *
+ * @param {Object} env
+ * @param {(windowIndex: number) => string} keyFor - 由時間窗索引產生 KV key
+ * @param {Object} [options] - { limit, windowSec }
+ */
+async function checkBucket(env, keyFor, options = {}) {
     const limit = options.limit || DEFAULT_LIMIT;
     const windowSec = options.windowSec || DEFAULT_WINDOW_SEC;
     const now = Date.now();
@@ -42,7 +54,7 @@ export async function checkRateLimit(env, userId, options = {}) {
     }
 
     const windowIndex = Math.floor(now / (windowSec * 1000));
-    const kvKey = `rl_${userId}_${windowIndex}`;
+    const kvKey = keyFor(windowIndex);
     const resetAt = (windowIndex + 1) * windowSec * 1000;
 
     try {
@@ -68,6 +80,13 @@ export async function checkRateLimit(env, userId, options = {}) {
     }
 }
 
+function tooManyRequests(message, resetAt) {
+    const retryAfter = Math.max(1, Math.ceil((resetAt - Date.now()) / 1000));
+    const res = jsonResponse({ error: message, retryAfter }, 429);
+    res.headers.set("Retry-After", String(retryAfter));
+    return res;
+}
+
 /**
  * Rate limit middleware — 可在 index.js 中使用
  *
@@ -81,11 +100,43 @@ export async function rateLimitMiddleware(env, userId) {
     const result = await checkRateLimit(env, userId);
 
     if (!result.allowed) {
-        return jsonResponse({
-            error: "Too many requests. Please try again later.",
-            retryAfter: Math.ceil((result.resetAt - Date.now()) / 1000)
-        }, 429);
+        return tooManyRequests("Too many requests. Please try again later.", result.resetAt);
     }
 
+    return null;
+}
+
+// ── 系統主體（橋接 API）──
+
+const BRIDGE_DEFAULT_LIMITS = { write: 60, read: 120 }; // 每分鐘
+
+function sanitizeLimit(value, fallback) {
+    return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+/**
+ * 系統主體的限流。
+ *
+ * 桶是 per (botId, system)：不是 per key，所以輪替 key 不會重置額度；
+ * 也不是全域共用，所以一個寫壞的垂直後端打爆的只是自己的桶。
+ * 寫入類（push 等）與讀取類分開計算。上限可在系統紀錄的 rateLimit 調整。
+ *
+ * @param {Object} env
+ * @param {{botId: string, system: string, rateLimit?: {write?: number, read?: number}}} principal
+ * @param {"write"|"read"} kind
+ * @returns {Promise<Response|null>} 超過限制回 429（帶 Retry-After），否則 null
+ */
+export async function bridgeRateLimit(env, principal, kind) {
+    const limit = sanitizeLimit(principal.rateLimit?.[kind], BRIDGE_DEFAULT_LIMITS[kind]);
+    // system 名稱只含 [a-z0-9_-]，所以用 "." 分隔 kind 不會與別的 system 撞名
+    const bucket = `${principal.system}.${kind}`;
+    const result = await checkBucket(
+        env,
+        (windowIndex) => BotKeys.systemRateLimit(principal.botId, bucket, windowIndex),
+        { limit, windowSec: DEFAULT_WINDOW_SEC }
+    );
+    if (!result.allowed) {
+        return tooManyRequests("Rate limit exceeded for this system. Please retry later.", result.resetAt);
+    }
     return null;
 }

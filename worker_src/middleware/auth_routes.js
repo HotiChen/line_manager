@@ -56,3 +56,25 @@ export function requiresAuthentication(pathname) {
   if (PUBLIC_PATHS.has(pathname)) return false;
   return PROTECTED_PREFIXES.some(prefix => pathname.startsWith(prefix));
 }
+
+/**
+ * 橋接 API（/api/v1/*）的兩種主體：
+ *
+ *   /api/v1/systems 與其子路徑   人主體（LIFF）+ owner 權限
+ *                               —— 發 key 只能由人操作，key 不能發 key
+ *   其他 /api/v1/*               系統主體（Bearer service key + X-Bot-Id）
+ *
+ * 這個函式只決定「該走哪一種認證」，不是放行：兩種都不公開，
+ * requiresAuthentication 對整個 /api/v1 仍回 true（fail-closed）。
+ * index.js 必須在 LIFF 認證區塊之前先用它分派，否則 service key 會被當成
+ * LIFF token 驗證而一律 401。
+ *
+ * @param {string} pathname
+ * @returns {boolean} true = 該用 service key 認證
+ */
+export function isBridgeServiceRoute(pathname) {
+  if (typeof pathname !== "string") return false;
+  if (!pathname.startsWith("/api/v1/")) return false;
+  if (pathname === "/api/v1/systems" || pathname.startsWith("/api/v1/systems/")) return false;
+  return true;
+}
