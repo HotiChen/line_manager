@@ -289,18 +289,41 @@ quota_${botId}_${YYYYMM}                { pushed, free, plan, updatedAt }
 
 ## 七、API 介面（全部行業無關）
 
-> **實作狀態（2026-11-15）**
+> **實作狀態（2026-11-16，LM-1A 後）**
 >
 > | 範圍 | 狀態 |
 > |---|---|
-> | `POST/GET/PATCH/DELETE /api/v1/systems`、`keys/rotate` | ✅ `handler/systems.js` |
-> | service key 認證、scope、per-(bot, system) 限流 | ✅ `middleware/bridge_auth.js`、`rate_limiter.js` |
-> | `POST /api/v1/messages/push`、`multicast`、冪等、額度對帳 | ✅ `handler/bridge_messages.js`、`lib/quota.js` |
-> | `/api/v1/messages/reply` | ⬜ 未做 |
+> | `POST/GET/PATCH/DELETE /bridge/v1/systems`、`keys/rotate` | ✅ `bridge/systems.js` |
+> | service key 認證、scope、per-(bot, system) 限流 | ✅ `bridge/auth.js`、`middleware/rate_limiter.js`（`bridgeRateLimit`） |
+> | `POST /bridge/v1/raw/push`、`raw/multicast`（原 `/api/v1/messages/push\|multicast`）、冪等、額度對帳 | ✅ `bridge/messages.js`、`bridge/quota.js` |
+> | `GET /bridge/v1/health` | ✅ `bridge/index.js` |
+> | feature flag `BRIDGE_ENABLED`、入口 `bridge/index.js`、LM 窄介面 `lm_service.js` | ✅ 預設關閉 |
+> | `/bridge/v1/messages/reply` | ⬜ 未做 |
 > | CRM（`/members*`、tags） | ⬜ 未做 |
 > | 身分綁定（`/link/*`） | ⬜ 未做 |
 > | 事件轉發（webhook 出去、`member.unfollowed` 等） | ⬜ 未做 |
-> | 管理後台的「系統」頁面 | ⬜ 未做（目前註冊只能用 LIFF token 直接呼叫 API） |
+> | 管理後台的「系統」頁面 | ✅ `js/system_management.js`；側邊欄入口預設隱藏，`GET /features` 回 `bridge:true` 才顯示 |
+>
+> **LM-1A 搬遷（2026-11-16）**：Bridge 程式集中在 `worker_src/bridge/`（扁平目錄），舊的 `/api/v1/*` 路徑已移除（沒有 alias）。
+>
+> | 舊位置 | 新位置 |
+> |---|---|
+> | `handler/systems.js` | `bridge/systems.js` |
+> | `handler/bridge_messages.js` | `bridge/messages.js` |
+> | `middleware/bridge_auth.js` | `bridge/auth.js` |
+> | `lib/quota.js` | `bridge/quota.js` |
+> | `middleware/auth_routes.js` 的 `isBridgeServiceRoute` | `bridge/routes.js` |
+> | （新）入口、flag、例外隔離 | `bridge/index.js`（`isBridgePath`、`handleBridge`、`isBridgeEnabled`） |
+> | （新）Bridge 使用 LM 的唯一窄介面 | `lm_service.js` |
+>
+> **`BRIDGE_ENABLED`**：Worker 環境變數（Text），只有精確字串 `1` 才啟用；未設、`0`、`true`、空字串都是關閉。
+> 關閉時所有 `/bridge/*` 回 `404 {"success":false,"error":"Not Found"}`，不認證、不碰 KV。
+> 預設不寫進 `wrangler.jsonc`（預設關）。Bridge 內部丟出的例外一律變成 `500 internal_error`，不影響 LM core 路由。
+>
+> **邊界**：`bridge/` 只能 import 兄弟檔、`lm_service.js`、`lib/{line_api,crypto_util,kv_schema,utils}.js`、`middleware/rate_limiter.js`；
+> `bridge/` 以外只有 `worker_src/index.js` 能 import 它。由 `tests/unit/test_import_boundary.mjs` 與 `eslint.config.js` 的 `no-restricted-imports` 把關。
+>
+> 路徑對照：下文設計稿裡的 `/api/v1/...` 請讀作 `/bridge/v1/...`；`messages/push|multicast` 現在是 `raw/push|multicast`（scope 名稱仍為 `messages:push`，改名是後續工單）。
 >
 > 與下面設計稿的差異：
 > - 系統限流 key 放在 `bot:${botId}:sys_rl:…`（不是 `rl_sys_…`），租戶刪除時才會一起清掉。
@@ -316,7 +339,7 @@ quota_${botId}_${YYYYMM}                { pushed, free, plan, updatedAt }
 >   也沒有在 follow 事件時清除 `inactiveAt` —— 做事件轉發時要一併處理。
 > - 尚未更新 `lastUsedAt`（避免每次呼叫多一次 KV 寫入）。
 
-版本化在 `/api/v1/` 之下，與現有的前端端點分開。
+版本化在 `/bridge/v1/` 之下（原 `/api/v1/`，LM-1A 已搬），與現有的前端端點分開。
 
 ### 傳輸
 

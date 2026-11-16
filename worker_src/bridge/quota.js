@@ -17,8 +17,8 @@
  * 限制：KV 沒有原子操作，快取的扣減是 best-effort；高併發下可能短暫多放幾則，
  * 下一次對帳會校正。嚴格額度需要 Durable Object，目前 repo 沒有。
  */
-import { BotKeys } from "./kv_schema.js";
-import { getMessageQuota, getMessageQuotaConsumption } from "./line_api.js";
+import { BotKeys } from "../lib/kv_schema.js";
+import { getMessageQuota, getMessageQuotaConsumption } from "../lib/line_api.js";
 
 const STALE_MS = 15 * 60 * 1000;
 const LOW_STALE_MS = 60 * 1000;

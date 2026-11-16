@@ -33,16 +33,23 @@ const PROTECTED_PREFIXES = [
   // LINE Channel access token。未認證時 userId 來自呼叫者自報的
   // X-User-Id，等於任何人知道一個 userId 就能借用那人的 token 發訊息。
   "/api",
+  // Bridge（bridge/index.js）：人主體或 service key，兩種都不公開。
+  // 這裡列出來是 fail-closed 的保險；唯一的公開例外是 /bridge/v1/health。
+  "/bridge",
+  // 前端功能探測（GET /features），LIFF 認證
+  "/features",
 ];
 
 /**
  * 落在受保護前綴底下、但本身是公開端點的例外。
  * - /team/invite/preview：受邀者在加入前就要能看邀請內容，此時還沒有身分
  * - /api/webhook：LINE 平台呼叫，身分由 x-line-signature HMAC 驗證（見 lib/signature.js）
+ * - /bridge/v1/health：Bridge 的存活探測，不回任何資料
  */
 const PUBLIC_PATHS = new Set([
   "/team/invite/preview",
   "/api/webhook",
+  "/bridge/v1/health",
 ]);
 
 /**
@@ -55,26 +62,4 @@ export function requiresAuthentication(pathname) {
   if (typeof pathname !== "string" || pathname === "") return false;
   if (PUBLIC_PATHS.has(pathname)) return false;
   return PROTECTED_PREFIXES.some(prefix => pathname.startsWith(prefix));
-}
-
-/**
- * 橋接 API（/api/v1/*）的兩種主體：
- *
- *   /api/v1/systems 與其子路徑   人主體（LIFF）+ owner 權限
- *                               —— 發 key 只能由人操作，key 不能發 key
- *   其他 /api/v1/*               系統主體（Bearer service key + X-Bot-Id）
- *
- * 這個函式只決定「該走哪一種認證」，不是放行：兩種都不公開，
- * requiresAuthentication 對整個 /api/v1 仍回 true（fail-closed）。
- * index.js 必須在 LIFF 認證區塊之前先用它分派，否則 service key 會被當成
- * LIFF token 驗證而一律 401。
- *
- * @param {string} pathname
- * @returns {boolean} true = 該用 service key 認證
- */
-export function isBridgeServiceRoute(pathname) {
-  if (typeof pathname !== "string") return false;
-  if (!pathname.startsWith("/api/v1/")) return false;
-  if (pathname === "/api/v1/systems" || pathname.startsWith("/api/v1/systems/")) return false;
-  return true;
 }

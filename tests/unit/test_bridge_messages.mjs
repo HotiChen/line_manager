@@ -1,8 +1,8 @@
 /**
- * Unit Tests — handler/bridge_messages.js（橋接 API 的推播）
+ * Unit Tests — bridge/messages.js（橋接 API 的推播）
  *
- *   POST /api/v1/messages/push        { to, messages[] }
- *   POST /api/v1/messages/multicast   { to[], messages[] }   ≤ 500
+ *   POST /bridge/v1/raw/push        { to, messages[] }
+ *   POST /bridge/v1/raw/multicast   { to[], messages[] }   ≤ 500
  *
  * 不變量：
  *   - messages[] 原樣轉送。平台層不產生內容、不替換變數
@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { createMockKV } from '../helpers/mock_kv.mjs';
 import { sha256Hex } from '../../worker_src/lib/crypto_util.js';
 import { BotKeys, ServiceKeyKeys } from '../../worker_src/lib/kv_schema.js';
-import { route } from '../../worker_src/handler/bridge_messages.js';
+import { route } from '../../worker_src/bridge/messages.js';
 
 const BOT = 'Ubbbbbbbbbbbbbbbbbbbbbbbbbbbbbb01';
 const OWNER = 'Uowner0000000000000000000000001';
@@ -85,8 +85,8 @@ function post(path, body, { key = KEY, botId = BOT, idem, raw } = {}) {
     });
 }
 
-const push = (body, opts) => route(post('/api/v1/messages/push', body, opts), env, '/api/v1/messages/push');
-const multicast = (body, opts) => route(post('/api/v1/messages/multicast', body, opts), env, '/api/v1/messages/multicast');
+const push = (body, opts) => route(post('/bridge/v1/raw/push', body, opts), env, '/bridge/v1/raw/push');
+const multicast = (body, opts) => route(post('/bridge/v1/raw/multicast', body, opts), env, '/bridge/v1/raw/multicast');
 const TEXT = [{ type: 'text', text: 'hello' }];
 
 beforeEach(async () => {
@@ -203,15 +203,15 @@ describe('push — 認證與輸入', () => {
     });
 
     it('只收 POST', async () => {
-        const req = new Request('https://worker.example.com/api/v1/messages/push', {
+        const req = new Request('https://worker.example.com/bridge/v1/raw/push', {
             method: 'GET', headers: { Authorization: `Bearer ${KEY}`, 'X-Bot-Id': BOT },
         });
-        const res = await route(req, env, '/api/v1/messages/push');
+        const res = await route(req, env, '/bridge/v1/raw/push');
         assert.equal(res.status, 405);
     });
 
     it('未知路徑 → 404', async () => {
-        const res = await route(post('/api/v1/messages/nope', {}), env, '/api/v1/messages/nope');
+        const res = await route(post('/bridge/v1/raw/nope', {}), env, '/bridge/v1/raw/nope');
         assert.equal(res.status, 404);
     });
 });

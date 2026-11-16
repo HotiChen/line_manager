@@ -111,14 +111,37 @@ describe('id 一致性', () => {
 describe('呼叫的 API', () => {
     const js = stripComments(read(jsPath));
 
-    it('只打 /api/v1/systems 與 /team/members', () => {
+    it('只打 /bridge/v1/systems 與 /team/members', () => {
         const paths = [...js.matchAll(/'(\/[a-z0-9/_${}.-]+)'|`(\/[a-z0-9/_${}.-]+)`/gi)].map((m) => m[1] || m[2]);
         for (const p of paths) {
-            assert.ok(p.startsWith('/api/v1/systems') || p.startsWith('/team/members'), `意外的路徑 ${p}`);
+            assert.ok(p.startsWith('/bridge/v1/systems') || p.startsWith('/team/members'), `意外的路徑 ${p}`);
         }
     });
 
     it('路徑中的系統代號有 encodeURIComponent', () => {
         assert.match(js, /encodeURIComponent/);
+    });
+});
+
+describe('入口預設隱藏，由 /features 決定是否顯示（LM-1A）', () => {
+    it('側邊欄的 system_management 那個 <li> 預設帶 d-none', () => {
+        const m = read('index.html').match(/<li class="([^"]*)">\s*<a [^>]*data-page="system_management"/);
+        assert.ok(m, '找不到 system_management 的 <li>');
+        assert.ok(m[1].split(/\s+/).includes('d-none'), `<li class="${m[1]}"> 缺 d-none`);
+    });
+
+    it('main.js 呼叫 /features，且只在 bridge === true 時才移除 d-none', () => {
+        const js = stripComments(read('js/main.js'));
+        assert.match(js, /['"`]\/features['"`]/);
+        assert.match(js, /bridge\s*===\s*true/);
+        assert.match(js, /system_management/);
+        assert.match(js, /classList\.remove\(\s*['"]d-none['"]\s*\)/);
+    });
+
+    it('/features 失敗不會讓初始化中斷（有 catch）', () => {
+        const js = stripComments(read('js/main.js'));
+        const fn = js.match(/async function \w*[Ff]eature\w*[\s\S]*?\n}\n/);
+        assert.ok(fn, '找不到功能探測函式');
+        assert.match(fn[0], /try\s*\{[\s\S]*catch/);
     });
 });

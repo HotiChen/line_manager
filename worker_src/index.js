@@ -4,7 +4,7 @@ const assetManifest = JSON.parse(manifestJSON);
 
 import { jsonResponse, getCorsHeaders } from "./lib/utils.js";
 import { authenticate } from "./middleware/auth.js";
-import { requiresAuthentication, isBridgeServiceRoute } from "./middleware/auth_routes.js";
+import { requiresAuthentication } from "./middleware/auth_routes.js";
 import { rateLimitMiddleware } from "./middleware/rate_limiter.js";
 import * as KeywordReplyHandler from "./handler/keyword_reply.js";
 import * as TagHandler from "./handler/tag.js";
@@ -30,8 +30,7 @@ import * as segmentedRichMenuHandlers from "./handler/segmented_richmenu.js";
 import { handleTagQueue } from "./queue/tag_consumer.js";
 import * as TierHandler from "./handler/tier.js";
 import * as FlowHandler from "./handler/flow.js";
-import * as SystemsHandler from "./handler/systems.js";
-import * as BridgeMessagesHandler from "./handler/bridge_messages.js";
+import { isBridgePath, isBridgeEnabled, handleBridge } from "./bridge/index.js";
 
 
 export default {
@@ -88,6 +87,8 @@ export default {
       pathname.startsWith("/stats") ||
       pathname.startsWith("/debug") ||
       pathname.startsWith("/api") ||
+      pathname === "/features" ||
+      isBridgePath(pathname) ||
       pathname === "/debug-ping" ||
       pathname === "/admin/migrate";
 
@@ -110,12 +111,10 @@ export default {
       }
     }
 
-    // 橋接 API（垂直後端以「系統」身分呼叫）：認證是 Bearer service key + X-Bot-Id，
-    // 不是 LIFF token，所以必須在下面的 LIFF 認證區塊之前分派，否則一律 401。
-    // 認證、scope、限流都在 handler 內（middleware/bridge_auth.js）。
-    // /api/v1/systems* 是「人」操作的註冊端點，不在此列，會走下面的 LIFF 認證。
-    if (isBridgeServiceRoute(pathname)) {
-      return BridgeMessagesHandler.route(request, env, pathname);
+    // Bridge（bridge/index.js）：自己處理認證（service key 或 LIFF）、feature flag 與例外隔離，
+    // 所以必須在下面的 LIFF 認證區塊之前分派。BRIDGE_ENABLED 未開時整段回 404。
+    if (isBridgePath(pathname)) {
+      return handleBridge(request, env, pathname);
     }
 
     // 2️⃣ API 請求處理 — 使用 auth middleware 驗證身份
@@ -177,8 +176,8 @@ export default {
     if (pathname.startsWith("/flow")) return FlowHandler.route(request, env, userId, pathname);
     if (pathname.startsWith("/quickreply")) return QuickReplyHandler.route(request, env, userId, pathname);
     if (pathname === "/api/webhook") return webhookHandlers.handleWebhookRequest(request, env, ctx);
-    if (pathname === "/api/v1/systems" || pathname.startsWith("/api/v1/systems/")) {
-      return SystemsHandler.route(request, env, userId, pathname);
+    if (pathname === "/features" && request.method === "GET") {
+      return jsonResponse({ bridge: isBridgeEnabled(env) }, 200, request, env);
     }
     if (pathname.startsWith("/api")) return pushMessageHandlers.route(request, env, userId, pathname);
 

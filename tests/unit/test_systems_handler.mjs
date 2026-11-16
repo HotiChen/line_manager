@@ -1,11 +1,11 @@
 /**
- * Unit Tests — handler/systems.js（系統註冊與 service key，人主體操作）
+ * Unit Tests — bridge/systems.js（系統註冊與 service key，人主體操作）
  *
- *   POST   /api/v1/systems                       註冊，回傳 apiKey（只回這一次）
- *   GET    /api/v1/systems                       列出（不含任何 key 資訊）
- *   PATCH  /api/v1/systems/{system}              改 webhookUrl / events / disabled
- *   POST   /api/v1/systems/{system}/keys/rotate  輪替 key，舊 key 立即失效
- *   DELETE /api/v1/systems/{system}              刪除，key 立即失效
+ *   POST   /bridge/v1/systems                       註冊，回傳 apiKey（只回這一次）
+ *   GET    /bridge/v1/systems                       列出（不含任何 key 資訊）
+ *   PATCH  /bridge/v1/systems/{system}              改 webhookUrl / events / disabled
+ *   POST   /bridge/v1/systems/{system}/keys/rotate  輪替 key，舊 key 立即失效
+ *   DELETE /bridge/v1/systems/{system}              刪除，key 立即失效
  *
  * 安全性質：
  *   - KV 裡找不到 key 原文（只有 SHA-256）
@@ -16,7 +16,7 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMockKV } from '../helpers/mock_kv.mjs';
 import { BotKeys } from '../../worker_src/lib/kv_schema.js';
-import { authenticateBridge } from '../../worker_src/middleware/bridge_auth.js';
+import { authenticateBridge } from '../../worker_src/bridge/auth.js';
 import {
     handleCreateSystem,
     handleListSystems,
@@ -24,7 +24,7 @@ import {
     handleRotateKey,
     handleDeleteSystem,
     route,
-} from '../../worker_src/handler/systems.js';
+} from '../../worker_src/bridge/systems.js';
 
 const BOT = 'Ubbbbbbbbbbbbbbbbbbbbbbbbbbbbbb01';
 const OWNER = 'Uowner0000000000000000000000001';
@@ -32,7 +32,7 @@ const MEMBER = 'Umember000000000000000000000002';
 
 let env;
 
-function req(body, method = 'POST', path = '/api/v1/systems', headers = {}) {
+function req(body, method = 'POST', path = '/bridge/v1/systems', headers = {}) {
     const init = { method, headers: { 'Content-Type': 'application/json', ...headers } };
     if (method !== 'GET' && method !== 'HEAD' && body !== undefined) init.body = JSON.stringify(body);
     return new Request(`https://worker.example.com${path}`, init);
@@ -52,7 +52,7 @@ async function create(body = { system: 'imgpicker', name: 'Image Picker' }) {
 }
 
 function bridgeReq(key) {
-    return new Request('https://worker.example.com/api/v1/messages/push', {
+    return new Request('https://worker.example.com/bridge/v1/raw/push', {
         method: 'POST',
         headers: { Authorization: `Bearer ${key}`, 'X-Bot-Id': BOT },
     });
@@ -155,7 +155,7 @@ describe('POST /systems', () => {
     });
 
     it('body 不是合法 JSON → 400，不是 500', async () => {
-        const bad = new Request('https://worker.example.com/api/v1/systems', { method: 'POST', body: '{nope' });
+        const bad = new Request('https://worker.example.com/bridge/v1/systems', { method: 'POST', body: '{nope' });
         const res = await handleCreateSystem(bad, env, OWNER, BOT, 'owner');
         assert.equal(res.status, 400);
     });
@@ -302,44 +302,44 @@ describe('route — 權限', () => {
     }
 
     it('owner 可以註冊', async () => {
-        const res = await routed('POST', '/api/v1/systems', { system: 'abc', name: 'S' }, OWNER);
+        const res = await routed('POST', '/bridge/v1/systems', { system: 'abc', name: 'S' }, OWNER);
         assert.equal(res.status, 201);
     });
 
     it('member 不可以註冊 → 403，且沒有留下任何 key', async () => {
         const before = env.KV_LINE_STORAGE._store.size;
-        const res = await routed('POST', '/api/v1/systems', { system: 'abc', name: 'S' }, MEMBER);
+        const res = await routed('POST', '/bridge/v1/systems', { system: 'abc', name: 'S' }, MEMBER);
         assert.equal(res.status, 403);
         assert.equal(env.KV_LINE_STORAGE._store.size, before);
     });
 
     it('member 不可以列出 / 改 / 輪替 / 刪除', async () => {
-        await routed('POST', '/api/v1/systems', { system: 'abc', name: 'S' }, OWNER);
-        assert.equal((await routed('GET', '/api/v1/systems', undefined, MEMBER)).status, 403);
-        assert.equal((await routed('PATCH', '/api/v1/systems/abc', { disabled: true }, MEMBER)).status, 403);
-        assert.equal((await routed('POST', '/api/v1/systems/abc/keys/rotate', {}, MEMBER)).status, 403);
-        assert.equal((await routed('DELETE', '/api/v1/systems/abc', undefined, MEMBER)).status, 403);
+        await routed('POST', '/bridge/v1/systems', { system: 'abc', name: 'S' }, OWNER);
+        assert.equal((await routed('GET', '/bridge/v1/systems', undefined, MEMBER)).status, 403);
+        assert.equal((await routed('PATCH', '/bridge/v1/systems/abc', { disabled: true }, MEMBER)).status, 403);
+        assert.equal((await routed('POST', '/bridge/v1/systems/abc/keys/rotate', {}, MEMBER)).status, 403);
+        assert.equal((await routed('DELETE', '/bridge/v1/systems/abc', undefined, MEMBER)).status, 403);
     });
 
     it('不在這個 bot 的人 → 403', async () => {
-        const res = await routed('GET', '/api/v1/systems', undefined, 'Ustranger000000000000000000000009');
+        const res = await routed('GET', '/bridge/v1/systems', undefined, 'Ustranger000000000000000000000009');
         assert.equal(res.status, 403);
     });
 
     it('owner 走完整路由：註冊 → 列出 → 輪替 → 刪除', async () => {
-        assert.equal((await routed('POST', '/api/v1/systems', { system: 'abc', name: 'S' }, OWNER)).status, 201);
-        assert.equal((await routed('GET', '/api/v1/systems', undefined, OWNER)).status, 200);
-        assert.equal((await routed('POST', '/api/v1/systems/abc/keys/rotate', {}, OWNER)).status, 200);
-        assert.equal((await routed('DELETE', '/api/v1/systems/abc', undefined, OWNER)).status, 200);
+        assert.equal((await routed('POST', '/bridge/v1/systems', { system: 'abc', name: 'S' }, OWNER)).status, 201);
+        assert.equal((await routed('GET', '/bridge/v1/systems', undefined, OWNER)).status, 200);
+        assert.equal((await routed('POST', '/bridge/v1/systems/abc/keys/rotate', {}, OWNER)).status, 200);
+        assert.equal((await routed('DELETE', '/bridge/v1/systems/abc', undefined, OWNER)).status, 200);
     });
 
     it('未知路徑 → 404', async () => {
-        const res = await routed('GET', '/api/v1/systems/abc/nope', undefined, OWNER);
+        const res = await routed('GET', '/bridge/v1/systems/abc/nope', undefined, OWNER);
         assert.equal(res.status, 404);
     });
 
     it('system 名稱含 URL 編碼的 ":" 也不能鑽進別的 key', async () => {
-        const res = await routed('DELETE', '/api/v1/systems/a%3Ab', undefined, OWNER);
+        const res = await routed('DELETE', '/bridge/v1/systems/a%3Ab', undefined, OWNER);
         assert.ok(res.status === 400 || res.status === 404);
     });
 });

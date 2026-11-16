@@ -1,5 +1,5 @@
 /**
- * Unit Tests — middleware/bridge_auth.js（系統主體認證）
+ * Unit Tests — bridge/auth.js（系統主體認證）
  *
  * 系統（垂直後端）用 `Authorization: Bearer <service key>` + `X-Bot-Id` 呼叫。
  * 安全性質：
@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { createMockKV } from '../helpers/mock_kv.mjs';
 import { sha256Hex } from '../../worker_src/lib/crypto_util.js';
 import { BotKeys, ServiceKeyKeys } from '../../worker_src/lib/kv_schema.js';
-import { authenticateBridge, withService } from '../../worker_src/middleware/bridge_auth.js';
+import { authenticateBridge, withService } from '../../worker_src/bridge/auth.js';
 
 const BOT = 'Ubbbbbbbbbbbbbbbbbbbbbbbbbbbbbb01';
 const OTHER_BOT = 'Ubbbbbbbbbbbbbbbbbbbbbbbbbbbbbb02';
@@ -43,7 +43,7 @@ function req({ key = KEY, botId = BOT, auth } = {}) {
     if (auth !== undefined) headers.Authorization = auth;
     else if (key) headers.Authorization = `Bearer ${key}`;
     if (botId) headers['X-Bot-Id'] = botId;
-    return new Request('https://example.com/api/v1/messages/push', { method: 'POST', headers });
+    return new Request('https://example.com/bridge/v1/raw/push', { method: 'POST', headers });
 }
 
 beforeEach(() => {
@@ -128,7 +128,7 @@ describe('authenticateBridge', () => {
     });
 
     it('LIFF 用的 X-User-Id 對這條路徑完全無效', async () => {
-        const request = new Request('https://example.com/api/v1/messages/push', {
+        const request = new Request('https://example.com/bridge/v1/raw/push', {
             headers: { 'X-User-Id': 'Usomeone', 'X-Bot-Id': BOT },
         });
         const r = await authenticateBridge(request, env);

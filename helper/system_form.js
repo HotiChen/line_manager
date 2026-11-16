@@ -75,7 +75,7 @@ function safeBotId(botId) {
 export function buildCurlExample(baseUrl, botId) {
   const base = String(baseUrl || '').replace(/\/+$/, '');
   return [
-    `curl -X POST ${base}/api/v1/messages/push \\`,
+    `curl -X POST ${base}/bridge/v1/raw/push \\`,
     '  -H "Authorization: Bearer <API_KEY>" \\',
     `  -H "X-Bot-Id: ${safeBotId(botId)}" \\`,
     '  -H "X-Idempotency-Key: <同一件事用同一個字串>" \\',

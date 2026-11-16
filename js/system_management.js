@@ -2,7 +2,7 @@
  * 系統整合管理頁
  *
  * 讓 bot 的管理員（owner）註冊、停用、輪替、刪除「系統」（接到這個 LINE 官方帳號上的
- * 垂直後端），並取得 service key。對應後端 worker_src/handler/systems.js。
+ * 垂直後端），並取得 service key。對應後端 worker_src/bridge/systems.js。
  *
  * 安全規則：
  *   - 不使用 innerHTML：所有動態內容用 createElement / textContent 組出來
@@ -161,7 +161,7 @@ async function loadBot() {
 }
 
 async function loadSystems() {
-  const res = await call('GET', '/api/v1/systems');
+  const res = await call('GET', '/bridge/v1/systems');
   if (res.status === 403) {
     byId('system-loading').classList.add('d-none');
     byId('btn-register-system').classList.add('d-none');
@@ -212,7 +212,7 @@ async function submitRegister(event) {
   }
 
   await withBusy(byId('btn-submit-system'), async () => {
-    const res = await call('POST', '/api/v1/systems', result.payload);
+    const res = await call('POST', '/bridge/v1/systems', result.payload);
     if (!res.ok) {
       errorBox.textContent = describeError(res.status, res.data);
       errorBox.classList.remove('d-none');
@@ -228,7 +228,7 @@ async function submitRegister(event) {
 
 async function toggleSystem(system, button) {
   await withBusy(button, async () => {
-    const res = await call('PATCH', `/api/v1/systems/${encodeURIComponent(system.system)}`, { disabled: !system.disabled });
+    const res = await call('PATCH', `/bridge/v1/systems/${encodeURIComponent(system.system)}`, { disabled: !system.disabled });
     if (!res.ok) return toast.error(describeError(res.status, res.data));
     toast.success(system.disabled ? '已啟用' : '已停用，這個系統的金鑰立即無法使用');
     await loadSystems();
@@ -245,7 +245,7 @@ async function rotateKey(system, button) {
   if (!confirmed) return;
 
   await withBusy(button, async () => {
-    const res = await call('POST', `/api/v1/systems/${encodeURIComponent(system.system)}/keys/rotate`, {});
+    const res = await call('POST', `/bridge/v1/systems/${encodeURIComponent(system.system)}/keys/rotate`, {});
     if (!res.ok) return toast.error(describeError(res.status, res.data));
     showKey(res.data.system, res.data.apiKey);
   });
@@ -261,7 +261,7 @@ async function deleteSystem(system, button) {
   if (!confirmed) return;
 
   await withBusy(button, async () => {
-    const res = await call('DELETE', `/api/v1/systems/${encodeURIComponent(system.system)}`, null);
+    const res = await call('DELETE', `/bridge/v1/systems/${encodeURIComponent(system.system)}`, null);
     if (!res.ok) return toast.error(describeError(res.status, res.data));
     toast.success('已刪除');
     await loadSystems();
