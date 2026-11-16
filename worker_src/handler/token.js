@@ -1,6 +1,87 @@
 // lib/token.js
 import { jsonResponse } from "../lib/utils.js";
 import { saveAccessToken } from "../lib/token_store.js";
+import { UserKeys } from "../lib/kv_schema.js";
+
+/**
+ * 這筆 project 資料對應的 botId（LINE destination）。
+ *
+ * 只接受能當 kv_schema key 組件的值（非空字串、不含 ':'），跟
+ * bot_context.resolveBotId 的判斷一致 —— 否則這裡寫進去的 currentBotId
+ * 會被 resolveBotId 當成不可用而略過，兩個指標又分岔。
+ *
+ * @param {unknown} info access_tokens_${userId} 裡的一筆（舊格式是字串）
+ * @returns {string|null}
+ */
+function destinationOf(info) {
+  if (!info || typeof info !== "object") return null;
+  const dest = info.destination;
+  return (typeof dest === "string" && dest !== "" && !dest.includes(":")) ? dest : null;
+}
+
+/** user:${userId}:bots 的 key；userId 不能當 key 組件時回 null（那種使用者只有舊命名空間） */
+function userBotsKeyOf(userId) {
+  try {
+    return UserKeys.bots(userId);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 讓 user:${userId}:bots 的 currentBotId 跟上 current_token。
+ *
+ * 「使用者正在操作哪個 bot」有兩個指標：current_token（project 名稱，LINE
+ * API 呼叫用它取 token）與 currentBotId（資料命名空間與權限檢查用它，而且
+ * 優先）。側邊欄的帳號選單只打 /token/set，只寫前者的話，切到 B 之後推播用
+ * B 的 token，會員/關鍵字/權限卻還停在 A。
+ *
+ * botId 為 null（舊 project 沒有 destination）時把 currentBotId 清成 null：
+ * resolveBotId 會回退舊路徑並解析成 null（只走舊命名空間），而不是安靜地
+ * 繼續指著另一個 bot。
+ *
+ * 沒有變化就不寫 —— 前端每次初始化都會呼叫一次。
+ *
+ * @param {Object} env
+ * @param {string} userId
+ * @param {string|null} botId 只能來自伺服器端存的 access_tokens，不可來自請求
+ * @param {string} project 新增 bots 項目時 displayName 的後備值
+ * @param {unknown} info
+ */
+async function syncCurrentBot(env, userId, botId, project, info) {
+  const key = userBotsKeyOf(userId);
+  if (!key) return;
+
+  const stored = await env.KV_LINE_STORAGE.get(key, { type: "json" });
+  const existing = (stored && typeof stored === "object" && !Array.isArray(stored)) ? stored : null;
+
+  if (botId === null) {
+    // 沒有 user:bots 或本來就沒有指標：resolveBotId 已經會回退，不必憑空建一筆
+    if (!existing || !existing.currentBotId) return;
+    await env.KV_LINE_STORAGE.put(key, JSON.stringify({ ...existing, currentBotId: null }));
+    return;
+  }
+
+  const bots = (existing && Array.isArray(existing.bots)) ? existing.bots : [];
+  const listed = bots.some(b => b && b.botId === botId);
+  if (existing && listed && existing.currentBotId === botId) return;
+
+  const next = { ...(existing || {}), bots: [...bots], currentBotId: botId };
+  if (!listed) {
+    // 形狀比照 migration/migrate.js 回填 user:bots 時寫的那一筆。
+    // 已存在的項目不動：裡面的 role 可能是受邀成為 member。
+    const displayName = (typeof info.displayName === "string" && info.displayName !== "")
+      ? info.displayName
+      : project;
+    next.bots.push({
+      botId,
+      role: "owner",
+      displayName,
+      joinedAt: new Date().toISOString(),
+    });
+  }
+  await env.KV_LINE_STORAGE.put(key, JSON.stringify(next));
+}
 
 /**
  * handleRegisterAccessToken
@@ -84,18 +165,38 @@ export async function handleRegisterAccessToken(request, env, userId) {
  * 設定目前專案的 Active Token
  * 
  * Pre-conditions: project 名稱必須存在於 accessTokens 中
- * Post-conditions: 更新 KV 中的 current_token_${userId}
+ * Post-conditions: 更新 KV 中的 current_token_${userId}，並讓
+ *   user:${userId}:bots 的 currentBotId 指向同一個 bot（見 syncCurrentBot）
  */
 export async function handleSetCurrentToken(request, env, userId) {
-  const { project } = await request.json();
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse({ error: "Invalid JSON body" }, 400);
+  }
+
+  // 只從 body 取 project。botId 一律由伺服器端存的 access_tokens 決定 ——
+  // 信任 body 裡的 destination 等於讓人把資料命名空間指到別人的 bot。
+  const project = body && typeof body === "object" ? body.project : undefined;
+  if (typeof project !== "string" || project === "") {
+    return jsonResponse({ error: "Missing project" }, 400);
+  }
+
   const accessTokens = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {};
 
-  const info = accessTokens[project];
+  // Object.hasOwn：否則 "constructor" 之類的名稱會從原型上拿到東西而通過檢查
+  const info = Object.hasOwn(accessTokens, project) ? accessTokens[project] : null;
   if (!info || (typeof info === 'object' && !info.token)) {
     return jsonResponse({ error: "Project not found" }, 404);
   }
 
-  await env.KV_LINE_STORAGE.put(`current_token_${userId}`, project);
+  const currentKey = `current_token_${userId}`;
+  if (await env.KV_LINE_STORAGE.get(currentKey) !== project) {
+    await env.KV_LINE_STORAGE.put(currentKey, project);
+  }
+  await syncCurrentBot(env, userId, destinationOf(info), project, info);
+
   return jsonResponse({ success: true, message: `Current token set to ${project}` });
 }
 
@@ -103,7 +204,8 @@ export async function handleSetCurrentToken(request, env, userId) {
  * handleDeleteAccessToken
  * 刪除指定的 Access Token
  * 
- * Post-conditions: 移除 KV 中的專案資訊，若為目前使用專案則一併清除 current_token
+ * Post-conditions: 移除 KV 中的專案資訊，若為目前使用專案則一併清除 current_token；
+ *   currentBotId 指向被刪除的 bot 時清成 null（只清指標，不動 bots 清單與權限）
  */
 export async function handleDeleteAccessToken(request, env, userId) {
   const { project } = await request.json();
@@ -114,12 +216,25 @@ export async function handleDeleteAccessToken(request, env, userId) {
     return jsonResponse({ success: false, error: "Project not found" }, 404);
   }
 
+  const deletedBotId = destinationOf(accessTokens[project]);
+
   delete accessTokens[project];
   await env.KV_LINE_STORAGE.put(accessTokensKey, JSON.stringify(accessTokens));
 
   const currentToken = await env.KV_LINE_STORAGE.get(`current_token_${userId}`);
   if (currentToken === project) {
     await env.KV_LINE_STORAGE.delete(`current_token_${userId}`);
+  }
+
+  // currentBotId 優先於 current_token：不清掉的話，資料讀寫與權限檢查會繼續
+  // 落在一個已經沒有 token 的 bot 上。同一個 bot 還有別的 project 時保留。
+  const userBotsKey = deletedBotId ? userBotsKeyOf(userId) : null;
+  const stillRegistered = Object.values(accessTokens).some(i => destinationOf(i) === deletedBotId);
+  if (userBotsKey && !stillRegistered) {
+    const userBots = await env.KV_LINE_STORAGE.get(userBotsKey, { type: "json" });
+    if (userBots && typeof userBots === "object" && userBots.currentBotId === deletedBotId) {
+      await env.KV_LINE_STORAGE.put(userBotsKey, JSON.stringify({ ...userBots, currentBotId: null }));
+    }
   }
 
   return jsonResponse({ success: true, message: `Access token for ${project} deleted` });

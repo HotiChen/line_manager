@@ -87,7 +87,13 @@ async function initializeBotSelector(activeBot) {
     if (targetBot) {
       botSelect.value = targetBot;
       localStorage.setItem('flow_designer_bot', targetBot);
-      if (targetBot !== activeBot) await api.post('/token/set', { project: targetBot });
+      // 每次初始化都打一次：伺服器端沒有變化就不寫，而已經分岔的 currentBotId 會被修回來。
+      // 失敗不可中斷初始化，否則下面的 change listener 綁不上，選單整個失效。
+      try {
+        await api.post('/token/set', { project: targetBot });
+      } catch (err) {
+        console.warn('同步目前帳號失敗:', err);
+      }
     }
 
     botSelect.addEventListener("change", async (e) => {
