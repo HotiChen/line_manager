@@ -28,6 +28,7 @@
  * - 不產生任何隨機 id 或時間戳當資料內容 —— 舊版會在每次重跑時給 flex
  *   訊息配新的 id，跑兩次就多出一整份
  */
+import { ensureBotRecords } from "../lib/bot_registry.js";
 import { jsonResponse } from "../lib/utils.js";
 import { BotKeys, UserKeys, V1Keys } from "../lib/kv_schema.js";
 import { RESOURCES, USER_RESOURCES } from "../lib/bot_store.js";
@@ -438,6 +439,68 @@ export async function migrateAll(env, options = {}) {
 }
 
 /**
+ * 補齊 bot 層級紀錄（owner / info / permissions / user:bots），不複製任何資源。
+ *
+ * 給「在 /token/register 開始自動建立這些紀錄之前就註冊的使用者」用：他們有 access_tokens，
+ * 但沒有 bot 層級紀錄，所以 withPermission 的路由一律 403。缺什麼補什麼，不覆蓋；冪等。
+ *
+ * 與 migrateAll 不同：不複製會員／關鍵字等資源，也不使用 migration 游標。
+ * 分批靠呼叫端帶回 nextCursor。
+ *
+ * @param {Object} env
+ * @param {{cursor?: string|null, batchSize?: number}} [options]
+ */
+export async function repairBotRecords(env, options = {}) {
+    const batchSize = options.batchSize || DEFAULT_BATCH_SIZE;
+    const prefix = "access_tokens_";
+
+    let page;
+    try {
+        page = await env.KV_LINE_STORAGE.list({ prefix, cursor: options.cursor || undefined, limit: batchSize });
+    } catch (err) {
+        return { success: false, error: `列出使用者失敗：${err.message}` };
+    }
+
+    let repaired = 0;
+    let processed = 0;
+    for (const key of page.keys || []) {
+        const userId = key.name.slice(prefix.length);
+        if (!userId) continue;
+        processed += 1;
+
+        const map = await env.KV_LINE_STORAGE.get(key.name, { type: "json" });
+        if (!map || typeof map !== "object") continue;
+
+        // 只讀 destination / displayName，不碰 token（也不解密）
+        const projects = Object.entries(map)
+            .filter(([, info]) => info && typeof info === "object" && typeof info.destination === "string" && info.destination !== "")
+            .map(([project, info]) => ({ project, botId: info.destination, displayName: info.displayName }));
+
+        // 目前選的專案排最前面，這樣 currentBotId 會指向它（只在原本沒有時才設）
+        const current = await readText(env, `current_token_${userId}`);
+        projects.sort((a, b) => (b.project === current) - (a.project === current));
+
+        for (const [i, p] of projects.entries()) {
+            const result = await ensureBotRecords(
+                env,
+                { botId: p.botId, userId, displayName: p.displayName, project: p.project },
+                { makeCurrent: i === 0 }
+            );
+            if (result.created.length > 0) repaired += 1;
+        }
+    }
+
+    const done = page.list_complete === true;
+    return {
+        success: true,
+        processed,
+        repaired,
+        done,
+        nextCursor: done ? null : (page.cursor || null),
+    };
+}
+
+/**
  * 回填進度。
  */
 export async function migrateStatus(env) {
@@ -522,6 +585,8 @@ export async function rollbackUser(env, userId) {
  *
  *   mode=user（預設）  &userId=U…      回填一個使用者
  *   mode=all                           回填一批，可重複呼叫直到 done=true
+ *   mode=repair        &cursor=        補齊 owner/info/permissions/user:bots（不複製資源，冪等）；
+ *                                      回傳 nextCursor 時帶著它再呼叫，直到 done=true
  *   mode=status                        看進度
  *   mode=rollback      &userId=U…      刪掉該使用者的新 key
  *
@@ -556,6 +621,10 @@ export async function handleMigrate(request, env) {
 
         if (mode === "all") {
             return jsonResponse(await migrateAll(env, { batchSize, force, restart }));
+        }
+
+        if (mode === "repair") {
+            return jsonResponse(await repairBotRecords(env, { batchSize, cursor: url.searchParams.get("cursor") }));
         }
 
         if (!userId) {

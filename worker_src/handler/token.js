@@ -3,6 +3,7 @@ import { jsonResponse } from "../lib/utils.js";
 import { saveAccessToken } from "../lib/token_store.js";
 import { UserKeys } from "../lib/kv_schema.js";
 import { isValidChannelSecret, saveChannelSecret, hasChannelSecret } from "../lib/channel_secret.js";
+import { ensureBotRecords } from "../lib/bot_registry.js";
 
 /**
  * 這筆 project 資料對應的 botId（LINE destination）。
@@ -165,6 +166,15 @@ export async function handleRegisterAccessToken(request, env, userId) {
 
   // 反查索引在加密寫入成功之後才建立，失敗時不留下半筆資料
   await env.KV_LINE_STORAGE.put(`destination_user_${destination}`, userId);
+
+  // bot 層級的 owner / info / permissions 與 user:bots。沒有這幾筆，新註冊的使用者呼叫
+  // 任何 withPermission 的路由（/team/*、/api/v1/systems…）都會 403。缺什麼補什麼、不覆蓋。
+  // 失敗不影響註冊本身（token 已經存好）：之後可用 /admin/migrate?mode=repair 補。
+  try {
+    await ensureBotRecords(env, { botId: destination, userId, displayName, project });
+  } catch (err) {
+    console.error("[Token] 建立 bot 紀錄失敗，可用 mode=repair 補:", err.message);
+  }
 
   return jsonResponse({
     success: true,

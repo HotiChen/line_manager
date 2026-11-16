@@ -28,9 +28,10 @@ P0 兩項不處理，Bridge 做出來也無法對「別的商家」使用。
 **部署後要做**：到「個人設定 → 編輯專案」替每個官方帳號填 Channel Secret；全部填完後在 Worker 設 `WEBHOOK_GLOBAL_SECRET_DISABLED=1`，才算真正關閉「全域密鑰可驗任何 bot」。
 原方向：每個 bot 存自己的 channel secret（`BotKeys.credential` 已預留，加密沿用 `token_crypto`），驗簽時先用 body 的 `destination` 選出 secret（只用來選 secret，驗證仍以 HMAC 為準），找不到才退回全域 secret；token 註冊流程補「Channel Secret」欄位。
 
-### P0-2　註冊 token 不會建立權限紀錄
+### P0-2　註冊 token 不會建立權限紀錄　✅ 程式已完成（LM-0B），待部署與修補既有資料
 `/token/register`（`token.js:137-154`）不寫 `bot:{id}:permissions`／`owner`，只有 migration 會寫。新註冊的使用者呼叫 `/api/v1/systems`、`/team/*`、`/member/demo/*` 會得到 403。
-方向：註冊時冪等地建立 owner 與 permissions（不覆蓋既有成員），並補一個修復既有資料的 migration 模式。
+**LM-0B 已實作**：`/token/register` 成功後冪等地建立 `bot:{id}:owner`／`info`／`permissions` 與 `user:{id}:bots`（`lib/bot_registry.js`，缺什麼補什麼、不覆蓋受邀成員與使用者自己切換的 `currentBotId`；建立失敗不影響註冊）；`/admin/migrate?mode=repair` 修補既有資料（不複製資源，冪等，分批用 `nextCursor`）。
+**部署後要做**：跑一次 `mode=repair` 直到 `done: true`，修補 LM-0B 之前註冊的使用者。
 
 ### 已在本輪修復（`6383a62`）
 邀請清單跨 bot 外洩；測試會員 store 與權限檢查的 bot 不一致。
