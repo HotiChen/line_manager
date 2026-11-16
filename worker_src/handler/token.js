@@ -254,8 +254,9 @@ export async function handleGetChannelSecretStatus(request, env, userId) {
 
   const found = await lookupOwnProjectBot(env, userId, project);
   if (found.status === 404) return jsonResponse({ error: found.error }, 404);
-  // 舊格式沒有 botId，一定是未設定
-  if (!found.botId) return jsonResponse({ configured: false });
+  // 舊格式沒有 botId，一定是未設定；標 legacy 讓前端能說明「要連 Token 一起重新註冊」，
+  // 否則使用者會以為只要補上密鑰就行，按更新卻被 409 擋下
+  if (!found.botId) return jsonResponse({ configured: false, legacy: true });
 
   return jsonResponse({ configured: await hasChannelSecret(env, found.botId) });
 }

@@ -169,6 +169,16 @@ describe('GET /token/channel-secret（狀態）', () => {
         assert.ok(!text.includes(SECRET));
     });
 
+    it('舊格式專案（沒有 botId）→ configured:false 並標 legacy:true，讓前端能說明要重新註冊', async () => {
+        await env.KV_LINE_STORAGE.put(`access_tokens_${OWNER}`, JSON.stringify({ old: 'plain-legacy-token' }));
+        assert.deepEqual(await (await status('old')).json(), { configured: false, legacy: true });
+    });
+
+    it('一般專案的回應不帶 legacy 欄位', async () => {
+        await registered();
+        assert.deepEqual(await (await status('品禔')).json(), { configured: false });
+    });
+
     it('別人的專案名稱 → 404（不洩漏別人的設定狀態）', async () => {
         await registered();
         assert.equal((await status('品禔', OTHER)).status, 404);

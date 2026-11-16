@@ -48,7 +48,7 @@ describe('profile 頁 Channel Secret', () => {
     });
 
     it('只更新 Channel Secret 時打 /token/channel-secret', () => {
-        assert.match(code, /api\.post\('\/token\/channel-secret'/);
+        assert.match(code, /postJson\('\/token\/channel-secret'/);
     });
 
     it('讀取狀態打 GET /token/channel-secret，專案名稱有 encodeURIComponent', () => {
@@ -57,7 +57,7 @@ describe('profile 頁 Channel Secret', () => {
 
     it('註冊時把 channelSecret 一併送出', () => {
         assert.match(code, /channelSecret/);
-        assert.match(code, /api\.post\('\/token\/register'/);
+        assert.match(code, /postJson\('\/token\/register'/);
     });
 
     it('編輯對話框不再用 projectData（botId）預填 Token 欄位', () => {
@@ -74,5 +74,28 @@ describe('profile 頁 Channel Secret', () => {
 
     it('送出後會清空密鑰欄位', () => {
         assert.match(code, /channel-secret"\)\.value\s*=\s*""|channel-secret'\)\.value\s*=\s*''/);
+    });
+
+    // 回歸：伺服器對「舊格式專案」回 409 並附說明，前端卻因為狀態碼不在通用對照表而顯示「發生未知錯誤」，
+    // 而且 #status 在對話框後面，使用者根本看不到。
+    for (const id of ['edit-modal-error', 'add-modal-error']) {
+        it(`對話框裡有 #${id} 錯誤欄位，JS 會寫入`, () => {
+            assert.match(html, new RegExp(`id="${id}"`));
+            assert.ok(code.includes('-error`') || code.includes("-error'") || code.includes(id), '缺少寫入錯誤欄位的程式');
+        });
+    }
+
+    it('送出時用 rawResponse 自己處理錯誤（不走通用的「未知錯誤」提示）', () => {
+        assert.match(code, /rawResponse:\s*true/);
+        assert.match(code, /showErrorToast:\s*false/);
+    });
+
+    it('顯示伺服器回的 error 文字', () => {
+        assert.match(code, /data\.error|data\?\.error/);
+    });
+
+    it('舊格式專案：狀態欄位說明要同時填 Token 與 Channel Secret', () => {
+        assert.match(code, /legacy/);
+        assert.match(code, /舊格式/);
     });
 });
