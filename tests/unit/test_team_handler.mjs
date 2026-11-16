@@ -355,7 +355,7 @@ describe('handleListInvites', () => {
         await new Promise(resolve => setTimeout(resolve, 5));
         const second = await readJson(await handleGenerateInvite(jsonRequest({}), env, OWNER, BOT_A, 'owner'));
 
-        const res = await handleListInvites(jsonRequest({}, 'GET'), env, OWNER);
+        const res = await handleListInvites(jsonRequest({}, 'GET'), env, OWNER, BOT_A, 'owner');
         const body = await readJson(res);
 
         assert.equal(body.invites.length, 2);
@@ -363,8 +363,57 @@ describe('handleListInvites', () => {
         assert.equal(body.invites[1].token, first.token);
     });
 
+    // 跨租戶：邀請 token 等於「加入那個 bot 的通行證」，不可讓別的 bot 的 owner 看到
+    describe('租戶隔離', () => {
+        const OTHER_OWNER = 'Uother00000000000000000000000004';
+
+        it('別的 bot 的 owner 看不到我的邀請', async () => {
+            await seedBot(env, BOT_B, [{ userId: OTHER_OWNER, role: 'owner' }]);
+            const mine = await readJson(await handleGenerateInvite(jsonRequest({}), env, OWNER, BOT_A, 'owner'));
+            const theirs = await readJson(await handleGenerateInvite(jsonRequest({}), env, OTHER_OWNER, BOT_B, 'owner'));
+
+            const seenByOther = await readJson(await handleListInvites(jsonRequest({}, 'GET'), env, OTHER_OWNER, BOT_B, 'owner'));
+            assert.deepEqual(seenByOther.invites.map(i => i.token), [theirs.token]);
+            assert.ok(!JSON.stringify(seenByOther).includes(mine.token));
+
+            const seenByMe = await readJson(await handleListInvites(jsonRequest({}, 'GET'), env, OWNER, BOT_A, 'owner'));
+            assert.deepEqual(seenByMe.invites.map(i => i.token), [mine.token]);
+        });
+
+        it('同一個 bot 的另一位 owner 也看不到不是自己建的邀請', async () => {
+            const SECOND_OWNER = 'Usecond0000000000000000000000005';
+            await seedBot(env, BOT_A, [{ userId: OWNER, role: 'owner' }, { userId: SECOND_OWNER, role: 'owner' }]);
+            const mine = await readJson(await handleGenerateInvite(jsonRequest({}), env, OWNER, BOT_A, 'owner'));
+            const seen = await readJson(await handleListInvites(jsonRequest({}, 'GET'), env, SECOND_OWNER, BOT_A, 'owner'));
+            assert.deepEqual(seen.invites, []);
+            assert.ok(mine.token);
+        });
+
+        it('同時擁有 A、B 的 owner，在 A 底下只看到 A 的邀請，不會看到只給 B 的', async () => {
+            await seedBot(env, BOT_B, [{ userId: OWNER, role: 'owner' }]);
+            const forA = await readJson(await handleGenerateInvite(jsonRequest({}), env, OWNER, BOT_A, 'owner'));
+            await handleGenerateInvite(jsonRequest({ botIds: [BOT_B] }), env, OWNER, BOT_B, 'owner');
+            const seen = await readJson(await handleListInvites(jsonRequest({}, 'GET'), env, OWNER, BOT_A, 'owner'));
+            assert.deepEqual(seen.invites.map(i => i.token), [forA.token]);
+        });
+
+        it('沒有 botId（呼叫方式不對）時 fail-closed：回空，不列出任何東西', async () => {
+            await handleGenerateInvite(jsonRequest({}), env, OWNER, BOT_A, 'owner');
+            const seen = await readJson(await handleListInvites(jsonRequest({}, 'GET'), env, OWNER));
+            assert.deepEqual(seen.invites, []);
+        });
+
+        it('舊資料只有單一 botId 欄位時仍能比對', async () => {
+            await env.KV_LINE_STORAGE.put('invite:legacytoken', JSON.stringify({
+                token: 'legacytoken', botId: BOT_A, createdBy: OWNER, createdAt: new Date().toISOString(),
+            }));
+            const seen = await readJson(await handleListInvites(jsonRequest({}, 'GET'), env, OWNER, BOT_A, 'owner'));
+            assert.deepEqual(seen.invites.map(i => i.token), ['legacytoken']);
+        });
+    });
+
     it('沒有邀請時回空陣列', async () => {
-        const res = await handleListInvites(jsonRequest({}, 'GET'), env, OWNER);
+        const res = await handleListInvites(jsonRequest({}, 'GET'), env, OWNER, BOT_A, 'owner');
         const body = await readJson(res);
         assert.deepEqual(body.invites, []);
     });

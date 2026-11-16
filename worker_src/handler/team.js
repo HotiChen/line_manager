@@ -304,24 +304,30 @@ export async function handleAcceptInvite(request, env, userId) {
 }
 
 /**
- * 列出所有邀請連結 (Debug/Admin 用)
+ * 列出邀請連結 (Debug/Admin 用)
+ *
+ * 邀請 token 等於「加入那個 bot 的通行證」，所以只列出「這個 bot 的、而且是呼叫者自己建立的」。
+ * 先前是 list 全部 `invite:` key 直接回傳，任何一個 bot 的 owner 都能拿到其他 bot 的 token，
+ * 再用 /team/invite/accept 加入對方的 bot（跨租戶）。
+ *
+ * 由 withPermission 注入 botId；沒有 botId（呼叫方式不對）時 fail-closed，回空清單。
  */
-export async function handleListInvites(request, env, userId) {
-    // 1. 列出所有 invite: 開頭的 key
+export async function handleListInvites(request, env, userId, botId) {
+    if (!botId) return jsonResponse({ success: true, invites: [] });
+
     const list = await env.KV_LINE_STORAGE.list({ prefix: "invite:" });
     const invites = [];
 
-    // 2. 批量獲取詳細內容 (或是逐個獲取，量少時沒差)
     for (const key of list.keys) {
         const inviteData = await env.KV_LINE_STORAGE.get(key.name, { type: "json" });
-        if (inviteData) {
-            // 補上 token 本身 (key name 是 invite:TOKEN)
-            // inviteData.token 應該已經有了，但以防萬一
-            invites.push(inviteData);
-        }
+        if (!inviteData) continue;
+
+        const targets = inviteData.botIds || [inviteData.botId]; // 相容舊資料
+        if (inviteData.createdBy !== userId || !targets.includes(botId)) continue;
+        invites.push(inviteData);
     }
 
-    // 3. 排序 (最新的在前)
+    // 最新的在前
     invites.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
     return jsonResponse({ success: true, invites });

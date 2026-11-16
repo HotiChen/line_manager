@@ -14,7 +14,7 @@
  * 只有 owner 能操作（路由層用 withPermission，見 handler/member.js）。
  */
 import { jsonResponse } from "../lib/utils.js";
-import { openBotStore } from "../lib/bot_store.js";
+import { openBotStoreForBot } from "../lib/bot_store.js";
 
 export const DEMO_COUNT = 10;
 export const DEMO_ID_PREFIX = "Udemo";
@@ -71,10 +71,16 @@ function internalError(label, err) {
   return jsonResponse({ success: false, error: "Internal error" }, 500);
 }
 
-/** 由 withPermission 注入 (request, env, userId, botId, role) */
-export async function handleSeedDemoMembers(request, env, userId) {
+/**
+ * 由 withPermission 注入 (request, env, userId, botId, role)。
+ *
+ * store 必須用「通過權限檢查的那個 botId」開，不能用 openBotStore(env, userId)：
+ * 後者取的是使用者「目前所選的 bot」，與 X-Bot-Id 可以不同 —— 一個人是 A 的 owner、
+ * 目前所選卻是只當 member 的 B，就能通過 A 的檢查、卻寫進 B 的資料。
+ */
+export async function handleSeedDemoMembers(request, env, userId, botId) {
   try {
-    const store = await openBotStore(env, userId);
+    const store = await openBotStoreForBot(env, botId);
     const profiles = buildDemoMembers(Date.now());
 
     await Promise.all(profiles.map((p) => store.put("member", p, p.memberId)));
@@ -91,9 +97,9 @@ export async function handleSeedDemoMembers(request, env, userId) {
   }
 }
 
-export async function handleClearDemoMembers(request, env, userId) {
+export async function handleClearDemoMembers(request, env, userId, botId) {
   try {
-    const store = await openBotStore(env, userId);
+    const store = await openBotStoreForBot(env, botId);
     const list = await store.getOr("members", []);
 
     const removed = [];

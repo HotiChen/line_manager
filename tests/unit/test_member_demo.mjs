@@ -203,6 +203,45 @@ describe('handleClearDemoMembers', () => {
     });
 });
 
+describe('權限檢查的 bot 與資料寫入的 bot 必須是同一個', () => {
+    // 回歸：withPermission 用 X-Bot-Id 驗證 owner，但 handler 曾用「目前所選的 bot」開 store。
+    // 一個人是 A 的 owner、卻把 currentBotId 指著只是 member 的 B，就能用 X-Bot-Id: A 通過檢查，
+    // 然後對 B 的資料做 seed／clear。
+    const BOT_B = 'Ubbbbbbbbbbbbbbbbbbbbbbbbbbbbbb02';
+    const CROSS = 'Ucross0000000000000000000000007';
+
+    async function seedCross() {
+        const kv = env.KV_LINE_STORAGE;
+        await kv.put(BotKeys.permissions(BOT), JSON.stringify({ users: [{ userId: CROSS, role: 'owner' }] }));
+        await kv.put(BotKeys.permissions(BOT_B), JSON.stringify({ users: [{ userId: CROSS, role: 'member' }] }));
+        await kv.put(UserKeys.bots(CROSS), JSON.stringify({ bots: [{ botId: BOT }, { botId: BOT_B }], currentBotId: BOT_B }));
+    }
+    const call = (path) => route(new Request(`https://x${path}`, { method: 'POST', headers: { 'X-Bot-Id': BOT } }), env, CROSS, path);
+
+    it('X-Bot-Id 指 A（owner）、目前所選是 B（member）：資料寫進 A，B 完全不動', async () => {
+        await seedCross();
+        const res = await call('/member/demo/seed');
+        assert.equal(res.status, 200);
+        const inA = JSON.parse((await env.KV_LINE_STORAGE.get(BotKeys.members(BOT))) || '[]');
+        const inB = await env.KV_LINE_STORAGE.get(BotKeys.members(BOT_B));
+        assert.equal(inA.length, 10);
+        assert.equal(inB, null);
+        const leaked = [...env.KV_LINE_STORAGE._store.keys()].filter((k) => k.startsWith(`bot:${BOT_B}:member`));
+        assert.deepEqual(leaked, []);
+    });
+
+    it('清除同樣只作用在通過權限檢查的那個 bot', async () => {
+        await seedCross();
+        // B 裡有一筆測試會員（別人建的），不可被 CROSS 清掉
+        const demoId = DEMO_ID_PREFIX + '0'.repeat(27) + '9';
+        await env.KV_LINE_STORAGE.put(BotKeys.members(BOT_B), JSON.stringify([demoId]));
+        await env.KV_LINE_STORAGE.put(BotKeys.member(BOT_B, demoId), JSON.stringify({ memberId: demoId, isDemo: true }));
+        await call('/member/demo/clear');
+        assert.deepEqual(JSON.parse(await env.KV_LINE_STORAGE.get(BotKeys.members(BOT_B))), [demoId]);
+        assert.ok(await env.KV_LINE_STORAGE.get(BotKeys.member(BOT_B, demoId)));
+    });
+});
+
 describe('路由與權限', () => {
     const call = (userId, path) =>
         route(new Request(`https://x${path}`, { method: 'POST', headers: { 'X-Bot-Id': BOT } }), env, userId, path);
