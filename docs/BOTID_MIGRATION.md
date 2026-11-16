@@ -178,6 +178,19 @@ curl -s "https://<worker>/admin/migrate?key=$SECRET&mode=all" | jq '{processed, 
 
 重跑是安全的：單一使用者的回填是冪等的，重做沒有代價。
 
+### 補齊 bot 層級紀錄（mode=repair）
+
+`/token/register` 在 LM-0B 之前只寫 `access_tokens_*` 與 `destination_user_*`，沒有
+`bot:{id}:owner／info／permissions` 與 `user:{id}:bots`，所以那之後註冊的使用者呼叫
+`/team/*`、`/api/v1/systems` 這類 `withPermission` 路由會得到 403。`mode=repair` 只補這四筆，
+**不複製任何資源**、不使用回填游標；缺什麼補什麼、不覆蓋受邀成員與 `currentBotId`；冪等。
+
+```bash
+curl -s "https://<worker>/admin/migrate?key=$SECRET&mode=repair" | jq '{processed, repaired, done, nextCursor}'
+# done 為 false 時，帶著 nextCursor 再呼叫：
+curl -s "https://<worker>/admin/migrate?key=$SECRET&mode=repair&cursor=<nextCursor>" | jq
+```
+
 ### 從頭重跑
 
 ```bash
