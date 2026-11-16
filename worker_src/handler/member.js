@@ -5,6 +5,8 @@ import { syncMemberRichMenu } from "../lib/segmented_richmenu_logic.js";
 import { applyTierRichMenu, getTierConfig } from "../lib/tier_system.js";
 import { getCurrentAccessToken } from "../lib/token_store.js";
 import { openBotStore } from "../lib/bot_store.js";
+import { withPermission } from "../middleware/permission.js";
+import { handleSeedDemoMembers, handleClearDemoMembers } from "./member_demo.js";
 
 /**
  * handleSaveMember
@@ -224,6 +226,15 @@ export function route(request, env, ownerId, pathname, url) {
   // Fail-closed：ownerId 必須來自認證 context；缺少即拒絕，避免落入空命名空間
   if (!ownerId || typeof ownerId !== "string") {
     return jsonResponse({ success: false, error: "Unauthorized" }, 401);
+  }
+
+  // 測試會員（只有 owner）：產生 / 清除。見 handler/member_demo.js
+  if (pathname === "/member/demo/seed" || pathname === "/member/demo/clear") {
+    if (request.method !== "POST") {
+      return jsonResponse({ success: false, error: "Method not allowed" }, 405);
+    }
+    const handler = pathname.endsWith("/seed") ? handleSeedDemoMembers : handleClearDemoMembers;
+    return withPermission(handler, "owner")(request, env, ownerId);
   }
 
   if (pathname === "/member/save") return handleSaveMember(request, env, ownerId);

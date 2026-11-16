@@ -4,7 +4,7 @@ import { setInnerHTML } from '../helper/security.js';
 import { api } from '../helper/api.client.js';
 import { toast } from '../helper/toast.js';
 import { LoadingManager } from './shared/loader.js';
-import { confirmDanger } from '../helper/modal.helper.js';
+import { confirmDanger, confirmInfo } from '../helper/modal.helper.js';
 
 let members = [];
 let tags = [];
@@ -209,6 +209,12 @@ function setupEventListeners() {
   if (addBtn) {
     addBtn.addEventListener('click', openAddMemberModal);
   }
+
+  // 測試會員（只有 owner；後端會檢查）
+  const seedDemoBtn = document.getElementById('seed-demo-btn');
+  if (seedDemoBtn) seedDemoBtn.addEventListener('click', seedDemoMembers);
+  const clearDemoBtn = document.getElementById('clear-demo-btn');
+  if (clearDemoBtn) clearDemoBtn.addEventListener('click', clearDemoMembers);
 
   // 批次刪除
   const batchDeleteBtn = document.getElementById('batch-delete-btn');
@@ -476,6 +482,53 @@ async function batchDeleteMembers() {
     console.error('批次刪除失敗:', error);
     toast.error('批次刪除失敗');
     LoadingManager.hide('batch-delete');
+  }
+}
+
+/**
+ * 產生 10 筆測試會員。名字帶 [測試]，重複按不會變多，可用「清除測試會員」一鍵刪除。
+ */
+async function seedDemoMembers() {
+  const confirmed = await confirmInfo(
+    '會產生 10 筆名字帶「[測試]」的假會員，用來看版面。\n它們會出現在會員清單與統計中，看完請按「清除測試會員」。',
+    '產生測試會員'
+  );
+  if (!confirmed) return;
+
+  try {
+    LoadingManager.show('demo-seed', '產生中...');
+    const result = await api.post('/member/demo/seed', {});
+    if (result.success) {
+      toast.success(`已產生 ${result.created} 筆測試會員`);
+      await loadMembers();
+      renderMemberTable();
+    }
+  } catch (error) {
+    // api 已經顯示錯誤提示（例如非管理員的 403）
+  } finally {
+    LoadingManager.hide('demo-seed');
+  }
+}
+
+/**
+ * 清除測試會員。只刪名字帶 [測試] 的假會員，真實會員不會被動到。
+ */
+async function clearDemoMembers() {
+  const confirmed = await confirmDanger('只會刪除「[測試]」開頭的假會員，真實會員不受影響。', '清除測試會員');
+  if (!confirmed) return;
+
+  try {
+    LoadingManager.show('demo-clear', '清除中...');
+    const result = await api.post('/member/demo/clear', {});
+    if (result.success) {
+      toast.success(result.removed > 0 ? `已清除 ${result.removed} 筆測試會員` : '沒有測試會員需要清除');
+      await loadMembers();
+      renderMemberTable();
+    }
+  } catch (error) {
+    // api 已經顯示錯誤提示
+  } finally {
+    LoadingManager.hide('demo-clear');
   }
 }
 
