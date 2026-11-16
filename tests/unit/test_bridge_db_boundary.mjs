@@ -1,0 +1,92 @@
+/**
+ * Unit Tests — Bridge 資料層的邊界（LM-1B）
+ *
+ *   - SQL 只在 worker_src/bridge/db.js；bridge/ 其他檔案不得出現 .prepare( 或 SQL 關鍵字敘述
+ *   - BRIDGE_DB 只在 worker_src/bridge/ 之內被讀取（LM 核心看不到它）
+ *   - db.js 不用字串拼接把值塞進 SQL（沒有 template literal 內插到 prepare 的 SQL 裡，除了固定的欄位清單常數）
+ *   - bridge/ 不再讀寫已搬走的 KV key（system、systems、idem、service_key）
+ */
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, dirname, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const SRC = join(ROOT, 'worker_src');
+
+function walk(dir) {
+    return readdirSync(dir).flatMap((f) => {
+        const p = join(dir, f);
+        return statSync(p).isDirectory() ? walk(p) : p.endsWith('.js') ? [p] : [];
+    });
+}
+/** 去掉註解，免得說明文字裡的字被當成程式碼 */
+const code = (p) => readFileSync(p, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+
+const bridgeFiles = walk(join(SRC, 'bridge'));
+const others = bridgeFiles.filter((f) => !f.endsWith('/db.js'));
+
+describe('SQL 只在 bridge/db.js', () => {
+    it('db.js 存在，且 bridge/ 還有其他檔案可檢查', () => {
+        assert.ok(bridgeFiles.some((f) => f.endsWith('/db.js')));
+        assert.ok(others.length >= 5, String(others.length));
+    });
+
+    it('bridge/ 其他檔案沒有 .prepare( / .batch( / SQL 敘述', () => {
+        for (const f of others) {
+            const c = code(f);
+            assert.doesNotMatch(c, /\.prepare\s*\(/, relative(ROOT, f));
+            assert.doesNotMatch(c, /\.batch\s*\(/, relative(ROOT, f));
+            assert.doesNotMatch(c, /\b(SELECT\s+[\w*]|INSERT\s+INTO|DELETE\s+FROM|UPDATE\s+\w+\s+SET|CREATE\s+TABLE)\b/i, relative(ROOT, f));
+        }
+    });
+
+    it('bridge/ 其他檔案也不直接碰 env.BRIDGE_DB 以外的資料庫物件（只有 auth.js 做存在性檢查）', () => {
+        for (const f of others) {
+            const hits = code(f).match(/BRIDGE_DB/g) || [];
+            if (!f.endsWith('/auth.js')) assert.equal(hits.length, 0, relative(ROOT, f));
+        }
+    });
+});
+
+describe('BRIDGE_DB 只在 worker_src/bridge/ 之內', () => {
+    it('worker_src 其他地方都沒有讀它', () => {
+        for (const f of walk(SRC)) {
+            if (f.startsWith(join(SRC, 'bridge') + '/')) continue;
+            assert.doesNotMatch(code(f), /BRIDGE_DB/, relative(ROOT, f));
+        }
+    });
+});
+
+describe('db.js 的 SQL 只用 bound parameter', () => {
+    it('每個 .prepare( 的第一個參數是字串字面值或固定常數樣板，沒有 ${使用者值}', () => {
+        const src = readFileSync(join(SRC, 'bridge', 'db.js'), 'utf8');
+        // template literal 內插只允許 SYSTEM_COLUMNS 這個固定欄位清單
+        const interpolations = [...src.matchAll(/\$\{([^}]+)\}/g)].map((m) => m[1].trim());
+        const inPrepare = [...src.matchAll(/\.prepare\(\s*`([^`]*)`/g)].flatMap((m) => [...m[1].matchAll(/\$\{([^}]+)\}/g)].map((x) => x[1].trim()));
+        for (const i of inPrepare) assert.equal(i, 'SYSTEM_COLUMNS', `prepare 內插了 ${i}`);
+        assert.ok(interpolations.length >= inPrepare.length);
+    });
+
+    it('沒有用 + 把值接進 SQL', () => {
+        const src = readFileSync(join(SRC, 'bridge', 'db.js'), 'utf8');
+        assert.doesNotMatch(src, /\.prepare\(\s*["'][^"']*["']\s*\+/);
+    });
+});
+
+describe('bridge/ 不再使用已搬到 D1 的 KV key', () => {
+    it('沒有 BotKeys.system / systems / idem、ServiceKeyKeys', () => {
+        for (const f of bridgeFiles) {
+            const c = code(f);
+            assert.doesNotMatch(c, /BotKeys\.(system|systems|idem)\b/, relative(ROOT, f));
+            assert.doesNotMatch(c, /ServiceKeyKeys/, relative(ROOT, f));
+        }
+    });
+
+    it('KV 在 bridge/ 只剩額度快取與限流（quota.js、rate_limiter），auth/systems/messages 不直接用 KV_LINE_STORAGE', () => {
+        for (const f of ['auth.js', 'systems.js', 'messages.js', 'db.js']) {
+            assert.doesNotMatch(code(join(SRC, 'bridge', f)), /KV_LINE_STORAGE/, f);
+        }
+    });
+});

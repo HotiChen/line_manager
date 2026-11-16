@@ -1,6 +1,6 @@
 # LM-1B 設計：Bridge 專用 D1 資料庫
 
-狀態：**待確認，尚未實作**。範圍：`BRIDGE_DB`（Cloudflare D1）、遷移檔、D1 測試工具，
+狀態：**已實作，待部署**。範圍：`BRIDGE_DB`（Cloudflare D1）、遷移檔、D1 測試工具，
 並把 Bridge 的金鑰、系統、冪等紀錄、稽核紀錄從 KV 移到 D1。
 前置：LM-1A 已上線（Bridge 已獨立在 `worker_src/bridge/`，預設關閉）。
 
@@ -136,3 +136,39 @@ CREATE INDEX idx_audit_log_bot_at ON audit_log (bot_id, at);
 
 LM-1B 之後的 LM-1C 在這個基礎上做 `brk_` 金鑰前綴、新的錯誤格式與 `raw:push` scope 改名；
 LM-2A 起才會新增 `products`、`links`、授權碼等表（各一個遷移檔）。
+
+## 10. 操作手冊（部署後由人執行）
+
+遷移不放進自動部署（見第 6 節）。部署這一版之後，Bridge 仍是關閉的（`BRIDGE_ENABLED` 未設），
+在套用遷移之前它不會碰資料庫。
+
+**(a) 套用遷移**：Cloudflare 控制台 → Storage & Databases → D1 → `bridge-db` → **Console**，
+貼上 `migrations/0001_bridge_init.sql` 的全部內容並執行。再對 `bridge-db-dev` 重複一次。
+（同一份檔案只執行一次；重複執行會因為「table already exists」失敗，不會破壞既有資料。）
+
+**(b) 驗證**：在同一個 Console 執行
+
+```sql
+SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;
+```
+
+預期看到 `audit_log`、`idempotency`、`service_keys`、`systems`（另外可能有 `sqlite_sequence`，是 `audit_log` 的自增計數，正常）。
+
+**(c) 最後才開旗標**：確認 (b) 無誤後，才把 Worker 的 `BRIDGE_ENABLED` 設為 `1`。
+開啟後 `GET /bridge/v1/health` 會對資料庫做 `SELECT 1`：回 `200 {"ok":true}` 代表綁定與資料庫可用；
+回 `503 {"success":false,"error":"bridge_not_configured"}` 代表缺綁定、缺表或資料庫不可用 —— Bridge 不會退回 KV，
+請回到 (a)(b) 檢查。
+
+之後新增遷移檔（`migrations/0002_*.sql` …）時，同樣由人逐檔貼到兩個資料庫的 Console 執行。
+
+## 11. 實作與設計的對照（實作時的決定）
+
+- `worker_src/bridge/db.js` 是唯一寫 SQL 的檔案，也是唯一讀 `BRIDGE_DB` 的地方（`auth.js` 只做存在性檢查）；
+  `tests/unit/test_bridge_db_boundary.mjs` 把關。
+- 輪替新 key 的 scopes 取自 `systems.scopes`（與註冊時寫進 key 的相同；PATCH 不能改 scopes，所以兩者永遠一致）。
+- 冪等紀錄的收尾（complete／release）是盡力而為：訊息已送出後才記錄失敗，不改變回應；紀錄會在 2 分鐘後過期。
+  搶佔（claim）失敗則 503，且不送訊息。
+- 稽核 `detail` 白名單（`db.js` 的 `sanitizeDetail`）：`recipients`、`messages`、`cost`、`status`、`error`、`fields`、`scopes`、`disabled`。
+- 測試用 Miniflare 的真 D1（`tests/helpers/mock_d1.mjs`），啟動約 2.6 秒，每個用到的測試檔一個實例。
+  已在 Node 20.20 與 22 驗證可執行。
+

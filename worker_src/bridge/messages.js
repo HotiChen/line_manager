@@ -11,25 +11,28 @@
  *   - 重複推播比漏推更傷：X-Idempotency-Key 命中時不再打 LINE。
  *   - 額度以 LINE 的數字為準（bridge/quota.js），回應一律回報。
  *
- * 冪等的誠實限制：KV 沒有原子操作，「讀 → 寫 in_progress」之間有極短的競態窗口。
- * 第二道防線是 LINE 自己的 X-Line-Retry-Key（由冪等鍵衍生的 UUID，24 小時內 LINE
- * 不會重複投遞）。嚴格去重需要 Durable Object，目前 repo 沒有。
+ * 冪等：D1 單一 `INSERT … ON CONFLICT DO UPDATE … WHERE expires_at < now`（bridge/db.js 的
+ * claimIdempotency）原子地搶佔，並行的請求只有一個會真的送出；過期的紀錄可被接手。
+ * 第二道防線仍是 LINE 自己的 X-Line-Retry-Key（由冪等鍵衍生的 UUID，24 小時內 LINE
+ * 不會重複投遞）。
+ *
+ * 稽核：每次推播／群發的結果寫一筆 audit_log（只記次數與錯誤碼，不記內文、金鑰、userId；
+ * best-effort，失敗不影響回應）。缺 BRIDGE_DB 或查詢失敗 → 503 bridge_not_configured。
  */
 import { jsonResponse } from "../lib/utils.js";
 import { withService } from "./auth.js";
 import { bridgeRateLimit } from "../middleware/rate_limiter.js";
 import { sha256Hex } from "../lib/crypto_util.js";
-import { BotKeys } from "../lib/kv_schema.js";
 import { getBotAccessToken, hasMember, markMemberInactive } from "../lm_service.js";
 import { pushMessage, multicastMessage, LineApiError, MULTICAST_MAX_RECIPIENTS } from "../lib/line_api.js";
 import { checkQuota, recordUsage, markExhausted } from "./quota.js";
+import {
+  BridgeDbError, bridgeUnavailable, claimIdempotency, completeIdempotency, releaseIdempotency, writeAudit,
+} from "./db.js";
 
 const MAX_MESSAGES = 5; // LINE 單次上限
 const MAX_IDEM_KEY_LENGTH = 128;
 const MAX_BODY_CHARS = 200_000;
-const IDEM_DONE_TTL_SEC = 24 * 60 * 60;
-/** 處理中的紀錄只活 2 分鐘：Worker 被回收時不會把鍵永遠鎖死（KV 最小 TTL 為 60 秒） */
-const IDEM_IN_PROGRESS_TTL_SEC = 120;
 const TARGET_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 // ── 小工具 ──
@@ -189,6 +192,47 @@ async function mapLineError(err, { kind, env, botId, to, quota }) {
   return { status: 502, body: { success: false, error: "line_unavailable", retryable: err.status >= 500 }, cacheable: false };
 }
 
+// ── 稽核 ──
+
+/** 把結果對應成稽核的 result 欄位：sent / blocked / quota_exhausted / replayed / failed */
+function auditResult(result, replayed) {
+  if (replayed) return "replayed";
+  if (result.status === 200) return "sent";
+  if (result.status === 409 && result.body?.error === "target_inactive") return "blocked";
+  if (result.status === 402) return "quota_exhausted";
+  return "failed";
+}
+
+/** 只放白名單欄位：次數、成本、狀態碼、錯誤碼。不放內文、金鑰、LINE userId。 */
+function auditDelivery(env, principal, kind, parsed, result, replayed = false) {
+  const requested = parsed ? parsed.recipients.length * parsed.messages.length : undefined;
+  const consumed = result.body && Number.isSafeInteger(result.body.quotaConsumed) ? result.body.quotaConsumed : undefined;
+  return writeAudit(env, {
+    actorType: "service_key",
+    actorId: principal.system,
+    botId: principal.botId,
+    system: principal.system,
+    action: kind,
+    result: auditResult(result, replayed),
+    detail: {
+      recipients: parsed ? parsed.recipients.length : undefined,
+      messages: parsed ? parsed.messages.length : undefined,
+      cost: result.status === 200 ? consumed : requested,
+      status: result.status,
+      error: result.body && typeof result.body.error === "string" ? result.body.error : undefined,
+    },
+  });
+}
+
+/** 冪等紀錄的收尾是盡力而為：訊息已經送出（或已確定失敗），不可因為記錄失敗而改變回應 */
+async function quietly(label, fn) {
+  try {
+    await fn();
+  } catch (err) {
+    console.error(`[Bridge] idempotency ${label} failed:`, err && err.message);
+  }
+}
+
 // ── 冪等包裝 ──
 
 async function deliver(kind, request, env, principal) {
@@ -209,45 +253,43 @@ async function deliver(kind, request, env, principal) {
 
   if (idemKey === null) {
     const result = await execute(kind, env, principal, parsed, null);
+    await auditDelivery(env, principal, kind, parsed, result);
     return reply(result.status, result.body, { ...result.headers, "X-Idempotency-Missing": "true" });
   }
 
-  const kv = env.KV_LINE_STORAGE;
-  const recordKey = BotKeys.idem(principal.botId, principal.system, await sha256Hex(idemKey));
+  const { botId, system } = principal;
+  const keyHash = await sha256Hex(idemKey);
   const fingerprint = await sha256Hex(JSON.stringify({ kind, recipients: parsed.recipients, messages: parsed.messages }));
 
-  const existing = await kv.get(recordKey, { type: "json" });
-  if (existing) {
+  const claim = await claimIdempotency(env, { botId, system, keyHash, fingerprint });
+  if (!claim.won) {
+    const existing = claim.existing;
     if (existing.fingerprint !== fingerprint) {
       return reply(422, { success: false, error: "idempotency_key_reuse" });
     }
     if (existing.status === "done") {
+      await auditDelivery(env, principal, kind, parsed, existing.response, true);
       return reply(existing.response.status, existing.response.body, { "X-Idempotency-Replayed": "true" });
     }
     return reply(409, { success: false, error: "in_progress" });
   }
 
-  await kv.put(recordKey, JSON.stringify({ status: "in_progress", fingerprint }), {
-    expirationTtl: IDEM_IN_PROGRESS_TTL_SEC,
-  });
-
   let result;
   try {
     result = await execute(kind, env, principal, parsed, idemKey);
   } catch (err) {
-    await kv.delete(recordKey);
+    await quietly("release", () => releaseIdempotency(env, { botId, system, keyHash }));
     throw err;
   }
 
   if (result.cacheable) {
-    await kv.put(
-      recordKey,
-      JSON.stringify({ status: "done", fingerprint, response: { status: result.status, body: result.body } }),
-      { expirationTtl: IDEM_DONE_TTL_SEC }
+    await quietly("complete", () =>
+      completeIdempotency(env, { botId, system, keyHash, fingerprint, response: { status: result.status, body: result.body } })
     );
   } else {
-    await kv.delete(recordKey);
+    await quietly("release", () => releaseIdempotency(env, { botId, system, keyHash }));
   }
+  await auditDelivery(env, principal, kind, parsed, result);
   return reply(result.status, result.body, result.headers);
 }
 
@@ -256,8 +298,14 @@ function guarded(kind) {
     try {
       return await deliver(kind, request, env, principal);
     } catch (err) {
+      // 資料庫缺失或查詢失敗：fail-closed 503，不退回 KV
+      if (err instanceof BridgeDbError) return bridgeUnavailable();
       // 只記訊息，不記 stack，也不回給呼叫端
       console.error(`[Bridge] ${kind} failed:`, err && err.message);
+      await writeAudit(env, {
+        actorType: "service_key", actorId: principal.system, botId: principal.botId, system: principal.system,
+        action: kind, result: "failed", detail: { status: 500, error: "internal_error" },
+      });
       return reply(500, { success: false, error: "internal_error" });
     }
   };

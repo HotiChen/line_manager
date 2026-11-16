@@ -2,21 +2,37 @@
  * Unit Tests — bridge/index.js（feature flag、health、例外隔離）
  *
  *   BRIDGE_ENABLED 只有字串 "1" 才開；其他（"true"、"0"、""、undefined、1）一律關。
- *   關閉時整個 /bridge/* 與不存在的路由一樣 404，不認證、不碰 KV。
+ *   關閉時整個 /bridge/* 與不存在的路由一樣 404，不認證、不碰 KV、不碰 D1。
  *   開啟時任何丟出的例外都變成 500 internal_error（不含 stack），不往外拋。
+ *   開啟時 health 會對 BRIDGE_DB 做 SELECT 1：連不上 → 503 bridge_not_configured。
  */
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMockKV } from '../helpers/mock_kv.mjs';
+import { createTestD1 } from '../helpers/mock_d1.mjs';
 import { isBridgePath, isBridgeEnabled, handleBridge } from '../../worker_src/bridge/index.js';
 
 const NOT_FOUND = { success: false, error: 'Not Found' };
+let d1;
 let env;
 let kv;
+let dbCalls;
 
-beforeEach(() => {
+/** 包住真的 D1，記錄有沒有人碰過它 */
+function spyDb(real) {
+    return {
+        prepare: (...a) => { dbCalls.push('prepare'); return real.prepare(...a); },
+        batch: (...a) => { dbCalls.push('batch'); return real.batch(...a); },
+    };
+}
+
+before(async () => { d1 = await createTestD1(); });
+after(async () => { await d1.dispose(); });
+beforeEach(async () => {
+    await d1.reset();
+    dbCalls = [];
     kv = createMockKV();
-    env = { KV_LINE_STORAGE: kv, BRIDGE_ENABLED: '1' };
+    env = { KV_LINE_STORAGE: kv, BRIDGE_ENABLED: '1', BRIDGE_DB: spyDb(d1.db) };
 });
 
 const call = (method, path, headers = {}, e = env) =>
@@ -48,7 +64,7 @@ describe('isBridgeEnabled', () => {
 describe('flag 關閉', () => {
     for (const v of [undefined, 'true', '0', '', 'yes', ' 1']) {
         it(`BRIDGE_ENABLED=${JSON.stringify(v)} → 每個 /bridge/* 都是 404，shape 與未知路由相同`, async () => {
-            const e = { KV_LINE_STORAGE: kv, BRIDGE_ENABLED: v };
+            const e = { KV_LINE_STORAGE: kv, BRIDGE_ENABLED: v, BRIDGE_DB: env.BRIDGE_DB };
             for (const [m, p] of [
                 ['GET', '/bridge/v1/health'],
                 ['POST', '/bridge/v1/raw/push'],
@@ -63,10 +79,11 @@ describe('flag 關閉', () => {
                 assert.deepEqual(await res.json(), NOT_FOUND);
             }
             assert.equal(kv._ops.total, 0, '關閉時不可碰 KV');
+            assert.deepEqual(dbCalls, [], '關閉時不可碰 D1');
         });
     }
 
-    it('關閉時不做認證：沒有 KV binding 的 env 也不會出事', async () => {
+    it('關閉時不做認證：沒有 KV／D1 binding 的 env 也不會出事', async () => {
         const res = await call('GET', '/bridge/v1/systems', {}, {});
         assert.equal(res.status, 404);
     });
@@ -85,11 +102,53 @@ describe('flag 關閉', () => {
 });
 
 describe('flag 開啟', () => {
-    it('GET /bridge/v1/health → 200 {ok:true}，免認證、不碰 KV', async () => {
+    it('GET /bridge/v1/health → 200 {ok:true}，免認證、不碰 KV；有對 D1 做查詢', async () => {
         const res = await call('GET', '/bridge/v1/health');
         assert.equal(res.status, 200);
         assert.deepEqual(await res.json(), { ok: true });
         assert.equal(kv._ops.total, 0);
+        assert.ok(dbCalls.length >= 1, 'health 應該對 BRIDGE_DB 做 SELECT 1');
+    });
+
+    describe('health 與資料庫', () => {
+        const originalError = console.error;
+        beforeEach(() => { console.error = () => {}; });
+        afterEach(() => { console.error = originalError; });
+        const NOT_CONFIGURED = { success: false, error: 'bridge_not_configured' };
+
+        it('沒有 BRIDGE_DB binding → 503 bridge_not_configured', async () => {
+            const res = await call('GET', '/bridge/v1/health', {}, { KV_LINE_STORAGE: kv, BRIDGE_ENABLED: '1' });
+            assert.equal(res.status, 503);
+            assert.deepEqual(await res.json(), NOT_CONFIGURED);
+        });
+
+        it('SELECT 1 丟錯 → 503，回應不含錯誤細節', async () => {
+            const broken = { KV_LINE_STORAGE: kv, BRIDGE_ENABLED: '1', BRIDGE_DB: { prepare() { throw new Error('d1 down SECRET'); } } };
+            const res = await call('GET', '/bridge/v1/health', {}, broken);
+            assert.equal(res.status, 503);
+            const text = await res.text();
+            assert.deepEqual(JSON.parse(text), NOT_CONFIGURED);
+            assert.doesNotMatch(text, /down|SECRET|stack/);
+        });
+
+        it('SELECT 1 回傳 rejected promise → 503', async () => {
+            const broken = { BRIDGE_ENABLED: '1', BRIDGE_DB: { prepare: () => ({ first: () => Promise.reject(new Error('nope')) }) } };
+            const res = await call('GET', '/bridge/v1/health', {}, broken);
+            assert.equal(res.status, 503);
+        });
+
+        it('其他 /bridge 路由在沒有 BRIDGE_DB 時也是 503（不是 500、不退回 KV）', async () => {
+            const noDb = { KV_LINE_STORAGE: kv, BRIDGE_ENABLED: '1' };
+            const res = await call('POST', '/bridge/v1/raw/push', { Authorization: 'Bearer sk_x', 'X-Bot-Id': 'U1' }, noDb);
+            assert.equal(res.status, 503);
+            assert.deepEqual(await res.json(), NOT_CONFIGURED);
+        });
+
+        it('不存在的路徑不需要資料庫：照常 404', async () => {
+            const noDb = { KV_LINE_STORAGE: kv, BRIDGE_ENABLED: '1' };
+            const res = await call('GET', '/bridge/nothing', {}, noDb);
+            assert.equal(res.status, 404);
+        });
     });
 
     it('health 只收 GET', async () => {
@@ -128,7 +187,7 @@ describe('例外隔離', () => {
     it('內部丟錯 → 500 {success:false,error:"internal_error"}，不含 stack，不往外拋', async () => {
         const bad = {
             get BRIDGE_ENABLED() { return '1'; },
-            get KV_LINE_STORAGE() { throw new Error('kv exploded SECRET_DETAIL'); },
+            get BRIDGE_DB() { throw new Error('kv exploded SECRET_DETAIL'); },
         };
         const res = await call('POST', '/bridge/v1/raw/push', { Authorization: 'Bearer x', 'X-Bot-Id': 'U1' }, bad);
         assert.equal(res.status, 500);
@@ -138,7 +197,7 @@ describe('例外隔離', () => {
     });
 
     it('log 只記 message，不記 stack', async () => {
-        const bad = { BRIDGE_ENABLED: '1', get KV_LINE_STORAGE() { throw new Error('kv exploded'); } };
+        const bad = { BRIDGE_ENABLED: '1', get BRIDGE_DB() { throw new Error('kv exploded'); } };
         await call('POST', '/bridge/v1/raw/push', { Authorization: 'Bearer x', 'X-Bot-Id': 'U1' }, bad);
         const joined = logged.join('\n');
         assert.match(joined, /kv exploded/);

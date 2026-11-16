@@ -7,13 +7,15 @@
  *   - X-Bot-Id 是「宣稱」，必須等於 key 記錄裡的 botId，不符 403
  *   - 系統被停用立即生效
  *   - scope 不足 403
- *   - 缺 KV binding 時 fail-closed（拒絕，不是放行）
+ *   - 缺 BRIDGE_DB binding 或查詢失敗時 fail-closed（503 bridge_not_configured，不是放行，也不退回 KV）
+ *
+ * 資料在 D1（Miniflare 的真資料庫）；這裡的種子資料直接寫 SQL。
  */
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMockKV } from '../helpers/mock_kv.mjs';
-import { sha256Hex } from '../../worker_src/lib/crypto_util.js';
-import { BotKeys, ServiceKeyKeys } from '../../worker_src/lib/kv_schema.js';
+import { createTestD1 } from '../helpers/mock_d1.mjs';
+import { seedKey as seedKeyRow, seedSystem as seedSystemRow } from '../helpers/bridge_seed.mjs';
 import { authenticateBridge, withService } from '../../worker_src/bridge/auth.js';
 
 const BOT = 'Ubbbbbbbbbbbbbbbbbbbbbbbbbbbbbb01';
@@ -21,21 +23,15 @@ const OTHER_BOT = 'Ubbbbbbbbbbbbbbbbbbbbbbbbbbbbbb02';
 const SYSTEM = 'imgpicker';
 const KEY = 'sk_test_key_value_000000000000000000000000';
 
+let d1;
 let env;
 
 async function seedKey({ botId = BOT, system = SYSTEM, scopes = ['messages:push'], revokedAt = null, key = KEY } = {}) {
-    const hash = await sha256Hex(key);
-    await env.KV_LINE_STORAGE.put(
-        ServiceKeyKeys.byHash(hash),
-        JSON.stringify({ botId, system, scopes, createdAt: 1, revokedAt })
-    );
+    await seedKeyRow(d1.db, { botId, system, scopes, revokedAt, key });
 }
 
 async function seedSystem({ botId = BOT, system = SYSTEM, disabled = false } = {}) {
-    await env.KV_LINE_STORAGE.put(
-        BotKeys.system(botId, system),
-        JSON.stringify({ system, name: 'Image Picker', disabled })
-    );
+    await seedSystemRow(d1.db, { botId, system, disabled });
 }
 
 function req({ key = KEY, botId = BOT, auth } = {}) {
@@ -46,8 +42,11 @@ function req({ key = KEY, botId = BOT, auth } = {}) {
     return new Request('https://example.com/bridge/v1/raw/push', { method: 'POST', headers });
 }
 
-beforeEach(() => {
-    env = { KV_LINE_STORAGE: createMockKV() };
+before(async () => { d1 = await createTestD1(); });
+after(async () => { await d1.dispose(); });
+beforeEach(async () => {
+    await d1.reset();
+    env = { BRIDGE_DB: d1.db };
 });
 
 describe('authenticateBridge', () => {
@@ -121,10 +120,71 @@ describe('authenticateBridge', () => {
         assert.equal(r.status, 403);
     });
 
-    it('缺 KV binding → fail-closed', async () => {
+    it('缺 BRIDGE_DB binding → fail-closed（503 bridge_not_configured）', async () => {
         const r = await authenticateBridge(req(), {});
         assert.equal(r.authenticated, false);
         assert.ok(r.status >= 500);
+        assert.equal(r.status, 503);
+        assert.equal(r.error, 'bridge_not_configured');
+    });
+
+    it('沒有 BRIDGE_DB 時不會退回 KV：KV 裡有合法的舊格式紀錄也一樣拒絕', async () => {
+        const { sha256Hex } = await import('../../worker_src/lib/crypto_util.js');
+        const kv = createMockKV();
+        await kv.put(`service_key:${await sha256Hex(KEY)}`, JSON.stringify({ botId: BOT, system: SYSTEM, scopes: ['messages:push'], revokedAt: null }));
+        await kv.put(`bot:${BOT}:system:${SYSTEM}`, JSON.stringify({ system: SYSTEM, disabled: false }));
+        const r = await authenticateBridge(req(), { KV_LINE_STORAGE: kv });
+        assert.equal(r.authenticated, false);
+        assert.equal(r.status, 503);
+    });
+
+    describe('查詢失敗 → 503 bridge_not_configured（不是 401/403，也不放行）', () => {
+        const originalError = console.error;
+        beforeEach(() => { console.error = () => {}; });
+        afterEach(() => { console.error = originalError; });
+
+        it('資料庫查詢丟錯', async () => {
+            await seedKey();
+            await seedSystem();
+            const broken = { BRIDGE_DB: { prepare() { throw new Error('d1 exploded SECRET'); } } };
+            const r = await authenticateBridge(req(), broken);
+            assert.equal(r.authenticated, false);
+            assert.equal(r.status, 503);
+            assert.equal(r.error, 'bridge_not_configured');
+        });
+
+        it('缺表（遷移沒套用）', async () => {
+            await seedKey();
+            await seedSystem();
+            await d1.db.prepare('ALTER TABLE service_keys RENAME TO service_keys_x').run();
+            try {
+                const r = await authenticateBridge(req(), env);
+                assert.equal(r.status, 503);
+                assert.equal(r.error, 'bridge_not_configured');
+            } finally {
+                await d1.db.prepare('ALTER TABLE service_keys_x RENAME TO service_keys').run();
+            }
+        });
+    });
+
+    it('key 在但系統被刪（key 已撤銷）→ 401；兩種「無效」訊息一致', async () => {
+        await seedKey({ revokedAt: 5 });
+        const r = await authenticateBridge(req(), env);
+        assert.equal(r.status, 401);
+    });
+
+    it('scopes 取自 key 那一列，不是系統那一列', async () => {
+        await seedKey({ scopes: ['members:read'] });
+        await seedSystemRow(d1.db, { botId: BOT, system: SYSTEM, scopes: ['messages:push', 'members:read', 'tags:write'] });
+        const r = await authenticateBridge(req(), env);
+        assert.deepEqual(r.principal.scopes, ['members:read']);
+    });
+
+    it('系統的 rate_limit 會帶進主體', async () => {
+        await seedKey();
+        await seedSystemRow(d1.db, { botId: BOT, system: SYSTEM, rateLimit: { write: 7 } });
+        const r = await authenticateBridge(req(), env);
+        assert.deepEqual(r.principal.rateLimit, { write: 7 });
     });
 
     it('LIFF 用的 X-User-Id 對這條路徑完全無效', async () => {

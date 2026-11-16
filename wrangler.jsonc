@@ -8,6 +8,18 @@
       "binding": "KV_LINE_STORAGE"
     }
   ],
+  // Bridge 專用 D1（LM-1B）：systems、service_keys、idempotency、audit_log。
+  // 結構在 migrations/；遷移不放進自動部署，部署後由人在 Cloudflare 控制台 D1 → Console 貼上執行
+  // （步驟見 docs/integration/lm-1b-plan.md「操作手冊」）。BRIDGE_ENABLED 預設關閉，未套用遷移時 Bridge 不會碰它。
+  // env.dev 不繼承頂層，必須另外宣告；dev 與 prod 是兩個不同的資料庫
+  // （tests/unit/test_wrangler_config.mjs 會擋住 id 相同）。
+  "d1_databases": [
+    {
+      "binding": "BRIDGE_DB",
+      "database_name": "bridge-db",
+      "database_id": "877c5079-398c-48a5-b394-bbdf90e526f7"
+    }
+  ],
   // 掛在 imhoti.tw 的 /lm 底下。imhoti.tw 的根是 WordPress，route 只接這一條
   // 路徑，其餘流量照原樣走回源站。
   //
@@ -49,6 +61,14 @@
           "id": "134f95b543c4447e872a782be652b13c",
           "preview_id": "134f95b543c4447e872a782be652b13c",
           "binding": "KV_LINE_STORAGE"
+        }
+      ],
+      "d1_databases": [
+        {
+          // dev 專用資料庫，不可指向 prod 的 877c5079…
+          "binding": "BRIDGE_DB",
+          "database_name": "bridge-db-dev",
+          "database_id": "f7667673-4b6d-42a5-8bf2-1340ddc1f37d"
         }
       ],
       "vars": {
