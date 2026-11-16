@@ -56,7 +56,10 @@ function bindEvents() {
       return;
     }
     document.getElementById("edit-project-name").value = selectedProject;
-    document.getElementById("edit-project-token").value = projectData[selectedProject] || "";
+    // 不預填：projectData 的值是 botId 不是 token，預填會讓「更新」把 botId 當 token 送出
+    document.getElementById("edit-project-token").value = "";
+    document.getElementById("edit-project-channel-secret").value = "";
+    loadChannelSecretStatus(selectedProject);
     new bootstrap.Modal(document.getElementById("edit-modal")).show();
   });
 
@@ -203,19 +206,69 @@ async function deleteProject() {
   }
 }
 
+/** 顯示這個專案有沒有設定 Channel Secret（只有「有／沒有」，伺服器不會回密鑰） */
+async function loadChannelSecretStatus(project) {
+  const el = document.getElementById("edit-secret-status");
+  if (!el) return;
+  el.textContent = "目前：確認中…";
+  try {
+    const result = await api.get(`/token/channel-secret?project=${encodeURIComponent(project)}`, { showErrorToast: false });
+    el.textContent = result.configured ? "目前：已設定" : "目前：未設定（這個官方帳號可能收不到事件）";
+  } catch {
+    el.textContent = "目前：無法確認";
+  }
+}
+
+function closeModal(modalId) {
+  const modalEl = document.getElementById(modalId);
+  const instance = modalEl && bootstrap.Modal.getInstance(modalEl);
+  if (!instance) return;
+  instance.hide();
+  setTimeout(() => {
+    document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+    document.body.classList.remove('modal-open');
+    document.body.style.removeProperty('overflow');
+    document.body.style.removeProperty('padding-right');
+  }, 300);
+}
+
 async function submitEditProject() {
   const name = document.getElementById("edit-project-name").value;
   const token = document.getElementById("edit-project-token").value.trim();
-  await saveProject(name, token, "edit-modal");
+  const channelSecret = document.getElementById("edit-project-channel-secret").value.trim();
+
+  // 只更新 Channel Secret：不必重填 token
+  if (!token && channelSecret) {
+    try {
+      const result = await api.post('/token/channel-secret', { project: name, channelSecret });
+      if (result.success) {
+        showStatusMessage("✅ Channel Secret 已儲存");
+        document.getElementById("edit-project-channel-secret").value = "";
+        closeModal("edit-modal");
+      } else {
+        showStatusMessage("❌ 儲存失敗：" + (result.error || "未知錯誤"), true);
+      }
+    } catch (err) {
+      showStatusMessage("❌ 儲存失敗：" + (err?.error || err?.message || "系統錯誤"), true);
+    }
+    return;
+  }
+
+  if (!token) {
+    showStatusMessage("❌ 請填寫要更換的 Token 或 Channel Secret", true);
+    return;
+  }
+  await saveProject(name, token, "edit-modal", channelSecret);
 }
 
 async function submitAddProject() {
   const name = document.getElementById("add-project-name").value.trim();
   const token = document.getElementById("add-project-token").value.trim();
-  await saveProject(name, token, "add-modal");
+  const channelSecret = document.getElementById("add-project-channel-secret").value.trim();
+  await saveProject(name, token, "add-modal", channelSecret);
 }
 
-async function saveProject(name, token, modalId) {
+async function saveProject(name, token, modalId, channelSecret = "") {
   if (!name || !token) {
     showStatusMessage("❌ 請填寫專案名稱和 Token", true);
     return;
@@ -223,27 +276,20 @@ async function saveProject(name, token, modalId) {
 
   try {
     // api.post 會直接返回解析後的 JSON，而非 Response 物件
-    const result = await api.post('/token/register', { project: name, token });
+    const body = { project: name, token };
+    if (channelSecret) body.channelSecret = channelSecret;
+    const result = await api.post('/token/register', body);
 
     if (result.success || result.destination) {
       showStatusMessage(`✅ 專案 ${name} 已儲存`);
       projectData[name] = token;
       await loadProfile();
 
-      // 關閉 Modal
-      const modalEl = document.getElementById(modalId);
-      if (modalEl) {
-        const instance = bootstrap.Modal.getInstance(modalEl);
-        if (instance) {
-          instance.hide();
-          setTimeout(() => {
-            document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
-            document.body.classList.remove('modal-open');
-            document.body.style.removeProperty('overflow');
-            document.body.style.removeProperty('padding-right');
-          }, 300);
-        }
+      for (const id of ["add-project-channel-secret", "edit-project-channel-secret"]) {
+        const input = document.getElementById(id);
+        if (input) input.value = "";
       }
+      closeModal(modalId);
     } else {
       showStatusMessage("❌ 儲存失敗：" + (result.error || "未知錯誤"), true);
     }

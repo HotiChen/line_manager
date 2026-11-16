@@ -74,6 +74,14 @@
             <input type="text" id="add-project-token" class="form-control" />
           </div>
           <div class="mb-3">
+            <label for="add-project-channel-secret" class="form-label">Channel Secret</label>
+            <input type="password" id="add-project-channel-secret" class="form-control" autocomplete="off" spellcheck="false" />
+            <div class="form-text">
+              LINE Developers → 這個官方帳號的 Messaging API channel → Basic settings → Channel secret（32 位英數字）。
+              用來驗證 LINE 傳來的事件。沒有填的話，除了系統原本設定的那個官方帳號之外，其他官方帳號會收不到事件。
+            </div>
+          </div>
+          <div class="mb-3">
             <label for="add-project-id" class="form-label">LINE ID</label>
             <input type="text" id="add-project-id" class="form-control" />
           </div>
@@ -100,7 +108,15 @@
           </div>
           <div class="mb-3">
             <label for="edit-project-token" class="form-label">LINE Message API Token</label>
-            <input type="text" id="edit-project-token" class="form-control" />
+            <input type="text" id="edit-project-token" class="form-control" placeholder="不更換請留空" autocomplete="off" />
+          </div>
+          <div class="mb-3">
+            <label for="edit-project-channel-secret" class="form-label">Channel Secret</label>
+            <input type="password" id="edit-project-channel-secret" class="form-control" placeholder="不更換請留空" autocomplete="off" spellcheck="false" />
+            <div class="form-text">
+              <span id="edit-secret-status">目前：確認中…</span><br>
+              LINE Developers → Messaging API channel → Basic settings → Channel secret（32 位英數字）。
+            </div>
           </div>
         </div>
         <div class="modal-footer">

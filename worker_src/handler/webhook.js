@@ -3,6 +3,7 @@
  * 負責接收並解析 LINE Webhook 事件，路由至正確的用戶與專案邏輯。
  */
 import { verifySignature } from '../lib/signature.js';
+import { getChannelSecret } from '../lib/channel_secret.js';
 import * as EventHandler from '../lib/event_handler.js';
 import { getAccessTokenForDestination, getCurrentAccessToken } from '../lib/token_store.js';
 import * as logger from '../utils/logger.js';
@@ -37,12 +38,34 @@ export async function handleWebhookRequest(request, env, ctx) {
         const body = JSON.parse(bodyText);
         logger.info('WEBHOOK', '收到 LINE Webhook 請求', { destination: body.destination });
 
-        // 1. 簽章驗證 — 未設定 secret 視為設定錯誤，直接拒絕
-        const channelSecret = env.LINE_CHANNEL_SECRET;
+        // 1. 簽章驗證
+        //
+        // 每個 LINE channel 的 secret 都不同，所以先用 body 的 destination 挑出「這個 bot 自己的」
+        // secret。destination 在驗證前不可信 —— 它只決定「用哪把密鑰」，通不通過仍然由 HMAC 決定：
+        // 攻擊者填別人的 destination，只會換來對方的密鑰，簽不出對的簽章。
+        //
+        //   - 這個 bot 登記過自己的 secret → 只用它驗。不可退回全域密鑰，否則持有全域密鑰的人
+        //     可以偽造別的 bot 的事件。
+        //   - 沒登記 → 退回全域 LINE_CHANNEL_SECRET（既有官方帳號不中斷），並記警告。
+        //     全部登記完之後設 WEBHOOK_GLOBAL_SECRET_DISABLED=1 就不再退回。
+        //   - 兩者都沒有 → 設定錯誤，500（不是放行）。
+        const rawDestination = typeof body.destination === 'string' ? body.destination : null;
+        const botSecret = rawDestination ? await getChannelSecret(env, rawDestination) : null;
+
+        let channelSecret = botSecret;
         if (!channelSecret) {
-            logger.error('CONFIG', '未設定 LINE_CHANNEL_SECRET，拒絕 webhook 請求');
-            return new Response('Service Misconfigured', { status: 500 });
+            if (env.WEBHOOK_GLOBAL_SECRET_DISABLED === '1') {
+                logger.error('SECURITY', '此官方帳號未登記 channel secret，且已停用全域密鑰');
+                return new Response('Unauthorized', { status: 401 });
+            }
+            channelSecret = env.LINE_CHANNEL_SECRET;
+            if (!channelSecret) {
+                logger.error('CONFIG', '未設定 LINE_CHANNEL_SECRET，且此官方帳號未登記 channel secret，拒絕 webhook 請求');
+                return new Response('Service Misconfigured', { status: 500 });
+            }
+            logger.warn('SECURITY', '使用全域 LINE_CHANNEL_SECRET 驗簽（此官方帳號尚未登記自己的 channel secret）');
         }
+
         const isValid = await verifySignature(request, bodyText, channelSecret);
         if (!isValid) {
             logger.error('SECURITY', '簽章驗證失敗');
