@@ -168,7 +168,7 @@ export async function handleRegisterAccessToken(request, env, userId) {
   await env.KV_LINE_STORAGE.put(`destination_user_${destination}`, userId);
 
   // bot 層級的 owner / info / permissions 與 user:bots。沒有這幾筆，新註冊的使用者呼叫
-  // 任何 withPermission 的路由（/team/*、/api/v1/systems…）都會 403。缺什麼補什麼、不覆蓋。
+  // 任何 withPermission 的路由（/team/*、/bridge/v1/systems…）都會 403。缺什麼補什麼、不覆蓋。
   // 失敗不影響註冊本身（token 已經存好）：之後可用 /admin/migrate?mode=repair 補。
   try {
     await ensureBotRecords(env, { botId: destination, userId, displayName, project });

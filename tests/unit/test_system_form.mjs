@@ -1,7 +1,7 @@
 /**
  * Unit Tests — helper/system_form.js（系統管理頁的純邏輯）
  *
- * 規則要與後端 handler/systems.js 一致，否則使用者在畫面上填得過、送出去才被拒：
+ * 規則要與後端 bridge/systems.js 一致，否則使用者在畫面上填得過、送出去才被拒：
  *   - system 代號：/^[a-z0-9][a-z0-9_-]{1,31}$/
  *   - name 必填、≤ 100 字
  *   - scopes 至少一個，且必須是已知的
@@ -119,7 +119,7 @@ describe('buildCreatePayload', () => {
 describe('buildCurlExample', () => {
     it('帶入網址與 botId，金鑰是佔位符', () => {
         const s = buildCurlExample('https://imhoti.tw/lm', 'Ubot123');
-        assert.match(s, /https:\/\/imhoti\.tw\/lm\/api\/v1\/messages\/push/);
+        assert.match(s, /https:\/\/imhoti\.tw\/lm\/bridge\/v1\/raw\/push/);
         assert.match(s, /X-Bot-Id: Ubot123/);
         assert.match(s, /Bearer <API_KEY>/);
         assert.match(s, /X-Idempotency-Key/);

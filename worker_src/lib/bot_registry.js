@@ -3,7 +3,7 @@
  *
  * 問題：/token/register 只寫 access_tokens_${userId} 與 destination_user_${destination}。
  * bot:${botId}:owner / info / permissions 與 user:${userId}:bots 只有 migration 會寫，所以新註冊的
- * 使用者呼叫任何 withPermission 的路由（/team/*、/api/v1/systems、/member/demo/*）一律 403。
+ * 使用者呼叫任何 withPermission 的路由（/team/*、/bridge/v1/systems、/member/demo/*）一律 403。
  *
  * 規則：
  *   - 缺什麼補什麼，已存在的絕不覆蓋。permissions 裡可能已有受邀成員，重設等於把人踢出去；

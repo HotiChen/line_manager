@@ -1,14 +1,14 @@
 /**
  * 系統註冊與 service key（橋接 API，人主體操作）
  *
- *   POST   /api/v1/systems                       註冊，回傳 apiKey（只回這一次）
- *   GET    /api/v1/systems                       列出
- *   PATCH  /api/v1/systems/{system}              改 webhookUrl / events / disabled
- *   POST   /api/v1/systems/{system}/keys/rotate  輪替 key（舊 key 立即失效）
- *   DELETE /api/v1/systems/{system}              刪除（key 立即失效）
+ *   POST   /bridge/v1/systems                       註冊，回傳 apiKey（只回這一次）
+ *   GET    /bridge/v1/systems                       列出
+ *   PATCH  /bridge/v1/systems/{system}              改 webhookUrl / events / disabled
+ *   POST   /bridge/v1/systems/{system}/keys/rotate  輪替 key（舊 key 立即失效）
+ *   DELETE /bridge/v1/systems/{system}              刪除（key 立即失效）
  *
  * 全部要求 owner 權限，且只接受人主體（LIFF）。service key 打不進這裡 ——
- * 「key 不能用來發 key」，見 middleware/auth_routes.js 的 isBridgeServiceRoute。
+ * 「key 不能用來發 key」，見 bridge/routes.js 的 isBridgeServiceRoute。
  *
  * KV 結構：
  *   service_key:${sha256}        全域，{botId, system, scopes, createdAt, revokedAt}
@@ -16,7 +16,7 @@
  *   bot:${botId}:systems         系統名稱清單
  */
 import { jsonResponse } from "../lib/utils.js";
-import { withPermission } from "../middleware/permission.js";
+import { withPermission } from "../lm_service.js";
 import { sha256Hex, randomToken } from "../lib/crypto_util.js";
 import { BotKeys, ServiceKeyKeys } from "../lib/kv_schema.js";
 
@@ -307,8 +307,8 @@ export async function handleDeleteSystem(request, env, userId, botId, role, syst
 // ── 路由 ──
 
 export function route(request, env, userId, pathname) {
-  const parts = pathname.split("/").filter(Boolean); // ["api","v1","systems",...]
-  if (parts[0] !== "api" || parts[1] !== "v1" || parts[2] !== "systems") {
+  const parts = pathname.split("/").filter(Boolean); // ["bridge","v1","systems",...]
+  if (parts[0] !== "bridge" || parts[1] !== "v1" || parts[2] !== "systems") {
     return json({ success: false, error: "Not Found" }, 404);
   }
   const method = request.method;

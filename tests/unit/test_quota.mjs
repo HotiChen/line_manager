@@ -13,7 +13,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMockKV } from '../helpers/mock_kv.mjs';
 import { BotKeys } from '../../worker_src/lib/kv_schema.js';
-import { checkQuota, recordUsage, markExhausted, currentPeriod } from '../../worker_src/lib/quota.js';
+import { checkQuota, recordUsage, markExhausted, currentPeriod } from '../../worker_src/bridge/quota.js';
 
 const BOT = 'Ubbbbbbbbbbbbbbbbbbbbbbbbbbbbbb01';
 const OTHER_BOT = 'Ubbbbbbbbbbbbbbbbbbbbbbbbbbbbbb02';

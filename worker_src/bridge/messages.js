@@ -1,30 +1,28 @@
 /**
  * 橋接 API：推播（系統主體）
  *
- *   POST /api/v1/messages/push        { to, messages[] }
- *   POST /api/v1/messages/multicast   { to[], messages[] }   ≤ 500
+ *   POST /bridge/v1/raw/push        { to, messages[] }
+ *   POST /bridge/v1/raw/multicast   { to[], messages[] }   ≤ 500
  *
  * 不變量（ARCHITECTURE_PLATFORM.md 第一、七、九節）：
  *   - messages[] 是呼叫端組好的 LINE message object，原樣轉送。
  *     平台層不產生內容、不套模板、不替換變數 —— 與後台用的 /api/send-message 不同。
  *   - 推不出去的情況都不是 500：409 target_inactive、402 quota_exhausted、404 target_not_found。
  *   - 重複推播比漏推更傷：X-Idempotency-Key 命中時不再打 LINE。
- *   - 額度以 LINE 的數字為準（lib/quota.js），回應一律回報。
+ *   - 額度以 LINE 的數字為準（bridge/quota.js），回應一律回報。
  *
  * 冪等的誠實限制：KV 沒有原子操作，「讀 → 寫 in_progress」之間有極短的競態窗口。
  * 第二道防線是 LINE 自己的 X-Line-Retry-Key（由冪等鍵衍生的 UUID，24 小時內 LINE
  * 不會重複投遞）。嚴格去重需要 Durable Object，目前 repo 沒有。
  */
 import { jsonResponse } from "../lib/utils.js";
-import { withService } from "../middleware/bridge_auth.js";
+import { withService } from "./auth.js";
 import { bridgeRateLimit } from "../middleware/rate_limiter.js";
 import { sha256Hex } from "../lib/crypto_util.js";
 import { BotKeys } from "../lib/kv_schema.js";
-import { resolveOwner } from "../lib/bot_context.js";
-import { getAccessTokenForDestination } from "../lib/token_store.js";
-import { openBotStoreForBot } from "../lib/bot_store.js";
+import { getBotAccessToken, hasMember, markMemberInactive } from "../lm_service.js";
 import { pushMessage, multicastMessage, LineApiError, MULTICAST_MAX_RECIPIENTS } from "../lib/line_api.js";
-import { checkQuota, recordUsage, markExhausted } from "../lib/quota.js";
+import { checkQuota, recordUsage, markExhausted } from "./quota.js";
 
 const MAX_MESSAGES = 5; // LINE 單次上限
 const MAX_IDEM_KEY_LENGTH = 128;
@@ -88,30 +86,6 @@ async function retryKeyFor(botId, system, idemKey) {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
-async function getLineToken(env, botId) {
-  try {
-    const ownerId = await resolveOwner(env, botId);
-    if (!ownerId) return null;
-    const { token } = await getAccessTokenForDestination(env, ownerId, botId);
-    return token || null;
-  } catch (err) {
-    // 解密失敗（金鑰缺失或資料被改）—— 不外洩細節
-    console.error("[Bridge] token lookup failed:", err && err.message);
-    return null;
-  }
-}
-
-async function markMemberInactive(env, botId, lineUserId) {
-  try {
-    const store = await openBotStoreForBot(env, botId);
-    const member = await store.get("member", lineUserId);
-    if (member) await store.put("member", { ...member, inactiveAt: Date.now() }, lineUserId);
-  } catch (err) {
-    // 標記是盡力而為，不可讓它把 409 變成 500
-    console.error("[Bridge] markMemberInactive failed:", err && err.message);
-  }
-}
-
 // ── 實際送出 ──
 
 /**
@@ -123,15 +97,13 @@ async function execute(kind, env, principal, { recipients, messages }, idemKey) 
   const { botId, system } = principal;
   const to = recipients[0];
 
-  const token = await getLineToken(env, botId);
+  const token = await getBotAccessToken(env, botId);
   if (!token) {
     return { status: 503, body: { success: false, error: "bot_not_configured" }, cacheable: false };
   }
 
   if (kind === "push" && to.startsWith("U")) {
-    const store = await openBotStoreForBot(env, botId);
-    const member = await store.get("member", to);
-    if (!member) {
+    if (!(await hasMember(env, botId, to))) {
       return { status: 404, body: { success: false, error: "target_not_found" }, cacheable: false };
     }
   }
@@ -298,8 +270,8 @@ export const handleMulticast = guarded("multicast");
 
 export function route(request, env, pathname) {
   const target =
-    pathname === "/api/v1/messages/push" ? withService(handlePush, "messages:push")
-    : pathname === "/api/v1/messages/multicast" ? withService(handleMulticast, "messages:push")
+    pathname === "/bridge/v1/raw/push" ? withService(handlePush, "messages:push")
+    : pathname === "/bridge/v1/raw/multicast" ? withService(handleMulticast, "messages:push")
     : null;
 
   if (!target) return reply(404, { success: false, error: "Not Found" });

@@ -16,10 +16,15 @@ info:
     - 聯絡人綁定用「綁定碼訊息」：客戶把綁定碼傳給 OA，由 webhook 取得該 OA 所屬 Provider 的 userId，
       不依賴 LINE Login。
 
-    實作狀態以 `x-status` 標示：`implemented`（已在 /api/v1 上線，需搬到 /bridge/v1）、
-    `partial`、`planned`。
+    實作狀態以 `x-status` 標示：`implemented`（已上線於 `/bridge/v1`）、`partial`、`planned`。
+
+    LM-1A 已完成：`/raw/push`、`/raw/multicast` 由原本的 `/api/v1/messages/push|multicast` 搬到
+    `/bridge/v1/raw/*`（舊路徑已移除），Bridge 在 `BRIDGE_ENABLED=1` 時才啟用，關閉時整個 `/bridge/*` 回 404。
+
+    另有一組「人主體」的管理端點 `/bridge/v1/systems*`（註冊／列出／停用／輪替／刪除 service key，
+    LIFF 認證 + owner 權限，供 LM 後台使用）。它是 LM 後台的 admin API，不屬於呼叫端契約，因此不列在本檔。
   x-status-legend:
-    implemented: 目前已上線（路徑為 /api/v1/...）
+    implemented: 目前已上線（需 BRIDGE_ENABLED=1）
     partial: 部分已有
     planned: 尚未實作
 servers:
@@ -42,7 +47,7 @@ paths:
       tags: [system]
       summary: 健康檢查
       security: []
-      x-status: planned
+      x-status: implemented
       responses:
         '200':
           description: OK
@@ -279,7 +284,8 @@ paths:
       tags: [raw]
       summary: 原樣轉送 LINE 訊息給單一對象（信任金鑰專用）
       description: |
-        目前已上線於 `POST /api/v1/messages/push`，行為見該實作：scope、per-system 限流、
+        已上線於 `POST /bridge/v1/raw/push`（原 `/api/v1/messages/push`，LM-1A 已搬，舊路徑已移除；
+        需 `BRIDGE_ENABLED=1`）。行為見該實作：scope、per-system 限流、
         `X-Idempotency-Key`、額度對帳（回報 `remaining`）、封鎖回 409。
         只有 owner 在後台手動發放、且 scope 含 `raw:push` 的金鑰可用；連結流程發出的金鑰永遠不含此 scope。
         搬遷時 scope 名稱由 `messages:push` 改為 `raw:push`，並提供過渡期相容。
@@ -317,6 +323,7 @@ paths:
     post:
       tags: [raw]
       summary: 原樣轉送 LINE 訊息給多人，上限 500（信任金鑰專用）
+      description: 已上線於 `POST /bridge/v1/raw/multicast`（原 `/api/v1/messages/multicast`，LM-1A 已搬）。需 `BRIDGE_ENABLED=1`。
       x-status: implemented
       x-scope: raw:push
       requestBody:

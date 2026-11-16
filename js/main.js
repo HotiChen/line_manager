@@ -151,6 +151,22 @@ function initializeLogoutButton() {
 }
 
 
+/**
+ * 功能探測：後端回報 Bridge 啟用時，才顯示側邊欄的「系統整合」入口。
+ * 任何失敗（網路、401、舊版後端沒有 /features）都維持隱藏，不影響初始化。
+ */
+async function revealOptionalFeatures() {
+  try {
+    const features = await api.get('/features', { showErrorToast: false });
+    if (features && features.bridge === true) {
+      const link = document.querySelector('.nav-link[data-page="system_management"]');
+      if (link && link.parentElement) link.parentElement.classList.remove('d-none');
+    }
+  } catch {
+    // 維持隱藏
+  }
+}
+
 // 監聽 DOM 載入
 window.addEventListener("DOMContentLoaded", () => {
   // 自動清理 Modal 背景 (Bootstrap 5 輔助)
@@ -178,6 +194,7 @@ window.addEventListener("DOMContentLoaded", () => {
     initializeLogoutButton();
 
     await initializeBotSelector(profileData?.activeProject);
+    revealOptionalFeatures(); // 不 await：不拖慢首屏，失敗也不影響
     await loadPage(currentPageName, { userId: getUserId() });
     LoadingManager.hide('app-init');
   };
