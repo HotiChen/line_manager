@@ -20,11 +20,13 @@ P0 兩項不處理，Bridge 做出來也無法對「別的商家」使用。
 
 ## 3. P0：Bridge 之前必須先處理
 
-### P0-1　webhook 只能驗證一個 LINE channel
+### P0-1　webhook 只能驗證一個 LINE channel　✅ 程式已完成（LM-0A），待部署與登記
 `webhook.js:41` 只讀一個全域 `LINE_CHANNEL_SECRET`。每個 LINE channel 的 secret 不同，所以**除了 secret 恰好相同的那個 OA 之外，其他 OA 的 webhook 現在都會被 401 拒絕**（2026-11-11 起強制驗簽後）。
 影響：其他商家的 OA 收不到事件；「綁定碼訊息」要靠 webhook，所以也不能用。
 待確認（需要 Tim）：LINE Console 裡，你名下其他 OA 的 Webhook 是否顯示錯誤，或實際傳訊息看有沒有反應。
-方向：每個 bot 存自己的 channel secret（`BotKeys.credential` 已預留，加密沿用 `token_crypto`），驗簽時先用 body 的 `destination` 選出 secret（只用來選 secret，驗證仍以 HMAC 為準），找不到才退回全域 secret；token 註冊流程補「Channel Secret」欄位。
+**LM-0A 已實作**：每個 bot 的 channel secret 加密存在 `bot:{id}:credential`（`lib/channel_secret.js`）；webhook 以 body 的 `destination` 挑密鑰（已登記就只用它，不退回全域；未登記退回全域並記警告）；`POST /token/channel-secret`、`GET /token/channel-secret?project=`；個人設定頁的新增／編輯專案多了 Channel Secret 欄位。
+**部署後要做**：到「個人設定 → 編輯專案」替每個官方帳號填 Channel Secret；全部填完後在 Worker 設 `WEBHOOK_GLOBAL_SECRET_DISABLED=1`，才算真正關閉「全域密鑰可驗任何 bot」。
+原方向：每個 bot 存自己的 channel secret（`BotKeys.credential` 已預留，加密沿用 `token_crypto`），驗簽時先用 body 的 `destination` 選出 secret（只用來選 secret，驗證仍以 HMAC 為準），找不到才退回全域 secret；token 註冊流程補「Channel Secret」欄位。
 
 ### P0-2　註冊 token 不會建立權限紀錄
 `/token/register`（`token.js:137-154`）不寫 `bot:{id}:permissions`／`owner`，只有 migration 會寫。新註冊的使用者呼叫 `/api/v1/systems`、`/team/*`、`/member/demo/*` 會得到 403。

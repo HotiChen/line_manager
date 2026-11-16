@@ -2,6 +2,7 @@
 import { jsonResponse } from "../lib/utils.js";
 import { saveAccessToken } from "../lib/token_store.js";
 import { UserKeys } from "../lib/kv_schema.js";
+import { isValidChannelSecret, saveChannelSecret, hasChannelSecret } from "../lib/channel_secret.js";
 
 /**
  * 這筆 project 資料對應的 botId（LINE destination）。
@@ -97,9 +98,19 @@ async function syncCurrentBot(env, userId, botId, project, info) {
  * - 建立反查索引: destination_user_${destination}
  */
 export async function handleRegisterAccessToken(request, env, userId) {
-  const { project, token } = await request.json();
+  const { project, token, channelSecret: rawChannelSecret } = await request.json();
   if (!project || !token) {
     return jsonResponse({ error: "Missing project or token" }, 400);
+  }
+
+  // 選填。給了就必須格式正確 —— 在呼叫 LINE 與寫入任何東西之前先擋，不留半筆資料。
+  // 空字串視為沒給（表單留白）。
+  let channelSecret = null;
+  if (rawChannelSecret !== undefined && rawChannelSecret !== null && rawChannelSecret !== "") {
+    channelSecret = typeof rawChannelSecret === "string" ? rawChannelSecret.trim() : rawChannelSecret;
+    if (!isValidChannelSecret(channelSecret)) {
+      return jsonResponse({ error: "Channel secret 格式不正確（應為 32 位英數字，見 LINE Developers 的 Basic settings）" }, 400);
+    }
   }
 
   // 呼叫 LINE 的 /v2/bot/info 取得 destination
@@ -144,6 +155,8 @@ export async function handleRegisterAccessToken(request, env, userId) {
   // 否則「已加密」就變成一個沒有根據的假設。
   try {
     await saveAccessToken(env, userId, project, { token, destination, displayName });
+    // 這個 bot 自己的 webhook 驗簽密鑰（botId = destination）
+    if (channelSecret) await saveChannelSecret(env, destination, channelSecret);
   } catch (err) {
     // 只記在伺服器端，不把設定細節回給呼叫端
     console.error("[Token] 無法加密儲存 access token:", err.message);
@@ -158,6 +171,83 @@ export async function handleRegisterAccessToken(request, env, userId) {
     message: `Access token registered for ${project}`,
     destination
   });
+}
+
+/**
+ * 從「呼叫者自己」的 access_tokens 找出專案的 botId（destination）。
+ *
+ * botId 只來自伺服器端存的資料，不信任請求內容；只看得到自己名下的專案。
+ *
+ * @returns {Promise<{status: number, error: string}|{botId: string}>}
+ */
+async function lookupOwnProjectBot(env, userId, project) {
+  const accessTokens = await env.KV_LINE_STORAGE.get(`access_tokens_${userId}`, { type: "json" }) || {};
+  // Object.hasOwn：否則 "constructor" 之類的名稱會從原型上拿到東西而通過檢查
+  const info = Object.hasOwn(accessTokens, project) ? accessTokens[project] : null;
+  if (!info) return { status: 404, error: "Project not found" };
+
+  const botId = destinationOf(info);
+  if (!botId) {
+    return { status: 409, error: "這個專案是舊格式，沒有官方帳號識別碼。請先重新註冊這個專案的 Token，再設定 Channel Secret。" };
+  }
+  return { botId };
+}
+
+/**
+ * handleSetChannelSecret
+ * 替「已註冊的專案」補上或更新 channel secret（webhook 驗簽用）。
+ *
+ * POST /token/channel-secret  { project, channelSecret }
+ *
+ * 回應與 log 都不含密鑰。缺加密金鑰回 503，不降級存明文。
+ */
+export async function handleSetChannelSecret(request, env, userId) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse({ error: "Invalid JSON body" }, 400);
+  }
+
+  const project = body && typeof body === "object" ? body.project : undefined;
+  if (typeof project !== "string" || project === "") {
+    return jsonResponse({ error: "Missing project" }, 400);
+  }
+  const secret = typeof body.channelSecret === "string" ? body.channelSecret.trim() : body.channelSecret;
+  if (!isValidChannelSecret(secret)) {
+    return jsonResponse({ error: "Channel secret 格式不正確（應為 32 位英數字，見 LINE Developers 的 Basic settings）" }, 400);
+  }
+
+  const found = await lookupOwnProjectBot(env, userId, project);
+  if (!found.botId) return jsonResponse({ error: found.error }, found.status);
+
+  try {
+    await saveChannelSecret(env, found.botId, secret);
+  } catch (err) {
+    // 只記訊息，不記密鑰；也不把設定細節回給呼叫端
+    console.error("[Token] 無法加密儲存 channel secret:", err.message);
+    return jsonResponse({ error: "Token storage is not configured" }, 503);
+  }
+
+  return jsonResponse({ success: true });
+}
+
+/**
+ * handleGetChannelSecretStatus
+ * GET /token/channel-secret?project=…  → { configured: boolean }
+ *
+ * 只回「有沒有設定」，永遠不回密鑰。別人的專案名稱一律 404，不洩漏別人的設定狀態。
+ */
+export async function handleGetChannelSecretStatus(request, env, userId) {
+  const project = new URL(request.url).searchParams.get("project");
+  if (!project) return jsonResponse({ error: "Missing project" }, 400);
+
+  const found = await lookupOwnProjectBot(env, userId, project);
+  if (found.status === 404) return jsonResponse({ error: found.error }, 404);
+  // 舊格式沒有 botId，一定是未設定
+  if (!found.botId) return jsonResponse({ configured: false });
+
+  return jsonResponse({ configured: await hasChannelSecret(env, found.botId) });
 }
 
 /**
@@ -333,6 +423,11 @@ export async function handleListUserProjects(env, userId) {
  */
 export function route(request, env, userId, pathname) {
   if (pathname === "/token/register") return handleRegisterAccessToken(request, env, userId);
+  if (pathname === "/token/channel-secret") {
+    if (request.method === "POST") return handleSetChannelSecret(request, env, userId);
+    if (request.method === "GET") return handleGetChannelSecretStatus(request, env, userId);
+    return jsonResponse({ error: "Method not allowed" }, 405);
+  }
   if (pathname === "/token/set") return handleSetCurrentToken(request, env, userId);
   if (pathname === "/token/delete") return handleDeleteAccessToken(request, env, userId);
   if (pathname === "/token/current") return handleGetCurrentToken(env, userId);
