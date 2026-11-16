@@ -10,12 +10,12 @@
  *   - 既有的 /api/send-message 仍然要 LIFF，沒被新路由影響
  *   - 前綴相似的路徑不會誤入
  */
-import { describe, it, beforeEach, afterEach, before } from 'node:test';
+import { describe, it, beforeEach, afterEach, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { createMockKV } from '../helpers/mock_kv.mjs';
-import { sha256Hex } from '../../worker_src/lib/crypto_util.js';
-import { BotKeys, ServiceKeyKeys } from '../../worker_src/lib/kv_schema.js';
+import { createTestD1 } from '../helpers/mock_d1.mjs';
+import { seedKey, seedSystem, count } from '../helpers/bridge_seed.mjs';
 
 register('data:text/javascript,' + encodeURIComponent(`
 export async function resolve(specifier, context, next) {
@@ -30,24 +30,28 @@ const KEY = 'sk_test_key_value_000000000000000000000000';
 const originalFetch = globalThis.fetch;
 
 let worker;
+let d1;
 let env;
 let lineCalls;
 
 before(async () => {
     worker = (await import('../../worker_src/index.js')).default;
+    d1 = await createTestD1();
 });
+after(async () => { await d1.dispose(); });
 
 beforeEach(async () => {
+    await d1.reset();
     env = {
         KV_LINE_STORAGE: createMockKV(),
+        BRIDGE_DB: d1.db,
         __STATIC_CONTENT: {},
         LIFF_CHANNEL_ID: '1234567890',
         LIFF_ID: '1234567890-abcd',
         BRIDGE_ENABLED: '1',
     };
-    const kv = env.KV_LINE_STORAGE;
-    await kv.put(ServiceKeyKeys.byHash(await sha256Hex(KEY)), JSON.stringify({ botId: BOT, system: 'imgpicker', scopes: ['messages:push'], createdAt: 1, revokedAt: null }));
-    await kv.put(BotKeys.system(BOT, 'imgpicker'), JSON.stringify({ system: 'imgpicker', name: 'IP', disabled: false }));
+    await seedSystem(d1.db, { botId: BOT, system: 'imgpicker', name: 'IP' });
+    await seedKey(d1.db, { botId: BOT, system: 'imgpicker', key: KEY });
 
     lineCalls = [];
     globalThis.fetch = async (url) => {
@@ -105,9 +109,11 @@ describe('系統註冊 /bridge/v1/systems* 只接受人主體（key 不能發 ke
     ]) {
         it(`service key 打 ${method} ${path} → 401`, async () => {
             const before = env.KV_LINE_STORAGE._store.size;
+            const rowsBefore = [await count(d1.db, 'systems'), await count(d1.db, 'service_keys'), await count(d1.db, 'audit_log')];
             const res = await call(method, path, { Authorization: `Bearer ${KEY}`, 'X-Bot-Id': BOT }, method === 'POST' || method === 'PATCH' ? { system: 'evil', name: 'x' } : undefined);
             assert.equal(res.status, 401);
             assert.equal(env.KV_LINE_STORAGE._store.size, before, '不可寫入任何東西');
+            assert.deepEqual([await count(d1.db, 'systems'), await count(d1.db, 'service_keys'), await count(d1.db, 'audit_log')], rowsBefore, 'D1 也不可寫入任何東西');
         });
     }
 
@@ -120,6 +126,7 @@ describe('系統註冊 /bridge/v1/systems* 只接受人主體（key 不能發 ke
         env.AUTH_MODE = 'legacy';
         const res = await call('POST', '/bridge/v1/systems', { 'X-User-Id': 'Unobody', 'X-Bot-Id': BOT }, { system: 'evil', name: 'x' });
         assert.equal(res.status, 403);
+        assert.equal(await count(d1.db, 'systems'), 1, '只有種子那一筆');
     });
 });
 
@@ -177,10 +184,13 @@ describe('舊路徑 /api/v1/* 已移除（沒有 alias）', () => {
     it('legacy 身分打舊的 systems 路徑 → 404，而且沒有建立任何東西', async () => {
         env.AUTH_MODE = 'legacy';
         const keysBefore = [...env.KV_LINE_STORAGE._store.keys()].filter((k) => !k.startsWith('rl_'));
+        const systemsBefore = await count(d1.db, 'systems');
         const res = await call('POST', '/api/v1/systems', { 'X-User-Id': 'Unobody', 'X-Bot-Id': BOT }, { system: 'evil', name: 'x' });
         assert.equal(res.status, 404);
         const keysAfter = [...env.KV_LINE_STORAGE._store.keys()].filter((k) => !k.startsWith('rl_'));
         assert.deepEqual(keysAfter, keysBefore, '除了 rate limit 計數，不可寫入任何東西');
+        assert.equal(await count(d1.db, 'systems'), systemsBefore);
+        assert.equal(await count(d1.db, 'service_keys'), 1);
     });
 });
 
@@ -205,6 +215,15 @@ describe('/bridge/* 不會被當成靜態資源（isApiRequest）', () => {
         assert.deepEqual(await res.json(), { success: false, error: 'Not Found' });
     });
 
+    it('沒有 BRIDGE_DB → health 是 503 bridge_not_configured（LM 的 /debug-ping 不受影響）', async () => {
+        const noDb = { ...env, BRIDGE_DB: undefined };
+        const res = await worker.fetch(new Request('https://example.com/bridge/v1/health'), noDb, { waitUntil() {} });
+        assert.equal(res.status, 503);
+        assert.deepEqual(await res.json(), { success: false, error: 'bridge_not_configured' });
+        const ping = await worker.fetch(new Request('https://example.com/debug-ping'), noDb, { waitUntil() {} });
+        assert.equal(ping.status, 200);
+    });
+
     it('掛載前綴（MOUNT_PATH）下一樣可用', async () => {
         env.MOUNT_PATH = '/lm';
         const res = await call('GET', '/lm/bridge/v1/health');
@@ -216,8 +235,10 @@ describe('/bridge/* 不會被當成靜態資源（isApiRequest）', () => {
 describe('flag 關閉時整個 Bridge 不存在', () => {
     beforeEach(() => { env.BRIDGE_ENABLED = undefined; });
 
-    it('每條 /bridge/* 都是 404，且不碰 KV、不打 LINE', async () => {
+    it('每條 /bridge/* 都是 404，且不碰 KV、不碰 D1、不打 LINE', async () => {
         const kv = env.KV_LINE_STORAGE;
+        const dbCalls = [];
+        env.BRIDGE_DB = { prepare: () => { dbCalls.push('prepare'); throw new Error('must not touch D1'); }, batch: () => { dbCalls.push('batch'); } };
         kv._resetOps();
         lineCalls.length = 0;
         for (const [method, path] of [
@@ -232,6 +253,7 @@ describe('flag 關閉時整個 Bridge 不存在', () => {
             assert.deepEqual(await res.json(), { success: false, error: 'Not Found' });
         }
         assert.equal(kv._ops.total, 0);
+        assert.deepEqual(dbCalls, []);
         assert.equal(lineCalls.length, 0);
     });
 });
@@ -244,7 +266,7 @@ describe('例外隔離：Bridge 丟錯不影響 LM core', () => {
             const bad = {
                 BRIDGE_ENABLED: '1',
                 __STATIC_CONTENT: {},
-                get KV_LINE_STORAGE() { throw new Error('kv exploded'); },
+                get BRIDGE_DB() { throw new Error('kv exploded'); },
             };
             const res = await worker.fetch(
                 new Request('https://example.com/bridge/v1/raw/push', { method: 'POST', headers: { Authorization: 'Bearer x', 'X-Bot-Id': BOT }, body: '{}' }),

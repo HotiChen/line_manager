@@ -289,14 +289,15 @@ quota_${botId}_${YYYYMM}                { pushed, free, plan, updatedAt }
 
 ## 七、API 介面（全部行業無關）
 
-> **實作狀態（2026-11-16，LM-1A 後）**
+> **實作狀態（2026-11-16，LM-1A、LM-1B 後）**
 >
 > | 範圍 | 狀態 |
 > |---|---|
-> | `POST/GET/PATCH/DELETE /bridge/v1/systems`、`keys/rotate` | ✅ `bridge/systems.js` |
-> | service key 認證、scope、per-(bot, system) 限流 | ✅ `bridge/auth.js`、`middleware/rate_limiter.js`（`bridgeRateLimit`） |
-> | `POST /bridge/v1/raw/push`、`raw/multicast`（原 `/api/v1/messages/push\|multicast`）、冪等、額度對帳 | ✅ `bridge/messages.js`、`bridge/quota.js` |
-> | `GET /bridge/v1/health` | ✅ `bridge/index.js` |
+> | `POST/GET/PATCH/DELETE /bridge/v1/systems`、`keys/rotate` | ✅ `bridge/systems.js`（儲存在 D1，LM-1B） |
+> | service key 認證、scope、per-(bot, system) 限流 | ✅ `bridge/auth.js`（key 與系統在 D1）、`middleware/rate_limiter.js`（`bridgeRateLimit`，計數器仍在 KV） |
+> | `POST /bridge/v1/raw/push`、`raw/multicast`（原 `/api/v1/messages/push\|multicast`）、冪等、額度對帳 | ✅ `bridge/messages.js`（冪等在 D1）、`bridge/quota.js`（額度快取仍在 KV） |
+> | `GET /bridge/v1/health` | ✅ `bridge/index.js`（對 `BRIDGE_DB` 做 `SELECT 1`，失敗回 503） |
+> | Bridge 資料庫 `BRIDGE_DB`（D1）：`systems`、`service_keys`、`idempotency`、`audit_log` | ✅ 程式完成，**待部署並手動套用 `migrations/0001_bridge_init.sql`**（見 `docs/integration/lm-1b-plan.md` 操作手冊）；`bridge/db.js` 是唯一寫 SQL 的檔案 |
 > | feature flag `BRIDGE_ENABLED`、入口 `bridge/index.js`、LM 窄介面 `lm_service.js` | ✅ 預設關閉 |
 > | `/bridge/v1/messages/reply` | ⬜ 未做 |
 > | CRM（`/members*`、tags） | ⬜ 未做 |
@@ -317,10 +318,11 @@ quota_${botId}_${YYYYMM}                { pushed, free, plan, updatedAt }
 > | （新）Bridge 使用 LM 的唯一窄介面 | `lm_service.js` |
 >
 > **`BRIDGE_ENABLED`**：Worker 環境變數（Text），只有精確字串 `1` 才啟用；未設、`0`、`true`、空字串都是關閉。
-> 關閉時所有 `/bridge/*` 回 `404 {"success":false,"error":"Not Found"}`，不認證、不碰 KV。
+> 關閉時所有 `/bridge/*` 回 `404 {"success":false,"error":"Not Found"}`，不認證、不碰 KV／D1。
+> 開啟後缺 `BRIDGE_DB` 綁定或資料庫查詢失敗 → `503 {"success":false,"error":"bridge_not_configured"}`（fail-closed，不退回 KV）。
 > 預設不寫進 `wrangler.jsonc`（預設關）。Bridge 內部丟出的例外一律變成 `500 internal_error`，不影響 LM core 路由。
 >
-> **邊界**：`bridge/` 只能 import 兄弟檔、`lm_service.js`、`lib/{line_api,crypto_util,kv_schema,utils}.js`、`middleware/rate_limiter.js`；
+> **邊界**：`bridge/` 只能 import 兄弟檔、`lm_service.js`、`lib/{line_api,crypto_util,kv_schema,utils}.js`、`middleware/rate_limiter.js`（`BRIDGE_DB` 只在 `bridge/` 內被讀取）；
 > `bridge/` 以外只有 `worker_src/index.js` 能 import 它。由 `tests/unit/test_import_boundary.mjs` 與 `eslint.config.js` 的 `no-restricted-imports` 把關。
 >
 > 路徑對照：下文設計稿裡的 `/api/v1/...` 請讀作 `/bridge/v1/...`；`messages/push|multicast` 現在是 `raw/push|multicast`（scope 名稱仍為 `messages:push`，改名是後續工單）。
@@ -331,7 +333,7 @@ quota_${botId}_${YYYYMM}                { pushed, free, plan, updatedAt }
 > - 冪等紀錄同時存請求指紋：同一把 key 對應到不同內容回 `422 idempotency_key_reuse`。
 > - 處理中的紀錄只存 2 分鐘，Worker 被回收時不會把鍵永遠鎖死；由 `X-Line-Retry-Key`
 >   （自冪等鍵衍生的 UUID）擋住這段時間內的重複投遞。
-> - KV 沒有原子操作：冪等與額度扣減是 best-effort。嚴格去重需要 Durable Object。
+> - 冪等已在 D1（LM-1B）：單一 `INSERT … ON CONFLICT` 原子搶佔，並行只有一個會送出。額度快取的扣減仍在 KV，是 best-effort，高併發下可能短暫多放幾則（下一次對帳校正）；嚴格額度需要 Durable Object。
 > - 目前 scope 只有 `messages:push`（push 與 multicast 共用）、`members:read`、`tags:write`；
 >   後兩者尚無對應端點。
 > - 對「從未見過的 `U…` 會員」回 404；群組／聊天室 id 不查表（尚無群組紀錄）。
@@ -742,7 +744,7 @@ botId 統一與三主體認證是地基。
 
 1. 任何 handler 都不接受呼叫端自報的 botId
 2. `member_external_*` 的 key 一定含 `system` 段
-3. service key 在 KV 只以雜湊存在；撤銷後立即失效
+3. service key 在 D1 只以雜湊存在；撤銷後立即失效（以資料庫為準）
 4. 事件 payload 不含姓名、token、key
 5. dev 與 prod 的 KV namespace id 不相同
 6. `AUTH_MODE` 的非 legacy 值一律視為最嚴格模式

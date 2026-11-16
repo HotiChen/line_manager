@@ -25,8 +25,6 @@ export const KV_PREFIX = {
     BOT: 'bot',
     USER: 'user',
     INVITE: 'invite',
-    /** 全域：由 service key 的 SHA-256 反查 (botId, system)，只存雜湊 */
-    SERVICE_KEY: 'service_key',
     LEGACY: 'legacy',
 };
 
@@ -121,12 +119,7 @@ export const BotKeys = {
     flowVersion: (botId, flowId, version) => botKey(botId, 'flow_version', flowId, String(version)),
 
     // ── 橋接 API（垂直後端以「系統」身分呼叫）──
-    /** 系統註冊紀錄：webhookUrl、events、scopes、disabled、rateLimit */
-    system: (botId, system) => botKey(botId, 'system', system),
-    /** 該 bot 的系統清單（索引） */
-    systems: (botId) => botKey(botId, 'systems'),
-    /** 冪等紀錄。keyHash 是呼叫端冪等鍵的雜湊（原文可含 ':'，不可直接進 key） */
-    idem: (botId, system, keyHash) => botKey(botId, 'idem', system, keyHash),
+    // 系統、service key、冪等紀錄、稽核紀錄在 D1（BRIDGE_DB，見 migrations/）；KV 只留下面兩種高頻、可容忍近似值的資料。
     /** LINE 額度快取，period 是 YYYYMM。額度是 per bot，不是 per system */
     quota: (botId, period) => botKey(botId, 'quota', period),
     /** 系統限流桶：per (bot, system)，輪替 service key 不會重置 */
@@ -144,19 +137,6 @@ export const UserKeys = {
     bots: (userId) => userKey(userId, 'bots'),
     profile: (userId) => userKey(userId, 'profile'),
     rateLimit: (userId, windowIndex) => userKey(userId, 'rl', String(windowIndex)),
-};
-
-/**
- * 全域 service key 索引。key 本身是 sha256 的 hex，不是原文：
- * 這裡刻意只收 64 位小寫 hex，免得有人把原文 key 當 KV key 存進去。
- */
-export const ServiceKeyKeys = {
-    byHash: (hash) => {
-        if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) {
-            throw new TypeError('invalid key component: hash must be a 64-char lowercase hex sha256');
-        }
-        return `${KV_PREFIX.SERVICE_KEY}${SEPARATOR}${hash}`;
-    },
 };
 
 export const InviteKeys = {

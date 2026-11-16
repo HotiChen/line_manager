@@ -57,8 +57,8 @@ P0 兩項不處理，Bridge 做出來也無法對「別的商家」使用。
 | **LM-0A** | P0-1：每 bot channel secret＋webhook 驗簽改版 | 待辦 | 無 |
 | **LM-0B** | P0-2：註冊時建立 owner／permissions＋修復 migration | 待辦 | 無，可與 0A 平行 |
 | **LM-1A** | `BRIDGE_ENABLED` flag（預設關，關閉時 `/bridge/*` 404 且後台不顯示入口）；搬到 `worker_src/bridge/`；`lm_service.js` 窄介面；ESLint 邊界規則；路徑改 `/bridge/v1` | ✅ 程式完成（待部署） | G0 |
-| **LM-1B** | `BRIDGE_DB`（D1）＋migration；D1 測試 helper；service key、系統、冪等、audit_log 移到 D1；products 註冊 | 待辦 | LM-1A |
-| **LM-1C** | `brk_` 金鑰格式（前綴＋雜湊）；新錯誤格式；`raw:push` scope 改名；audit_log 寫入；系統註冊 race 修正（D1 唯一約束） | 待辦 | LM-1B |
+| **LM-1B** | `BRIDGE_DB`（D1）＋migration；D1 測試 helper；service key、系統、冪等、audit_log 移到 D1（products 註冊移到 LM-2A，隨使用它的程式一起建） | ✅ 程式完成（待部署；部署後需手動套用遷移，見 [`lm-1b-plan.md`](lm-1b-plan.md) 操作手冊） | LM-1A |
+| **LM-1C** | `brk_` 金鑰格式（前綴＋雜湊）；新錯誤格式；`raw:push` scope 改名（audit_log 寫入與系統註冊 race 修正已在 LM-1B 完成） | 待辦 | LM-1B |
 | **LM-1D** | 契約測試：同一份 `bridge-v1.yaml` 驗證 LM 實作 | 待辦 | LM-1C |
 | **LM-2A** | 授權碼流程：`/link/authorize`、`/links/token`、`/links/{id}`（查詢、解除、換鑰）、同意頁、後台「已連結的產品」 | 待辦 | LM-1C |
 | **LM-3A** | 聯絡人綁定：`bind-tokens`、webhook 偵測綁定碼、狀態查詢（不回 userId） | 待辦 | LM-0A、LM-2A |
@@ -89,9 +89,9 @@ P0 兩項不處理，Bridge 做出來也無法對「別的商家」使用。
 | 風險 | 說明 | 緩解 |
 |---|---|---|
 | 其他 OA 的 webhook 現在是壞的（P0-1） | 影響所有非 secret 相同的 OA | 優先處理；Tim 先查 LINE Console |
-| D1 工具鏈 | CI 用 Node 20，內建 SQLite 測試支援有限；需要新的 test helper | LM-1B 先決定 helper（候選：`better-sqlite3` 當 devDependency） |
+| D1 工具鏈 | CI 用 Node 20 | ✅ 已解決：用 Miniflare 的真 D1（`tests/helpers/mock_d1.mjs`，不新增依賴），Node 20.20 與 22 皆驗證通過 |
 | 綁定碼 deep link | 預填訊息的 OA 連結需要 OA 的 basic ID；`/v2/bot/info` 是否回傳需實測 | LM-3A 第一步先用真實 OA 驗證，驗證不過就改顯示文字讓客戶手動輸入 |
-| 撤銷一致性 | KV 撤銷在其他邊緣節點可能延遲 | 搬到 D1 後撤銷以資料庫為準；搬遷前不對外發放金鑰 |
+| 撤銷一致性 | KV 撤銷在其他邊緣節點可能延遲 | ✅ LM-1B 已搬到 D1，撤銷以資料庫為準（部署並套用遷移後生效；之前 Bridge 關閉、未發放金鑰） |
 | 投入量 | 每週 5–10 小時，不可同時推進多個階段 | 嚴格照順序；MVP 只做到 LM-3E |
 
 ## 8. G0 檢查表（Tim）

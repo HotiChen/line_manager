@@ -5,13 +5,13 @@
  * isBridgeEnabled。Bridge 要用 LM 的什麼，一律經 ../lm_service.js。
  *
  * 路由（前綴 /bridge/v1）：
- *   GET  /health                      公開
+ *   GET  /health                      公開（會對 BRIDGE_DB 做 SELECT 1，失敗回 503 bridge_not_configured）
  *   POST /raw/push, /raw/multicast    service key（scope messages:push）
  *   /systems*                         人主體（LIFF）+ owner
  *   其他                              404
  *
  * Feature flag：只有 env.BRIDGE_ENABLED === "1"（精確字串）才啟用。
- * 關閉時所有 /bridge/* 回與未知路由一樣的 404，不認證、不碰 KV。
+ * 關閉時所有 /bridge/* 回與未知路由一樣的 404，不認證、不碰 KV／D1。
  *
  * 例外隔離：這裡丟出的任何錯都變成 500 internal_error，只記 err.message，不往外拋 ——
  * Bridge 壞掉不可拖垮 LM core 的路由。
@@ -21,6 +21,7 @@ import { authenticateUser } from "../lm_service.js";
 import { isSystemsRoute, isBridgeServiceRoute, HEALTH_PATH } from "./routes.js";
 import * as MessagesHandler from "./messages.js";
 import * as SystemsHandler from "./systems.js";
+import { BridgeDbError, bridgeUnavailable, pingDb } from "./db.js";
 
 /**
  * Bridge 是否啟用。只認字串 "1"（"true"、"0"、"" 等一律視為關閉）。
@@ -52,6 +53,13 @@ async function dispatch(request, env, pathname) {
       const res = jsonResponse({ success: false, error: "Method not allowed" }, 405);
       res.headers.set("Allow", "GET");
       return res;
+    }
+    // 資料庫連得上才算健康（缺 binding 或查詢失敗 → 503 bridge_not_configured）
+    try {
+      await pingDb(env);
+    } catch (err) {
+      if (err instanceof BridgeDbError) return bridgeUnavailable();
+      throw err;
     }
     return jsonResponse({ ok: true });
   }
@@ -86,6 +94,7 @@ export async function handleBridge(request, env, pathname) {
   try {
     return await dispatch(request, env, pathname);
   } catch (err) {
+    if (err instanceof BridgeDbError) return bridgeUnavailable();
     // 只記訊息，不記 stack，也不回給呼叫端
     console.error("[Bridge] unhandled:", err && err.message);
     return jsonResponse({ success: false, error: "internal_error" }, 500);

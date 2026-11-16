@@ -145,3 +145,62 @@ describe('wrangler.jsonc — LIFF_CHANNEL_ID', () => {
         }
     });
 });
+
+describe('wrangler.jsonc — Bridge 的 D1（BRIDGE_DB）', () => {
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+    function d1Of(scope) {
+        const list = scope.d1_databases || [];
+        const db = list.find((d) => d.binding === 'BRIDGE_DB');
+        assert.ok(db, 'BRIDGE_DB binding 不存在');
+        return db;
+    }
+
+    it('prod 與 dev 都宣告 BRIDGE_DB（env.dev 不繼承頂層）', () => {
+        const cfg = readWranglerConfig();
+        d1Of(cfg);
+        d1Of(cfg.env.dev);
+    });
+
+    it('binding 名稱剛好是 BRIDGE_DB，且每個環境只有這一個 D1', () => {
+        const cfg = readWranglerConfig();
+        for (const scope of [cfg, cfg.env.dev]) {
+            assert.deepEqual((scope.d1_databases || []).map((d) => d.binding), ['BRIDGE_DB']);
+        }
+    });
+
+    it('dev 與 prod 的 database_id 不同；dev 不得指向正式資料庫', () => {
+        const cfg = readWranglerConfig();
+        const prod = d1Of(cfg);
+        const dev = d1Of(cfg.env.dev);
+        assert.notEqual(dev.database_id, prod.database_id, 'dev 指向正式資料庫');
+        assert.notEqual(dev.database_name, prod.database_name);
+        if (dev.preview_database_id !== undefined) {
+            assert.notEqual(dev.preview_database_id, prod.database_id, 'dev preview_database_id 指向正式資料庫');
+        }
+    });
+
+    it('database_id 是 UUID 形狀（不是佔位字串）', () => {
+        const cfg = readWranglerConfig();
+        for (const [name, scope] of [['prod', cfg], ['dev', cfg.env.dev]]) {
+            assert.match(d1Of(scope).database_id, UUID, `${name} 的 database_id 不是 UUID`);
+        }
+    });
+
+    it('名稱：prod = bridge-db、dev = bridge-db-dev', () => {
+        const cfg = readWranglerConfig();
+        assert.equal(d1Of(cfg).database_name, 'bridge-db');
+        assert.equal(d1Of(cfg.env.dev).database_name, 'bridge-db-dev');
+    });
+
+    it('migrations_dir 沿用預設（migrations/），而且那個目錄存在並有遷移檔', async () => {
+        const cfg = readWranglerConfig();
+        for (const scope of [cfg, cfg.env.dev]) {
+            const d = d1Of(scope);
+            assert.equal(d.migrations_dir, undefined, '不要自訂 migrations_dir');
+        }
+        const { readdirSync } = await import('node:fs');
+        const files = readdirSync(join(root, 'migrations')).filter((f) => f.endsWith('.sql'));
+        assert.ok(files.includes('0001_bridge_init.sql'));
+    });
+});
