@@ -57,7 +57,7 @@ P0 兩項不處理，Bridge 做出來也無法對「別的商家」使用。
 | **LM-0A** | P0-1：每 bot channel secret＋webhook 驗簽改版 | 待辦 | 無 |
 | **LM-0B** | P0-2：註冊時建立 owner／permissions＋修復 migration | 待辦 | 無，可與 0A 平行 |
 | **LM-1A** | `BRIDGE_ENABLED` flag（預設關，關閉時 `/bridge/*` 404 且後台不顯示入口）；搬到 `worker_src/bridge/`；`lm_service.js` 窄介面；ESLint 邊界規則；路徑改 `/bridge/v1` | ✅ 程式完成（待部署） | G0 |
-| **LM-1B** | `BRIDGE_DB`（D1）＋migration；D1 測試 helper；service key、系統、冪等、audit_log 移到 D1；products 註冊 | 待辦 | LM-1A |
+| **LM-1B** | `BRIDGE_DB`（D1）＋migration；D1 測試 helper；service key、系統、冪等、audit_log 移到 D1；products 註冊 | 待辦 | LM-1A | 設計見 [`lm-1b-plan.md`](lm-1b-plan.md)（待確認）。
 | **LM-1C** | `brk_` 金鑰格式（前綴＋雜湊）；新錯誤格式；`raw:push` scope 改名；audit_log 寫入；系統註冊 race 修正（D1 唯一約束） | 待辦 | LM-1B |
 | **LM-1D** | 契約測試：同一份 `bridge-v1.yaml` 驗證 LM 實作 | 待辦 | LM-1C |
 | **LM-2A** | 授權碼流程：`/link/authorize`、`/links/token`、`/links/{id}`（查詢、解除、換鑰）、同意頁、後台「已連結的產品」 | 待辦 | LM-1C |
