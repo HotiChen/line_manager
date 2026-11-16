@@ -13,7 +13,7 @@
  * @param {string} value
  * @returns {string}
  */
-function escapeHTML(value) {
+export function escapeHTML(value) {
   return String(value)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
