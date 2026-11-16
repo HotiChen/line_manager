@@ -1,0 +1,469 @@
+openapi: 3.0.3
+info:
+  title: LM Bridge API
+  version: 1.0.0-draft
+  description: |
+    LM 側的 Bridge 契約（草稿，G0 確認後凍結）。
+
+    範圍：另一個產品（呼叫端，下稱「產品」）如何連結到 LM 管理的 LINE 官方帳號（OA），
+    並透過 LM 對已綁定的聯絡人發送通知。只描述 LM 這一側的介面，不含呼叫端內部設計。
+
+    設計決定（見 gap-analysis.md）：
+    - 前綴 `/bridge/v1`，Bridge 自己的資料放 D1，不放 LM 的 KV。
+    - 兩層訊息：`/messages` 為受限格式，連結流程發出的金鑰只能用這層；
+      `/raw/*` 為原樣轉送 LINE 訊息，只給 owner 在後台手動發放的信任金鑰。
+    - 收件人以 `external_contact_ref` 表示，呼叫端永遠拿不到 LINE userId。
+    - 聯絡人綁定用「綁定碼訊息」：客戶把綁定碼傳給 OA，由 webhook 取得該 OA 所屬 Provider 的 userId，
+      不依賴 LINE Login。
+
+    實作狀態以 `x-status` 標示：`implemented`（已在 /api/v1 上線，需搬到 /bridge/v1）、
+    `partial`、`planned`。
+  x-status-legend:
+    implemented: 目前已上線（路徑為 /api/v1/...）
+    partial: 部分已有
+    planned: 尚未實作
+servers:
+  - url: https://imhoti.tw/lm
+    description: 正式環境（Worker 掛載於 /lm）
+
+tags:
+  - name: system
+  - name: link
+  - name: contacts
+  - name: messages
+  - name: raw
+
+security:
+  - linkKey: []
+
+paths:
+  /bridge/v1/health:
+    get:
+      tags: [system]
+      summary: 健康檢查
+      security: []
+      x-status: planned
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+
+  /bridge/v1/link/authorize:
+    get:
+      tags: [link]
+      summary: 同意頁（瀏覽器，需 LM 登入）
+      description: |
+        產品把使用者導向這裡。LM 確認此人對該 OA 具備 owner 權限、讓他選擇 Bot、顯示授權範圍並請他同意，
+        然後產生一次性授權碼（5 分鐘、單次使用）導回 `redirect_uri`。
+        `redirect_uri` 必須與產品註冊的值精確比對。
+      security: []
+      x-status: planned
+      parameters:
+        - { name: product_id, in: query, required: true, schema: { type: string } }
+        - { name: state, in: query, required: true, schema: { type: string, maxLength: 256 } }
+        - { name: redirect_uri, in: query, required: true, schema: { type: string, format: uri } }
+      responses:
+        '302':
+          description: 導回 redirect_uri，帶 `code` 與原樣的 `state`
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+
+  /bridge/v1/links/token:
+    post:
+      tags: [link]
+      summary: 授權碼換連結與金鑰
+      description: 金鑰只在這次回應出現。授權碼只能用一次；已使用或過期回 `INVALID_CODE`。
+      security:
+        - productSecret: []
+      x-status: planned
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, redirect_uri]
+              properties:
+                code: { type: string }
+                redirect_uri: { type: string, format: uri }
+      responses:
+        '200':
+          description: 連結建立
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [link_id, service_key, scopes, bot_display_name]
+                properties:
+                  link_id: { type: string, example: lnk_abc123 }
+                  service_key:
+                    type: string
+                    description: 只出現這一次
+                    example: brk_ab12cd_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+                  scopes: { type: array, items: { $ref: '#/components/schemas/Scope' } }
+                  bot_display_name: { type: string }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/InvalidKey' }
+
+  /bridge/v1/links/{link_id}:
+    parameters:
+      - { name: link_id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [link]
+      summary: 連結狀態
+      x-status: planned
+      x-scope: link:manage
+      responses:
+        '200':
+          description: 連結資訊（不含任何金鑰）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Link' }
+        '401': { $ref: '#/components/responses/InvalidKey' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [link]
+      summary: 解除連結
+      description: 立即生效，舊金鑰此後回 `LINK_REVOKED`。兩邊的產品資料都不刪除。
+      x-status: planned
+      x-scope: link:manage
+      responses:
+        '204': { description: 已解除 }
+        '401': { $ref: '#/components/responses/InvalidKey' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /bridge/v1/links/{link_id}/rotate-key:
+    post:
+      tags: [link]
+      summary: 更換金鑰
+      description: 新金鑰取代舊金鑰（舊的立即失效）。只能換自己這條連結的金鑰，不能產生其他連結或系統。
+      x-status: planned
+      x-scope: link:manage
+      parameters:
+        - { name: link_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: 新金鑰（只出現這一次）
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [service_key]
+                properties:
+                  service_key: { type: string }
+        '401': { $ref: '#/components/responses/InvalidKey' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /bridge/v1/contacts/bind-tokens:
+    post:
+      tags: [contacts]
+      summary: 產生聯絡人綁定碼
+      description: |
+        呼叫端提供自己的不透明代號 `external_contact_ref`（不得含姓名、電話、Email）。
+        LM 回傳一組綁定碼與給客戶看的連結：客戶開啟後會帶著預填好的訊息進入與 OA 的聊天室，
+        傳出後由 webhook 取得 userId 並完成綁定。綁定碼 7 天有效、單次使用。
+      x-status: planned
+      x-scope: contacts:bind
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [external_contact_ref]
+              properties:
+                external_contact_ref: { $ref: '#/components/schemas/ContactRef' }
+      responses:
+        '201':
+          description: 綁定碼已產生
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [bind_code, bind_url, expires_at]
+                properties:
+                  bind_code: { type: string, example: B7K2QX9M }
+                  bind_url:
+                    type: string
+                    format: uri
+                    description: 給客戶的連結或 QR code 內容（LINE 的 OA 訊息連結，帶預填的綁定碼）
+                  expires_at: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/InvalidKey' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /bridge/v1/contacts/{external_contact_ref}:
+    get:
+      tags: [contacts]
+      summary: 綁定狀態
+      description: 只回狀態，不回 LINE userId、顯示名稱或頭像。
+      x-status: planned
+      x-scope: contacts:bind
+      parameters:
+        - { name: external_contact_ref, in: path, required: true, schema: { $ref: '#/components/schemas/ContactRef' } }
+      responses:
+        '200':
+          description: 綁定狀態
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [external_contact_ref, status]
+                properties:
+                  external_contact_ref: { $ref: '#/components/schemas/ContactRef' }
+                  status:
+                    type: string
+                    enum: [unbound, pending, bound, blocked, disabled]
+                  bound_at: { type: string, format: date-time, nullable: true }
+        '401': { $ref: '#/components/responses/InvalidKey' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /bridge/v1/messages:
+    post:
+      tags: [messages]
+      summary: 發送通知（受限格式）
+      description: |
+        只允許純文字的 `title`、`body` 與一個按鈕。`action.url` 的網域必須在該產品註冊的白名單內。
+        不接受圖片上傳。只能發給這條連結自己綁定的聯絡人。
+        同一連結內同一把 `Idempotency-Key` 重送，回傳第一次的結果，不會再發一次。
+      x-status: planned
+      x-scope: messages:send
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Notification' }
+      responses:
+        '202':
+          description: 已受理
+          headers:
+            X-Idempotency-Replayed:
+              schema: { type: string, enum: ['true'] }
+              description: 這是先前結果的重送
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MessageResult' }
+        '401': { $ref: '#/components/responses/InvalidKey' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /bridge/v1/messages/{message_id}:
+    get:
+      tags: [messages]
+      summary: 發送結果
+      x-status: planned
+      x-scope: messages:send
+      parameters:
+        - { name: message_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: 發送結果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MessageResult' }
+        '401': { $ref: '#/components/responses/InvalidKey' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /bridge/v1/raw/push:
+    post:
+      tags: [raw]
+      summary: 原樣轉送 LINE 訊息給單一對象（信任金鑰專用）
+      description: |
+        目前已上線於 `POST /api/v1/messages/push`，行為見該實作：scope、per-system 限流、
+        `X-Idempotency-Key`、額度對帳（回報 `remaining`）、封鎖回 409。
+        只有 owner 在後台手動發放、且 scope 含 `raw:push` 的金鑰可用；連結流程發出的金鑰永遠不含此 scope。
+        搬遷時 scope 名稱由 `messages:push` 改為 `raw:push`，並提供過渡期相容。
+      x-status: implemented
+      x-scope: raw:push
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, messages]
+              properties:
+                to: { type: string, description: LINE user / group / room id }
+                messages:
+                  type: array
+                  minItems: 1
+                  maxItems: 5
+                  items: { type: object, required: [type], additionalProperties: true }
+      responses:
+        '200':
+          description: 已送出
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  quotaConsumed: { type: integer }
+                  remaining: { type: integer, nullable: true }
+        '402': { $ref: '#/components/responses/QuotaExceeded' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /bridge/v1/raw/multicast:
+    post:
+      tags: [raw]
+      summary: 原樣轉送 LINE 訊息給多人，上限 500（信任金鑰專用）
+      x-status: implemented
+      x-scope: raw:push
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, messages]
+              properties:
+                to: { type: array, minItems: 1, maxItems: 500, items: { type: string } }
+                messages:
+                  type: array
+                  minItems: 1
+                  maxItems: 5
+                  items: { type: object, required: [type], additionalProperties: true }
+      responses:
+        '200': { description: 已送出 }
+        '402': { $ref: '#/components/responses/QuotaExceeded' }
+
+components:
+  securitySchemes:
+    linkKey:
+      type: http
+      scheme: bearer
+      description: |
+        `Authorization: Bearer brk_<前綴>_<密鑰>`。資料庫只存 SHA-256 雜湊與前綴。
+        每個請求依序檢查：金鑰有效 → 連結為 active → scope 足夠 → 資源屬於這條連結。
+    productSecret:
+      type: http
+      scheme: bearer
+      description: 產品註冊時取得的密鑰，只用於授權碼換金鑰。
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string, maxLength: 128 }
+    IdempotencyKeyRequired:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        呼叫端自己決定「同一件事」的定義，例如 `delivery.ready:{project_id}:{contact_ref}:{版次}`。
+        同一連結內同一把鍵重送，回傳第一次的結果。上一次還在處理中回 `IN_PROGRESS`；
+        同一把鍵配不同內容回 `IDEMPOTENCY_KEY_REUSE`。
+      schema: { type: string, maxLength: 128 }
+
+  schemas:
+    Scope:
+      type: string
+      enum: [link:manage, contacts:bind, messages:send, raw:push]
+    ContactRef:
+      type: string
+      pattern: '^[A-Za-z0-9_-]{8,64}$'
+      description: 呼叫端產生的不透明代號，不得含姓名、電話、Email。
+      example: ipc_ab12cd34ef
+    Link:
+      type: object
+      required: [link_id, status, scopes, bot_display_name, created_at]
+      properties:
+        link_id: { type: string }
+        status: { type: string, enum: [active, revoked] }
+        scopes: { type: array, items: { $ref: '#/components/schemas/Scope' } }
+        bot_display_name: { type: string }
+        created_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time, nullable: true }
+    Notification:
+      type: object
+      required: [external_contact_ref, event_type, title, body]
+      additionalProperties: false
+      properties:
+        external_contact_ref: { $ref: '#/components/schemas/ContactRef' }
+        event_type:
+          type: string
+          description: 呼叫端定義的事件名稱，僅用於稽核與去重
+          pattern: '^[a-z][a-z0-9_.]{0,63}$'
+        title: { type: string, maxLength: 40, description: 純文字；上限於 G0 依 LINE 限制確認 }
+        body: { type: string, maxLength: 300, description: 純文字；上限於 G0 依 LINE 限制確認 }
+        action:
+          type: object
+          required: [label, url]
+          additionalProperties: false
+          properties:
+            label: { type: string, maxLength: 20 }
+            url: { type: string, format: uri, description: https，且網域在產品註冊的白名單內 }
+    MessageResult:
+      type: object
+      required: [message_id, status]
+      properties:
+        message_id: { type: string }
+        status: { type: string, enum: [accepted, sent, failed] }
+        error_code: { type: string, nullable: true }
+        sent_at: { type: string, format: date-time, nullable: true }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, retryable]
+          properties:
+            code:
+              type: string
+              enum:
+                - INVALID_KEY
+                - LINK_REVOKED
+                - SCOPE_DENIED
+                - INVALID_CODE
+                - INVALID_REQUEST
+                - CONTACT_NOT_BOUND
+                - RECIPIENT_BLOCKED
+                - INVALID_URL_DOMAIN
+                - IN_PROGRESS
+                - IDEMPOTENCY_KEY_REUSE
+                - NOT_FOUND
+                - QUOTA_EXCEEDED
+                - RATE_LIMITED
+                - INTERNAL
+            message: { type: string }
+            retryable: { type: boolean }
+
+  responses:
+    InvalidRequest:
+      description: 請求內容有誤（INVALID_REQUEST / INVALID_CODE）
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    InvalidKey:
+      description: 金鑰錯誤或已更換（INVALID_KEY）。不區分「不存在」與「已撤銷」。
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Forbidden:
+      description: LINK_REVOKED 或 SCOPE_DENIED
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    NotFound:
+      description: 找不到，或不屬於這條連結（NOT_FOUND）
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Conflict:
+      description: CONTACT_NOT_BOUND、RECIPIENT_BLOCKED、IN_PROGRESS
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Unprocessable:
+      description: INVALID_URL_DOMAIN 或訊息內容不符受限格式
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    QuotaExceeded:
+      description: 該 OA 當月推播額度用完（QUOTA_EXCEEDED，當月不可重試）
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    RateLimited:
+      description: RATE_LIMITED，依 `Retry-After` 重試
+      headers:
+        Retry-After: { schema: { type: integer } }
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
