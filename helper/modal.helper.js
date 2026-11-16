@@ -5,7 +5,52 @@
  * @since 2025-12-24
  */
 
-import { setInnerHTML } from './security.js';
+import { setInnerHTML, escapeHTML } from './security.js';
+
+/**
+ * 組出確認對話框的 HTML。
+ *
+ * 所有文字欄位（title / message / 按鈕文字）一律跳脫：呼叫端會傳入使用者可控的資料
+ * （LINE 顯示名稱、標籤名稱…）。DOMPurify 雖會擋掉腳本，但仍放行連結、圖片與版面，
+ * 而且它是從 CDN 載入的。訊息裡的換行靠 white-space: pre-line 顯示，不需要 HTML。
+ * type 走白名單，不直接插進 class。
+ *
+ * 純函式（不碰 DOM），可在 node 下測試。
+ *
+ * @param {{modalId: string, title: string, message: string, confirmText: string, cancelText: string, type: string}} opts
+ * @returns {string}
+ */
+export function buildConfirmModalHTML({ modalId, title, message, confirmText, cancelText, type }) {
+    const buttonClass = {
+        danger: 'btn-danger',
+        warning: 'btn-warning',
+        info: 'btn-info'
+    }[type] || 'btn-warning';
+
+    return `
+      <div class="modal fade" id="${modalId}" tabindex="-1" aria-labelledby="${modalId}Label" aria-hidden="true" data-bs-backdrop="static">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title" id="${modalId}Label">${escapeHTML(title)}</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <p style="white-space: pre-line;">${escapeHTML(message)}</p>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-action="cancel">
+                ${escapeHTML(cancelText)}
+              </button>
+              <button type="button" class="btn ${buttonClass}" data-action="confirm" autofocus>
+                ${escapeHTML(confirmText)}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+}
 
 /**
  * 顯示確認對話框
@@ -43,37 +88,8 @@ export function showConfirm({
         // 生成唯一 ID
         const modalId = `confirm-modal-${Date.now()}`;
 
-        // 根據類型決定按鈕樣式
-        const buttonClass = {
-            danger: 'btn-danger',
-            warning: 'btn-warning',
-            info: 'btn-info'
-        }[type] || 'btn-warning';
-
-        // 創建 Modal HTML
-        const modalHTML = `
-      <div class="modal fade" id="${modalId}" tabindex="-1" aria-labelledby="${modalId}Label" aria-hidden="true" data-bs-backdrop="static">
-        <div class="modal-dialog modal-dialog-centered">
-          <div class="modal-content">
-            <div class="modal-header">
-              <h5 class="modal-title" id="${modalId}Label">${title}</h5>
-              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-              <p style="white-space: pre-line;">${message}</p>
-            </div>
-            <div class="modal-footer">
-              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-action="cancel">
-                ${cancelText}
-              </button>
-              <button type="button" class="btn ${buttonClass}" data-action="confirm" autofocus>
-                ${confirmText}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
+        // 創建 Modal HTML（所有文字欄位在 buildConfirmModalHTML 內跳脫）
+        const modalHTML = buildConfirmModalHTML({ modalId, title, message, confirmText, cancelText, type });
 
         // 創建臨時容器並插入 Modal
         const container = document.createElement('div');
