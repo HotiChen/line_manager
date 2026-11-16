@@ -59,6 +59,7 @@ function bindEvents() {
     // 不預填：projectData 的值是 botId 不是 token，預填會讓「更新」把 botId 當 token 送出
     document.getElementById("edit-project-token").value = "";
     document.getElementById("edit-project-channel-secret").value = "";
+    showModalError("edit-modal", "");
     loadChannelSecretStatus(selectedProject);
     new bootstrap.Modal(document.getElementById("edit-modal")).show();
   });
@@ -206,6 +207,39 @@ async function deleteProject() {
   }
 }
 
+/**
+ * POST 並自己處理錯誤，回傳 { ok, status, data }。
+ *
+ * 不走 api 預設的錯誤提示：它只認 400／401／403／404／500，其他狀態（例如 409、503）
+ * 一律顯示「發生未知錯誤」，而伺服器其實附了清楚的說明。
+ */
+async function postJson(path, body) {
+  try {
+    const res = await api.post(path, body, { rawResponse: true, showErrorToast: false });
+    let data = {};
+    try {
+      data = await res.json();
+    } catch {
+      data = {};
+    }
+    return { ok: res.ok, status: res.status, data };
+  } catch {
+    return { ok: false, status: 0, data: { error: "無法連線到伺服器，請檢查網路後再試" } };
+  }
+}
+
+/** 錯誤顯示在對話框裡（#status 在對話框後面，使用者看不到） */
+function showModalError(modalId, message) {
+  const el = document.getElementById(`${modalId}-error`);
+  if (!el) return;
+  el.textContent = message || "";
+  el.classList.toggle("d-none", !message);
+}
+
+function describeFailure(result) {
+  return result.data?.error || result.data?.message || `儲存失敗（錯誤 ${result.status || "網路"}）`;
+}
+
 /** 顯示這個專案有沒有設定 Channel Secret（只有「有／沒有」，伺服器不會回密鑰） */
 async function loadChannelSecretStatus(project) {
   const el = document.getElementById("edit-secret-status");
@@ -213,7 +247,11 @@ async function loadChannelSecretStatus(project) {
   el.textContent = "目前：確認中…";
   try {
     const result = await api.get(`/token/channel-secret?project=${encodeURIComponent(project)}`, { showErrorToast: false });
-    el.textContent = result.configured ? "目前：已設定" : "目前：未設定（這個官方帳號可能收不到事件）";
+    if (result.legacy) {
+      el.textContent = "目前：未設定。這個專案是舊格式，請同時填入 Token 與 Channel Secret，再按更新。";
+    } else {
+      el.textContent = result.configured ? "目前：已設定" : "目前：未設定（這個官方帳號可能收不到事件）";
+    }
   } catch {
     el.textContent = "目前：無法確認";
   }
@@ -239,23 +277,20 @@ async function submitEditProject() {
 
   // 只更新 Channel Secret：不必重填 token
   if (!token && channelSecret) {
-    try {
-      const result = await api.post('/token/channel-secret', { project: name, channelSecret });
-      if (result.success) {
-        showStatusMessage("✅ Channel Secret 已儲存");
-        document.getElementById("edit-project-channel-secret").value = "";
-        closeModal("edit-modal");
-      } else {
-        showStatusMessage("❌ 儲存失敗：" + (result.error || "未知錯誤"), true);
-      }
-    } catch (err) {
-      showStatusMessage("❌ 儲存失敗：" + (err?.error || err?.message || "系統錯誤"), true);
+    showModalError("edit-modal", "");
+    const result = await postJson('/token/channel-secret', { project: name, channelSecret });
+    if (result.ok && result.data.success) {
+      showStatusMessage("✅ Channel Secret 已儲存");
+      document.getElementById("edit-project-channel-secret").value = "";
+      closeModal("edit-modal");
+    } else {
+      showModalError("edit-modal", describeFailure(result));
     }
     return;
   }
 
   if (!token) {
-    showStatusMessage("❌ 請填寫要更換的 Token 或 Channel Secret", true);
+    showModalError("edit-modal", "請填寫要更換的 Token 或 Channel Secret");
     return;
   }
   await saveProject(name, token, "edit-modal", channelSecret);
@@ -270,44 +305,27 @@ async function submitAddProject() {
 
 async function saveProject(name, token, modalId, channelSecret = "") {
   if (!name || !token) {
-    showStatusMessage("❌ 請填寫專案名稱和 Token", true);
+    showModalError(modalId, "請填寫專案名稱和 Token");
     return;
   }
 
-  try {
-    // api.post 會直接返回解析後的 JSON，而非 Response 物件
-    const body = { project: name, token };
-    if (channelSecret) body.channelSecret = channelSecret;
-    const result = await api.post('/token/register', body);
+  showModalError(modalId, "");
+  const body = { project: name, token };
+  if (channelSecret) body.channelSecret = channelSecret;
+  const result = await postJson('/token/register', body);
 
-    if (result.success || result.destination) {
-      showStatusMessage(`✅ 專案 ${name} 已儲存`);
-      projectData[name] = token;
-      await loadProfile();
+  if (result.ok && (result.data.success || result.data.destination)) {
+    showStatusMessage(`✅ 專案 ${name} 已儲存`);
+    projectData[name] = token;
+    await loadProfile();
 
-      for (const id of ["add-project-channel-secret", "edit-project-channel-secret"]) {
-        const input = document.getElementById(id);
-        if (input) input.value = "";
-      }
-      closeModal(modalId);
-    } else {
-      showStatusMessage("❌ 儲存失敗：" + (result.error || "未知錯誤"), true);
+    for (const id of ["add-project-channel-secret", "edit-project-channel-secret"]) {
+      const input = document.getElementById(id);
+      if (input) input.value = "";
     }
-  } catch (err) {
-    console.error('[saveProject] 錯誤:', err);
-    // err 可能是一個 Response 物件（從 api.client 拋出）
-    if (err instanceof Response) {
-      try {
-        const errorData = await err.json();
-        showStatusMessage("❌ 儲存失敗：" + (errorData.error || errorData.message || err.statusText), true);
-      } catch {
-        showStatusMessage("❌ 儲存失敗：" + err.statusText, true);
-      }
-    } else if (err.error) {
-      showStatusMessage("❌ 儲存失敗：" + err.error, true);
-    } else {
-      showStatusMessage("❌ 系統錯誤", true);
-    }
+    closeModal(modalId);
+  } else {
+    showModalError(modalId, describeFailure(result));
   }
 }
 
