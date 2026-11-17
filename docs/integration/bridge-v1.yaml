@@ -16,10 +16,16 @@ info:
     - 聯絡人綁定用「綁定碼訊息」：客戶把綁定碼傳給 OA，由 webhook 取得該 OA 所屬 Provider 的 userId，
       不依賴 LINE Login。
 
-    實作狀態以 `x-status` 標示：`implemented`（已上線於 `/bridge/v1`）、`partial`、`planned`。
+    實作狀態以 `x-status` 標示：`implemented`（程式已完成於 `/bridge/v1`；LM-2A 的端點待部署並手動套用遷移 0002）、`partial`、`planned`。
 
     LM-1A 已完成：`/raw/push`、`/raw/multicast` 由原本的 `/api/v1/messages/push|multicast` 搬到
     `/bridge/v1/raw/*`（舊路徑已移除），Bridge 在 `BRIDGE_ENABLED=1` 時才啟用，關閉時整個 `/bridge/*` 回 404。
+
+    LM-2A 後端已完成（程式；待部署與手動遷移，見 lm-2a-plan.md 第 14 節）：`link/authorize`、`links/token`、`links/{link_id}`（GET／DELETE）、`links/{link_id}/rotate-key`。
+    這些新端點的錯誤一律用下方 `Error` 格式、欄位 snake_case。
+    不在本契約的 LM-2A 管理端點（營運與後台用，不屬於產品呼叫端）：`POST /bridge/v1/admin/products`（營運密鑰登記產品）、
+    `GET /bridge/v1/link/authorize/preview`、`POST /bridge/v1/link/authorize/approve`（同意頁，LIFF）、
+    `GET /bridge/v1/admin/links`、`DELETE /bridge/v1/admin/links/{link_id}`（後台，LIFF＋owner）。
 
     另有一組「人主體」的管理端點 `/bridge/v1/systems*`（註冊／列出／停用／輪替／刪除 service key，
     LIFF 認證 + owner 權限，供 LM 後台使用）。它是 LM 後台的 admin API，不屬於呼叫端契約，因此不列在本檔。
@@ -68,15 +74,18 @@ paths:
         然後產生一次性授權碼（5 分鐘、單次使用）導回 `redirect_uri`。
         `redirect_uri` 必須與產品註冊的值精確比對。
       security: []
-      x-status: planned
+      x-status: implemented
       parameters:
         - { name: product_id, in: query, required: true, schema: { type: string } }
         - { name: state, in: query, required: true, schema: { type: string, maxLength: 256 } }
         - { name: redirect_uri, in: query, required: true, schema: { type: string, format: uri } }
       responses:
         '302':
-          description: 導回 redirect_uri，帶 `code` 與原樣的 `state`
-        '400': { $ref: '#/components/responses/InvalidRequest' }
+          description: |
+            參數通過驗證後導向 LM 的同意頁（`/pages/link_authorize.html`）；使用者同意後由該頁導回 `redirect_uri`，帶 `code` 與原樣的 `state`（取消則帶 `error=access_denied` 與 `state`）。
+        '400':
+          description: product_id、state 或 redirect_uri 不合（INVALID_REQUEST）。不會導向任何未驗證的位址。
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
 
   /bridge/v1/links/token:
     post:
@@ -85,7 +94,7 @@ paths:
       description: 金鑰只在這次回應出現。授權碼只能用一次；已使用或過期回 `INVALID_CODE`。
       security:
         - productSecret: []
-      x-status: planned
+      x-status: implemented
       requestBody:
         required: true
         content:
@@ -114,6 +123,7 @@ paths:
                   bot_display_name: { type: string }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/InvalidKey' }
+        '429': { $ref: '#/components/responses/RateLimited' }
 
   /bridge/v1/links/{link_id}:
     parameters:
@@ -121,7 +131,7 @@ paths:
     get:
       tags: [link]
       summary: 連結狀態
-      x-status: planned
+      x-status: implemented
       x-scope: link:manage
       responses:
         '200':
@@ -131,23 +141,25 @@ paths:
               schema: { $ref: '#/components/schemas/Link' }
         '401': { $ref: '#/components/responses/InvalidKey' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
     delete:
       tags: [link]
       summary: 解除連結
       description: 立即生效，舊金鑰此後回 `LINK_REVOKED`。兩邊的產品資料都不刪除。
-      x-status: planned
+      x-status: implemented
       x-scope: link:manage
       responses:
         '204': { description: 已解除 }
         '401': { $ref: '#/components/responses/InvalidKey' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /bridge/v1/links/{link_id}/rotate-key:
     post:
       tags: [link]
       summary: 更換金鑰
       description: 新金鑰取代舊金鑰（舊的立即失效）。只能換自己這條連結的金鑰，不能產生其他連結或系統。
-      x-status: planned
+      x-status: implemented
       x-scope: link:manage
       parameters:
         - { name: link_id, in: path, required: true, schema: { type: string } }
@@ -163,6 +175,7 @@ paths:
                   service_key: { type: string }
         '401': { $ref: '#/components/responses/InvalidKey' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /bridge/v1/contacts/bind-tokens:
     post:

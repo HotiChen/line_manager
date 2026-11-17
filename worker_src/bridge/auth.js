@@ -13,7 +13,9 @@
  */
 import { jsonResponse } from "../lib/utils.js";
 import { sha256Hex } from "../lib/crypto_util.js";
-import { getKeyWithSystem, BridgeDbError } from "./db.js";
+import { getKeyWithSystem, getLinkKeyContext, BridgeDbError } from "./db.js";
+import { bridgeError } from "./errors.js";
+import { onlyLinkScopes } from "./scopes.js";
 
 const UNAUTHORIZED = "Invalid or revoked service key";
 const NOT_CONFIGURED = "bridge_not_configured";
@@ -96,6 +98,73 @@ export function withService(handler, requiredScope) {
     if (requiredScope && !hasScope(auth.principal.scopes, requiredScope)) {
       return jsonResponse({ success: false, error: "Insufficient scope" }, 403);
     }
+    return handler(request, env, auth.principal, ...args);
+  };
+}
+
+// ── 連結金鑰（LM-2A）──
+
+/**
+ * 連結金鑰認證（Bearer brk_…，金鑰綁定一條連結）。一次 LEFT JOIN 取得 金鑰 → 連結 → 產品，依序檢查：
+ *
+ *   查不到 / 系統金鑰（無 link_id）/ 孤兒金鑰   → INVALID_KEY（401，三者不可區分）
+ *   連結已撤銷                                  → LINK_REVOKED（403）。放在「金鑰已撤銷」之前：
+ *                                                 撤銷連結時金鑰也一併撤銷，持有人要看到的是連結被撤銷
+ *   金鑰已撤銷（例如已輪替掉）                   → INVALID_KEY
+ *   產品停用或不存在                             → LINK_REVOKED
+ *   scope 不足                                   → SCOPE_DENIED（403）
+ *
+ * principal.scopes 是 金鑰 ∩ 連結 ∩ LINK_SCOPES：即使資料庫被寫入 raw:push 也不會被當成權限。
+ * 缺 BRIDGE_DB 或查詢失敗 → 503（fail-closed）。「資源屬於這條連結」由 handler 以 principal.linkId 判斷。
+ *
+ * @param {Request} request
+ * @param {Object} env
+ * @param {string} [requiredScope]
+ * @returns {Promise<{authenticated: true, principal: {linkId: string, productId: string, botId: string, scopes: string[]}} | {authenticated: false, response: Response}>}
+ */
+export async function authenticateLink(request, env, requiredScope) {
+  const deny = (code, message, opts) => ({ authenticated: false, response: bridgeError(code, message, opts) });
+
+  const authHeader = request.headers.get("Authorization");
+  if (!authHeader || !authHeader.startsWith("Bearer ")) return deny("INVALID_KEY", "Authorization header required");
+  const key = authHeader.substring(7).trim();
+  if (!key) return deny("INVALID_KEY", "Authorization header required");
+
+  let ctx;
+  try {
+    ctx = await getLinkKeyContext(env, await sha256Hex(key));
+  } catch (err) {
+    if (err instanceof BridgeDbError) return deny("INTERNAL", NOT_CONFIGURED, { status: 503 });
+    throw err;
+  }
+
+  const INVALID = "Invalid or revoked key";
+  if (!ctx || !ctx.key.linkId || !ctx.link) return deny("INVALID_KEY", INVALID);
+  if (ctx.link.botId !== ctx.key.botId) return deny("INVALID_KEY", INVALID);
+  if (ctx.link.status !== "active") return deny("LINK_REVOKED", "Link is revoked");
+  if (ctx.key.revokedAt) return deny("INVALID_KEY", INVALID);
+  if (!ctx.product || ctx.product.disabled) return deny("LINK_REVOKED", "Link is revoked");
+
+  const linkScopes = onlyLinkScopes(ctx.link.scopes);
+  const scopes = onlyLinkScopes(ctx.key.scopes).filter((s) => linkScopes.includes(s));
+  if (requiredScope && !scopes.includes(requiredScope)) return deny("SCOPE_DENIED", "Insufficient scope");
+
+  return {
+    authenticated: true,
+    principal: { linkId: ctx.link.linkId, productId: ctx.link.productId, botId: ctx.link.botId, scopes },
+  };
+}
+
+/**
+ * 包住 handler：連結金鑰認證 + scope 檢查。handler 收到 (request, env, principal, ...args)。
+ *
+ * @param {Function} handler
+ * @param {string} requiredScope
+ */
+export function withLink(handler, requiredScope) {
+  return async (request, env, ...args) => {
+    const auth = await authenticateLink(request, env, requiredScope);
+    if (!auth.authenticated) return auth.response;
     return handler(request, env, auth.principal, ...args);
   };
 }

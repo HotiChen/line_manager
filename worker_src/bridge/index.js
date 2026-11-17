@@ -8,6 +8,7 @@
  *   GET  /health                      公開（會對 BRIDGE_DB 做 SELECT 1，失敗回 503 bridge_not_configured）
  *   POST /raw/push, /raw/multicast    service key（scope raw:push）
  *   /systems*                         人主體（LIFF）+ owner
+ *   /admin/*、/link/*、/links/*       連結流程（LM-2A，links.js；新錯誤格式 bridgeError）
  *   其他                              404
  *
  * Feature flag：只有 env.BRIDGE_ENABLED === "1"（精確字串）才啟用。
@@ -18,9 +19,10 @@
  */
 import { jsonResponse } from "../lib/utils.js";
 import { authenticateUser } from "../lm_service.js";
-import { isSystemsRoute, isBridgeServiceRoute, HEALTH_PATH } from "./routes.js";
+import { isSystemsRoute, isLinkRoute, isBridgeServiceRoute, HEALTH_PATH } from "./routes.js";
 import * as MessagesHandler from "./messages.js";
 import * as SystemsHandler from "./systems.js";
+import * as LinksHandler from "./links.js";
 import { BridgeDbError, bridgeUnavailable, pingDb } from "./db.js";
 
 /**
@@ -72,6 +74,11 @@ async function dispatch(request, env, pathname) {
       return res;
     }
     return SystemsHandler.route(request, env, auth.userId, pathname);
+  }
+
+  // 連結流程（LM-2A）：各端點自己認證（營運密鑰／瀏覽器／LIFF／產品密鑰／連結金鑰），回應一律用 bridgeError 格式
+  if (isLinkRoute(pathname)) {
+    return LinksHandler.route(request, env, pathname);
   }
 
   if (isBridgeServiceRoute(pathname)) {

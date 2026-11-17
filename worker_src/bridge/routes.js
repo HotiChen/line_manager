@@ -6,12 +6,29 @@
  *                                      —— 發 key 只能由人操作，key 不能發 key
  *   其他 /bridge/v1/*                  系統主體（Bearer service key + X-Bot-Id）
  *
- * 兩種都不是公開路由：auth_routes.js 的 PROTECTED_PREFIXES 含 /bridge（fail-closed），
+ *   /bridge/v1/admin/*、/link/*、/links/*  連結流程（LM-2A）：links.js 依端點各自認證
+ *                                      （營運密鑰、瀏覽器、LIFF 人主體、產品密鑰、連結金鑰），不走 service key
+ *
+ * 這些都不是公開路由：auth_routes.js 的 PROTECTED_PREFIXES 含 /bridge（fail-closed），
  * 唯一的公開例外是 /bridge/v1/health。
  */
 
 export const SYSTEMS_PATH = "/bridge/v1/systems";
 export const HEALTH_PATH = "/bridge/v1/health";
+
+/** 連結流程的路徑根（精確到「段」，所以 /bridge/v1/linksX 不算） */
+const LINK_ROOTS = ["/bridge/v1/admin", "/bridge/v1/link", "/bridge/v1/links"];
+
+/**
+ * 是否為連結流程路由（LM-2A，由 links.js 處理；各端點自己決定認證方式）。
+ *
+ * @param {string} pathname
+ * @returns {boolean}
+ */
+export function isLinkRoute(pathname) {
+  if (typeof pathname !== "string") return false;
+  return LINK_ROOTS.some((root) => pathname === root || pathname.startsWith(`${root}/`));
+}
 
 /**
  * 是否為人主體的 systems 路由（/bridge/v1/systems 或其子路徑）。
@@ -34,6 +51,7 @@ export function isBridgeServiceRoute(pathname) {
   if (typeof pathname !== "string") return false;
   if (!pathname.startsWith("/bridge/v1/")) return false;
   if (isSystemsRoute(pathname)) return false;
+  if (isLinkRoute(pathname)) return false;
   if (pathname === HEALTH_PATH) return false;
   return true;
 }

@@ -16,6 +16,7 @@ import { getAccessTokenForDestination } from "./lib/token_store.js";
 import { openBotStoreForBot } from "./lib/bot_store.js";
 import { authenticate } from "./middleware/auth.js";
 import { rateLimitMiddleware } from "./middleware/rate_limiter.js";
+import { BotKeys, UserKeys } from "./lib/kv_schema.js";
 
 /** owner-only 路由用的權限包裝（原樣轉出 middleware/permission.js 的實作） */
 export { withPermission } from "./middleware/permission.js";
@@ -105,4 +106,90 @@ export async function authenticateUser(request, env) {
   }
 
   return { authenticated: true, userId: auth.userId };
+}
+
+// ── LM-2A：連結流程需要的 bot 資訊（唯讀、窄介面）──
+
+const MAX_OWNED_BOTS = 50;
+const usable = (v) => typeof v === "string" && v !== "" && !v.includes(":");
+
+function pickName(...candidates) {
+  for (const c of candidates) if (typeof c === "string" && c.trim() !== "") return c;
+  return null;
+}
+
+async function readJson(env, key) {
+  return env.KV_LINE_STORAGE.get(key, { type: "json" });
+}
+
+/**
+ * 這個人是不是該 bot 的 owner；是 → 回 bot 的 id 與顯示名稱。
+ * 授權以 `bot:{id}:permissions` 為準（與 withPermission 同一個來源），不看 user:{id}:bots 索引，
+ * 也不信任呼叫端宣稱的任何 ownerId。
+ *
+ * @param {Object} env
+ * @param {string} userId 已經過 authenticateUser 的使用者
+ * @param {string} botId
+ * @returns {Promise<{botId: string, displayName: string}|null>} 不是 owner、bot 不存在、KV 壞掉都回 null
+ */
+export async function getOwnedBot(env, userId, botId) {
+  try {
+    if (!env || !env.KV_LINE_STORAGE || !usable(userId) || !usable(botId)) return null;
+    const permissions = await readJson(env, BotKeys.permissions(botId));
+    const users = permissions && Array.isArray(permissions.users) ? permissions.users : [];
+    if (!users.some((u) => u && u.userId === userId && u.role === "owner")) return null;
+    const info = await readJson(env, BotKeys.info(botId));
+    return { botId, displayName: pickName(info && info.displayName, info && info.name) || "LINE 官方帳號" };
+  } catch (err) {
+    console.error("[lm_service] getOwnedBot failed:", err && err.message);
+    return null;
+  }
+}
+
+/**
+ * 這個人擁有（owner）的 bot 清單，給同意頁讓使用者選。
+ * 候選來自 user:{id}:bots，但每一個都用 getOwnedBot 對 permissions 重新驗證。
+ *
+ * @param {Object} env
+ * @param {string} userId
+ * @returns {Promise<Array<{botId: string, displayName: string}>>} 任何失敗回空陣列
+ */
+export async function listOwnedBots(env, userId) {
+  try {
+    if (!env || !env.KV_LINE_STORAGE || !usable(userId)) return [];
+    const stored = await readJson(env, UserKeys.bots(userId));
+    const entries = stored && Array.isArray(stored.bots) ? stored.bots : [];
+    const seen = new Set();
+    const out = [];
+    for (const entry of entries) {
+      if (out.length >= MAX_OWNED_BOTS) break;
+      const botId = entry && entry.botId;
+      if (!usable(botId) || seen.has(botId)) continue;
+      seen.add(botId);
+      const bot = await getOwnedBot(env, userId, botId);
+      if (bot) out.push(bot);
+    }
+    return out;
+  } catch (err) {
+    console.error("[lm_service] listOwnedBots failed:", err && err.message);
+    return [];
+  }
+}
+
+/**
+ * bot 的顯示名稱（給連結流程回應用，不是授權判斷）。
+ *
+ * @param {Object} env
+ * @param {string} botId
+ * @returns {Promise<string>} 查不到時回通用名稱，不丟錯
+ */
+export async function getBotDisplayName(env, botId) {
+  try {
+    if (!env || !env.KV_LINE_STORAGE || !usable(botId)) return "LINE 官方帳號";
+    const info = await readJson(env, BotKeys.info(botId));
+    return pickName(info && info.displayName, info && info.name) || "LINE 官方帳號";
+  } catch (err) {
+    console.error("[lm_service] getBotDisplayName failed:", err && err.message);
+    return "LINE 官方帳號";
+  }
 }

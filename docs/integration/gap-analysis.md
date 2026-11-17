@@ -60,7 +60,7 @@ P0 兩項不處理，Bridge 做出來也無法對「別的商家」使用。
 | **LM-1B** | `BRIDGE_DB`（D1）＋migration；D1 測試 helper；service key、系統、冪等、audit_log 移到 D1（products 註冊移到 LM-2A，隨使用它的程式一起建） | ✅ 程式完成（待部署；部署後需手動套用遷移，見 [`lm-1b-plan.md`](lm-1b-plan.md) 操作手冊） | LM-1A |
 | **LM-1C** | `brk_` 金鑰格式（前綴＋雜湊）；新錯誤格式；`raw:push` scope 改名（audit_log 寫入與系統註冊 race 修正已在 LM-1B 完成） | ✅ 程式完成（待部署；取捨見下方完成紀錄） | LM-1B |
 | **LM-1D** | 契約測試：同一份 `bridge-v1.yaml` 驗證 LM 實作 | 待辦 | LM-1C |
-| **LM-2A** | 授權碼流程：`/link/authorize`、`/links/token`、`/links/{id}`（查詢、解除、換鑰）、同意頁、後台「已連結的產品」 | 待辦 | LM-1C |
+| **LM-2A** | 授權碼流程：`/link/authorize`、`/links/token`、`/links/{id}`（查詢、解除、換鑰）、同意頁、後台「已連結的產品」 | **後端（2A-1）✅ 程式完成，待部署與手動遷移 0002**（見 [`lm-2a-plan.md`](lm-2a-plan.md) 第 13、14 節）；前端同意頁與後台列表（2A-2）、真機實測（2A-3）待辦 | LM-1C |
 | **LM-3A** | 聯絡人綁定：`bind-tokens`、webhook 偵測綁定碼、狀態查詢（不回 userId） | 待辦 | LM-0A、LM-2A |
 | **LM-3B** | 受限 `/messages`：格式驗證、`action.url` 白名單、`external_contact_ref` 解析、D1 冪等、額度與封鎖對映 | 待辦 | LM-3A |
 | **LM-3E** | 與另一個產品端對端；故障演練；`/security-review` | 待辦 | LM-3B＋對方的工單 |
