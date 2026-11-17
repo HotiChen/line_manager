@@ -1,3 +1,8 @@
+# ───────────────────────── 契約測試（LM-1D）─────────────────────────
+# 這份檔案是「被檢查的契約」：tests/unit/test_bridge_contract_spec.mjs（規格自洽、與程式常數一致）與
+# tests/unit/test_bridge_contract_conformance.mjs（對真實 Worker 發請求，狀態碼／本文／標頭都要符合本檔）
+# 會在 `npm test` 裡比對。改 Bridge 端點或回應時，請同步改本檔；改了本檔也要讓程式跟上，兩邊任一邊漂移測試都會紅。
+# 新增或修改端點的步驟與規則見 docs/integration/gap-analysis.md 的「契約測試」一節。
 openapi: 3.0.3
 info:
   title: LM Bridge API
@@ -26,6 +31,8 @@ info:
 
     LM-2A 後端已完成（程式；待部署與手動遷移，見 lm-2a-plan.md 第 14 節）：`link/authorize`、`links/token`、`links/{link_id}`（GET／DELETE）、`links/{link_id}/rotate-key`。
     這些新端點的錯誤一律用下方 `Error` 格式、欄位 snake_case。
+    所有端點另外可能回 `503`（資料庫未設定，`INTERNAL`／`bridge_not_configured`）與 `500`（未預期錯誤，`INTERNAL`，`retryable: true`）；
+    `/health` 與 `/raw/*` 的 503／500 是舊格式（`LegacyError`）。含金鑰或授權碼的成功回應都帶 `Cache-Control: no-store`。
     不在本契約的 LM-2A 管理端點（營運與後台用，不屬於產品呼叫端）：`POST /bridge/v1/admin/products`（營運密鑰登記產品）、
     `GET /bridge/v1/link/authorize/preview`、`POST /bridge/v1/link/authorize/approve`（同意頁，LIFF）、
     `GET /bridge/v1/admin/links`、`DELETE /bridge/v1/admin/links/{link_id}`（後台，LIFF＋owner）。
@@ -67,6 +74,9 @@ paths:
                 required: [ok]
                 properties:
                   ok: { type: boolean }
+        '503':
+          description: BRIDGE_DB 未綁定或查詢失敗（舊格式 `{success:false,error:"bridge_not_configured"}`）
+          content: { application/json: { schema: { $ref: '#/components/schemas/LegacyError' } } }
 
   /bridge/v1/link/authorize:
     get:
@@ -86,9 +96,13 @@ paths:
         '302':
           description: |
             參數通過驗證後導向 LM 的同意頁（`/pages/link_authorize.html`）；使用者同意後由該頁導回 `redirect_uri`，帶 `code` 與原樣的 `state`（取消則帶 `error=access_denied` 與 `state`）。
+          headers:
+            Location: { required: true, schema: { type: string, format: uri }, description: 同意頁網址 }
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
         '400':
           description: product_id、state 或 redirect_uri 不合（INVALID_REQUEST）。不會導向任何未驗證的位址。
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /bridge/v1/links/token:
     post:
@@ -111,6 +125,8 @@ paths:
       responses:
         '200':
           description: 連結建立
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
           content:
             application/json:
               schema:
@@ -127,6 +143,7 @@ paths:
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/InvalidKey' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /bridge/v1/links/{link_id}:
     parameters:
@@ -139,12 +156,15 @@ paths:
       responses:
         '200':
           description: 連結資訊（不含任何金鑰）
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Link' }
         '401': { $ref: '#/components/responses/InvalidKey' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
     delete:
       tags: [link]
       summary: 解除連結
@@ -152,10 +172,14 @@ paths:
       x-status: implemented
       x-scope: link:manage
       responses:
-        '204': { description: 已解除 }
+        '204':
+          description: 已解除
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
         '401': { $ref: '#/components/responses/InvalidKey' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /bridge/v1/links/{link_id}/rotate-key:
     post:
@@ -169,6 +193,8 @@ paths:
       responses:
         '200':
           description: 新金鑰（只出現這一次）
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
           content:
             application/json:
               schema:
@@ -179,6 +205,7 @@ paths:
         '401': { $ref: '#/components/responses/InvalidKey' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /bridge/v1/contacts/bind-tokens:
     post:
@@ -206,6 +233,8 @@ paths:
       responses:
         '201':
           description: 綁定碼已產生
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
           content:
             application/json:
               schema:
@@ -224,7 +253,12 @@ paths:
         '400': { description: external_contact_ref 格式不符（INVALID_REQUEST）, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '401': { $ref: '#/components/responses/InvalidKey' }
         '403': { $ref: '#/components/responses/Forbidden' }
-        '429': { description: 超過每連結限流或未用碼上限（RATE_LIMITED）, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '429':
+          description: 超過每連結限流或未用碼上限（RATE_LIMITED）。每連結限流會帶 `Retry-After`；未用碼上限不帶（不是等一下就會好）。
+          headers:
+            Retry-After: { schema: { type: integer, minimum: 1 } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /bridge/v1/contacts/{external_contact_ref}:
     get:
@@ -240,6 +274,8 @@ paths:
       responses:
         '200':
           description: 綁定狀態
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
           content:
             application/json:
               schema:
@@ -250,10 +286,11 @@ paths:
                   status:
                     type: string
                     enum: [unbound, pending, bound, blocked, disabled]
-                  bound_at: { type: string, format: date-time, nullable: true }
+                  bound_at: { type: string, format: date-time, nullable: true, description: "只有 bound／blocked 才有值，其餘為 null" }
         '401': { $ref: '#/components/responses/InvalidKey' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
     delete:
       tags: [contacts]
       summary: 解除綁定
@@ -265,10 +302,14 @@ paths:
       parameters:
         - { name: external_contact_ref, in: path, required: true, schema: { $ref: '#/components/schemas/ContactRef' } }
       responses:
-        '204': { description: 已解除（或本來就沒有） }
+        '204':
+          description: 已解除（或本來就沒有）
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
         '401': { $ref: '#/components/responses/InvalidKey' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /bridge/v1/messages:
     post:
@@ -303,6 +344,7 @@ paths:
         '200':
           description: "已送出（LINE 已受理）"
           headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
             X-Idempotency-Replayed:
               schema: { type: string, enum: ['true'] }
               description: "這是先前結果的重送"
@@ -325,7 +367,7 @@ paths:
         '429':
           description: "RATE_LIMITED（每連結或每聯絡人頻率，或 LINE 端限流），依 `Retry-After` 重試"
           headers:
-            Retry-After: { schema: { type: integer } }
+            Retry-After: { $ref: '#/components/headers/RetryAfter' }
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '502':
           description: "INTERNAL，`retryable: true`（LINE 無法連線或 5xx）"
@@ -362,9 +404,16 @@ paths:
         `X-Idempotency-Key`、額度對帳（回報 `remaining`）、封鎖回 409。
         只有 owner 在後台手動發放、且 scope 含 `raw:push` 的金鑰可用；連結流程發出的金鑰永遠不含此 scope。
         scope 名稱已由 `messages:push` 改為 `raw:push`（LM-1C）；過渡期相容：註冊時舊名會正規化為 `raw:push`，舊金鑰裡的 `messages:push` 檢查時等同 `raw:push`。
-        此端點目前仍回舊格式 `{success:false,error}`（D-7），新錯誤格式見 `worker_src/bridge/errors.js`，由後續新端點採用。
+        此端點目前仍回舊格式 `{success:false,error:"<snake_case>"}`（D-7；`LegacyError`，不是 `Error`），新錯誤格式見 `worker_src/bridge/errors.js`，由後續新端點採用。
+        認證用 `Authorization: Bearer <金鑰>` 加 `X-Bot-Id`（必須等於金鑰所屬的 bot）。
+        `X-Idempotency-Key`（選填，≤ 128 字元）：同鍵重送回傳第一次的結果並帶 `X-Idempotency-Replayed: true`；
+        沒帶時回應多一個 `X-Idempotency-Missing: true`。只快取成功與確定性失敗（封鎖 409），額度用盡、找不到對象、LINE 端暫時性失敗都不快取。
+        限流為每 system 每分鐘（預設 60，可由 owner 調整）。
       x-status: implemented
       x-scope: raw:push
+      parameters:
+        - $ref: '#/components/parameters/BotId'
+        - $ref: '#/components/parameters/LegacyIdempotencyKey'
       requestBody:
         required: true
         content:
@@ -380,26 +429,32 @@ paths:
                   maxItems: 5
                   items: { type: object, required: [type], additionalProperties: true }
       responses:
-        '200':
-          description: 已送出
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success: { type: boolean }
-                  quotaConsumed: { type: integer }
-                  remaining: { type: integer, nullable: true }
-        '402': { $ref: '#/components/responses/QuotaExceeded' }
-        '409': { $ref: '#/components/responses/Conflict' }
+        '200': { $ref: '#/components/responses/RawSent' }
+        '400': { $ref: '#/components/responses/LegacyBadRequest' }
+        '401': { $ref: '#/components/responses/LegacyUnauthorized' }
+        '402': { $ref: '#/components/responses/LegacyQuotaExhausted' }
+        '403': { $ref: '#/components/responses/LegacyForbidden' }
+        '404': { $ref: '#/components/responses/LegacyTargetNotFound' }
+        '409': { $ref: '#/components/responses/LegacyConflict' }
+        '413': { $ref: '#/components/responses/LegacyTooLarge' }
+        '422': { $ref: '#/components/responses/LegacyKeyReuse' }
+        '429': { $ref: '#/components/responses/LegacyRateLimited' }
+        '502': { $ref: '#/components/responses/LegacyBadGateway' }
+        '503': { $ref: '#/components/responses/LegacyUnavailable' }
 
   /bridge/v1/raw/multicast:
     post:
       tags: [raw]
       summary: 原樣轉送 LINE 訊息給多人，上限 500（信任金鑰專用）
-      description: 已上線於 `POST /bridge/v1/raw/multicast`（原 `/api/v1/messages/multicast`，LM-1A 已搬）。需 `BRIDGE_ENABLED=1`。
+      description: |
+        已上線於 `POST /bridge/v1/raw/multicast`（原 `/api/v1/messages/multicast`，LM-1A 已搬）。需 `BRIDGE_ENABLED=1`。
+        認證、冪等、限流與錯誤格式（舊格式 `LegacyError`）同 `/raw/push`；`to` 重複的對象會去重，額度成本 = 去重後人數 × 則數。
+        與 `/raw/push` 的差別：沒有 404 `target_not_found`；LINE 403 不轉成 409（歸為 502）。
       x-status: implemented
       x-scope: raw:push
+      parameters:
+        - $ref: '#/components/parameters/BotId'
+        - $ref: '#/components/parameters/LegacyIdempotencyKey'
       requestBody:
         required: true
         content:
@@ -415,8 +470,17 @@ paths:
                   maxItems: 5
                   items: { type: object, required: [type], additionalProperties: true }
       responses:
-        '200': { description: 已送出 }
-        '402': { $ref: '#/components/responses/QuotaExceeded' }
+        '200': { $ref: '#/components/responses/RawSent' }
+        '400': { $ref: '#/components/responses/LegacyBadRequest' }
+        '401': { $ref: '#/components/responses/LegacyUnauthorized' }
+        '402': { $ref: '#/components/responses/LegacyQuotaExhausted' }
+        '403': { $ref: '#/components/responses/LegacyForbidden' }
+        '409': { $ref: '#/components/responses/LegacyConflict' }
+        '413': { $ref: '#/components/responses/LegacyTooLarge' }
+        '422': { $ref: '#/components/responses/LegacyKeyReuse' }
+        '429': { $ref: '#/components/responses/LegacyRateLimited' }
+        '502': { $ref: '#/components/responses/LegacyBadGateway' }
+        '503': { $ref: '#/components/responses/LegacyUnavailable' }
 
 components:
   securitySchemes:
@@ -431,7 +495,29 @@ components:
       scheme: bearer
       description: 產品註冊時取得的密鑰，只用於授權碼換金鑰。
 
+  headers:
+    NoStore:
+      required: true
+      description: 含金鑰、授權碼或聯絡人狀態的回應不可被快取
+      schema: { type: string, enum: [no-store] }
+    RetryAfter:
+      required: true
+      description: 幾秒後可重試
+      schema: { type: integer, minimum: 1 }
+
   parameters:
+    BotId:
+      name: X-Bot-Id
+      in: header
+      required: true
+      description: 必須等於金鑰所屬的 bot（只用於 `/raw/*` 的系統金鑰）
+      schema: { type: string }
+    LegacyIdempotencyKey:
+      name: X-Idempotency-Key
+      in: header
+      required: false
+      description: 見 `/raw/push` 說明（舊端點用 `X-` 前綴；新端點 `/messages` 用 `Idempotency-Key`）
+      schema: { type: string, minLength: 1, maxLength: 128 }
     IdempotencyKeyRequired:
       name: Idempotency-Key
       in: header
@@ -488,6 +574,28 @@ components:
         status: { type: string, enum: [accepted, sent, failed], description: '`POST /messages` 目前只會回 `sent`（同步送出）' }
         error_code: { type: string, nullable: true }
         sent_at: { type: string, format: date-time, nullable: true }
+    LegacyError:
+      type: object
+      description: |
+        D-7：`/health` 與 `/raw/*` 維持的舊錯誤格式。`error` 是 snake_case 字串（或限流中介層的一句英文），
+        可能多帶 `detail`、`reason`、`remaining`、`retryable`、`retryAfter`。不要用在新端點。
+      required: [error]
+      properties:
+        success: { type: boolean, enum: [false] }
+        error: { type: string }
+        detail: { type: string }
+        reason: { type: string, enum: [blocked, bot_left] }
+        remaining: { type: integer, nullable: true }
+        retryable: { type: boolean }
+        retryAfter: { type: number }
+    RawSendResult:
+      type: object
+      required: [success, quotaConsumed, remaining]
+      properties:
+        success: { type: boolean, enum: [true] }
+        quotaConsumed: { type: integer, minimum: 0, description: "本次消耗的 LINE 額度；LINE 回報先前已投遞（acceptedEarlier）時為 0" }
+        remaining: { type: integer, nullable: true, description: "對帳後剩餘額度；LINE 帳號無額度上限時為 null" }
+        acceptedEarlier: { type: boolean, description: LINE 回報這把 retry key 先前已投遞過 }
     Error:
       type: object
       required: [error]
@@ -529,9 +637,6 @@ components:
     NotFound:
       description: 找不到，或不屬於這條連結（NOT_FOUND）
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
-    Conflict:
-      description: CONTACT_NOT_BOUND、RECIPIENT_BLOCKED、IN_PROGRESS
-      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
     Unprocessable:
       description: INVALID_URL_DOMAIN 或訊息內容不符受限格式
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
@@ -541,5 +646,51 @@ components:
     RateLimited:
       description: RATE_LIMITED，依 `Retry-After` 重試
       headers:
-        Retry-After: { schema: { type: integer } }
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    ServiceUnavailable:
+      description: "INTERNAL（`bridge_not_configured`：資料庫未綁定或查詢失敗）。`retryable: true`"
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+    # ── /raw/* 與 /health 的舊格式回應（D-7）──
+    RawSent:
+      description: "已送出（LINE 已受理）。同鍵重送時帶 `X-Idempotency-Replayed: true`；沒帶 `X-Idempotency-Key` 時帶 `X-Idempotency-Missing: true`"
+      headers:
+        X-Idempotency-Replayed: { schema: { type: string, enum: ['true'] } }
+        X-Idempotency-Missing: { schema: { type: string, enum: ['true'] } }
+      content: { application/json: { schema: { $ref: '#/components/schemas/RawSendResult' } } }
+    LegacyBadRequest:
+      description: "`invalid_request`（含 `detail`）：標頭、JSON、to、messages 有誤，或 LINE 拒絕內容；缺 `X-Bot-Id` 也是 400（`error` 為說明句）"
+      content: { application/json: { schema: { $ref: '#/components/schemas/LegacyError' } } }
+    LegacyUnauthorized:
+      description: 金鑰缺漏、錯誤或已撤銷
+      content: { application/json: { schema: { $ref: '#/components/schemas/LegacyError' } } }
+    LegacyQuotaExhausted:
+      description: "`quota_exhausted`（帶 `remaining`），該 OA 當月額度不足；不快取"
+      content: { application/json: { schema: { $ref: '#/components/schemas/LegacyError' } } }
+    LegacyForbidden:
+      description: "scope 不足（需 `raw:push`）、`X-Bot-Id` 與金鑰不符、或系統已停用"
+      content: { application/json: { schema: { $ref: '#/components/schemas/LegacyError' } } }
+    LegacyTargetNotFound:
+      description: "`target_not_found`：`to` 是 U 開頭但不是這個 bot 的會員（只有 `/raw/push`）"
+      content: { application/json: { schema: { $ref: '#/components/schemas/LegacyError' } } }
+    LegacyConflict:
+      description: "`target_inactive`（帶 `reason`：blocked／bot_left，只有 `/raw/push`）或 `in_progress`（同一把鍵仍在處理中）"
+      content: { application/json: { schema: { $ref: '#/components/schemas/LegacyError' } } }
+    LegacyTooLarge:
+      description: "`payload_too_large`：本文超過 200000 字元"
+      content: { application/json: { schema: { $ref: '#/components/schemas/LegacyError' } } }
+    LegacyKeyReuse:
+      description: "`idempotency_key_reuse`：同一把鍵配不同內容"
+      content: { application/json: { schema: { $ref: '#/components/schemas/LegacyError' } } }
+    LegacyRateLimited:
+      description: "超過每 system 限流（`error` 為說明句，帶 `retryAfter`）或 LINE 端限流（`line_rate_limited`）。依 `Retry-After` 重試"
+      headers:
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content: { application/json: { schema: { $ref: '#/components/schemas/LegacyError' } } }
+    LegacyBadGateway:
+      description: "`line_unavailable`（LINE 無法連線或 5xx；`retryable`）"
+      content: { application/json: { schema: { $ref: '#/components/schemas/LegacyError' } } }
+    LegacyUnavailable:
+      description: "`bridge_not_configured`：BRIDGE_DB 未綁定，或 bot 沒有可用的 LINE token"
+      content: { application/json: { schema: { $ref: '#/components/schemas/LegacyError' } } }

@@ -26,6 +26,7 @@ wrangler.jsonc       Worker 設定（prod=pinti-line / dev=pinti-line-dev）
 2. 需要 KV 的測試一律用 `tests/helpers/mock_kv.mjs` 的 `createMockKV()`，不要傳空 `env = {}`（那會走 fail-open 路徑，測不到真實行為）。
 3. **`npm test` 必須全綠才能 commit**。CI（`.github/workflows/ci.yml`）會在 PR 上跑 `npm test` + `npx eslint worker_src tests --quiet`。
 4. 修 bug 的流程：先寫一個會重現 bug 的失敗測試 → 修到綠 → 再 refactor。
+5. 改 Bridge 端點（`worker_src/bridge/`）時一併更新 `docs/integration/bridge-v1.yaml`；契約測試（`test_bridge_contract_*.mjs`）會比對規格與真實回應，做法見 `docs/integration/gap-analysis.md` 的「契約測試」。
 
 ## 指令
 
