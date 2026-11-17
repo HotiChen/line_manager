@@ -16,10 +16,13 @@ info:
     - 聯絡人綁定用「綁定碼訊息」：客戶把綁定碼傳給 OA，由 webhook 取得該 OA 所屬 Provider 的 userId，
       不依賴 LINE Login。
 
-    實作狀態以 `x-status` 標示：`implemented`（程式已完成於 `/bridge/v1`；LM-2A 的端點待部署並手動套用遷移 0002）、`partial`、`planned`。
+    實作狀態以 `x-status` 標示：`implemented`（程式已完成於 `/bridge/v1`；LM-2A 的端點待部署並手動套用遷移 0002、LM-3A 的端點待手動套用遷移 0003）、`partial`、`planned`。
 
     LM-1A 已完成：`/raw/push`、`/raw/multicast` 由原本的 `/api/v1/messages/push|multicast` 搬到
     `/bridge/v1/raw/*`（舊路徑已移除），Bridge 在 `BRIDGE_ENABLED=1` 時才啟用，關閉時整個 `/bridge/*` 回 404。
+
+    LM-3A-1 後端已完成（程式；待部署與手動遷移 0003，見 lm-3a-plan.md 第 13 節）：`contacts/bind-tokens`（POST）、`contacts/{external_contact_ref}`（GET／DELETE）。
+    綁定碼訊息只在 1 對 1 聊天室生效（群組碼路徑尚未實作）；`bind_url` 的預填連結形式尚待真實 OA 驗證（3A-2）。
 
     LM-2A 後端已完成（程式；待部署與手動遷移，見 lm-2a-plan.md 第 14 節）：`link/authorize`、`links/token`、`links/{link_id}`（GET／DELETE）、`links/{link_id}/rotate-key`。
     這些新端點的錯誤一律用下方 `Error` 格式、欄位 snake_case。
@@ -185,10 +188,12 @@ paths:
         呼叫端提供自己的不透明代號 `external_contact_ref`（不得含姓名、電話、Email）。
         LM 回傳一組綁定碼與給客戶看的連結：客戶開啟後會帶著預填好的訊息進入與 OA 的聊天室，
         傳出後由 webhook 取得 userId 並完成綁定。綁定碼 7 天有效、單次使用。
-      x-status: planned
+
+        不吃 `Idempotency-Key`（碼只存雜湊，無法重送同一組）：同一條連結對同一個 `external_contact_ref` 再要一次，
+        舊的未用碼立即作廢，只回傳並保留最新一組。每條連結同時有效的未用碼上限 1000，超過回 `RATE_LIMITED`；
+        另有每連結每分鐘 30 次的限流。
+      x-status: implemented
       x-scope: contacts:bind
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -207,21 +212,28 @@ paths:
                 type: object
                 required: [bind_code, bind_url, expires_at]
                 properties:
-                  bind_code: { type: string, example: B7K2QX9M }
+                  bind_code: { type: string, example: LM-B7K2QX9M, description: '`LM-` + 8 碼 Crockford base32；只在建立當下回傳一次' }
                   bind_url:
                     type: string
                     format: uri
-                    description: 給客戶的連結或 QR code 內容（LINE 的 OA 訊息連結，帶預填的綁定碼）
+                    nullable: true
+                    description: |
+                      給客戶的連結或 QR code 內容（LINE 的 OA 訊息連結 `https://line.me/R/oaMessage/@basic_id/?<bind_code>`，帶預填的綁定碼）。
+                      取不到該 OA 的 basic ID 時為 `null`：改成顯示 `bind_code`，請客戶自己傳給 OA。
                   expires_at: { type: string, format: date-time }
+        '400': { description: external_contact_ref 格式不符（INVALID_REQUEST）, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '401': { $ref: '#/components/responses/InvalidKey' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { description: 超過每連結限流或未用碼上限（RATE_LIMITED）, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /bridge/v1/contacts/{external_contact_ref}:
     get:
       tags: [contacts]
       summary: 綁定狀態
-      description: 只回狀態，不回 LINE userId、顯示名稱或頭像。
-      x-status: planned
+      description: |
+        只回狀態，不回 LINE userId、顯示名稱或頭像。只查「這條連結」自己的綁定；別條連結的 ref 看起來就是 `unbound`。
+        `disabled` 只在連結已撤銷或產品停用的瞬間才可能出現（此時金鑰本身通常已先被擋下為 `LINK_REVOKED`）。
+      x-status: implemented
       x-scope: contacts:bind
       parameters:
         - { name: external_contact_ref, in: path, required: true, schema: { $ref: '#/components/schemas/ContactRef' } }
@@ -241,6 +253,22 @@ paths:
                   bound_at: { type: string, format: date-time, nullable: true }
         '401': { $ref: '#/components/responses/InvalidKey' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [contacts]
+      summary: 解除綁定
+      description: |
+        刪除這條連結下該 `external_contact_ref` 的綁定，並作廢它所有的綁定碼（給「客戶要求刪除」用）。
+        冪等：不論原本有沒有綁定或待用碼都回 204（不洩漏該代號是否存在過）。
+      x-status: implemented
+      x-scope: contacts:bind
+      parameters:
+        - { name: external_contact_ref, in: path, required: true, schema: { $ref: '#/components/schemas/ContactRef' } }
+      responses:
+        '204': { description: 已解除（或本來就沒有） }
+        '401': { $ref: '#/components/responses/InvalidKey' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /bridge/v1/messages:
     post:
@@ -372,11 +400,6 @@ components:
       description: 產品註冊時取得的密鑰，只用於授權碼換金鑰。
 
   parameters:
-    IdempotencyKey:
-      name: Idempotency-Key
-      in: header
-      required: false
-      schema: { type: string, maxLength: 128 }
     IdempotencyKeyRequired:
       name: Idempotency-Key
       in: header

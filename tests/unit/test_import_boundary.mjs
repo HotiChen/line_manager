@@ -117,6 +117,15 @@ describe('checkFile — 規則 (i)：LM core 不得 import bridge/', () => {
         assert.deepEqual(checkFile('worker_src/index.js', 'import { handleBridge } from "./bridge/index.js";'), []);
     });
 
+    it('LM-3A 接縫：lib/event_handler.js 只能 import bridge/binding.js，其他 bridge 模組與其他 LM 檔案仍不行', () => {
+        assert.deepEqual(checkFile('worker_src/lib/event_handler.js', 'import { tryConsumeBindCode } from "../bridge/binding.js";'), []);
+        assert.equal(checkFile('worker_src/lib/event_handler.js', 'import { x } from "../bridge/db.js";').length, 1);
+        assert.equal(checkFile('worker_src/lib/event_handler.js', 'import { x } from "../bridge/contacts.js";').length, 1);
+        assert.equal(checkFile('worker_src/lib/event_handler.js', 'import { x } from "../bridge/index.js";').length, 1);
+        assert.equal(checkFile('worker_src/lib/other.js', 'import { x } from "../bridge/binding.js";').length, 1);
+        assert.equal(checkFile('worker_src/handler/webhook.js', 'import { x } from "../bridge/binding.js";').length, 1);
+    });
+
     it('無關的 import 不誤報', () => {
         assert.deepEqual(checkFile('worker_src/handler/team.js', 'import y from "../lib/bridgeish.js";'), []);
     });

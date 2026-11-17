@@ -21,6 +21,8 @@ import { syncMemberRichMenu } from './segmented_richmenu_logic.js';
 import { addTagsToEntity, removeTagsFromEntity } from './tag_system.js';
 import { getMemberTier, checkTierUpgrade } from './tier_system.js';
 import { openBotStoreFor } from './bot_store.js';
+// LM-3A 聯絡人綁定：單向呼叫 Bridge 的 binding.js（BRIDGE_ENABLED 不是 "1" 時它什麼都不做）
+import { tryConsumeBindCode, markBlocked, restoreFollow } from '../bridge/binding.js';
 
 /**
  * 把 botId 併進會員的 botIds。
@@ -186,8 +188,30 @@ export async function handleMessageEvent(event, env, userId, accessToken, ctx, b
         logger.info('MESSAGE', `收到非文字訊息: ${event.message.type}`);
         return;
     }
-    const userMessage = event.message.text.trim();
     const lineUserId = event.source.userId;
+
+    // LM-3A：1 對 1 聊天室傳來的文字若完全是一組綁定碼，就完成綁定、回一則確認並結束
+    // （不再跑關鍵字，避免同一則訊息回兩次）。放在記錄使用者訊息之前，成功消耗的碼不會進 log。
+    // tryConsumeBindCode 旗標關閉時不碰任何資料庫、不認得的文字零查詢；任何例外都當作「沒處理」。
+    if (event.source.type === 'user' && lineUserId) {
+        let bind = { handled: false };
+        try {
+            bind = await tryConsumeBindCode(env, { botId, lineUserId, text: event.message.text });
+        } catch (err) {
+            logger.error('BIND', `綁定碼處理失敗: ${err && err.message}`);
+        }
+        if (bind.handled) {
+            try {
+                await replyWithRetry(event.replyToken, [{ type: 'text', text: bind.replyText }], accessToken);
+            } catch (error) {
+                // 綁定已完成；確認訊息送不出去不該讓 webhook 失敗
+                logger.error('BIND', `綁定確認回覆發送失敗: ${error.message}`);
+            }
+            return;
+        }
+    }
+
+    const userMessage = event.message.text.trim();
     logger.info('MESSAGE', `使用者訊息: "${userMessage}"`);
     // 載入關鍵字列表
     const keywordList = await store.getOr('keywords', []);
@@ -329,6 +353,9 @@ export async function handleFollowEvent(event, env, userId, accessToken, ctx, bo
     const lineUserId = event.source.userId;
     logger.info('FOLLOW', `新用戶加入: ${lineUserId}`);
 
+    // LM-3A：先前綁定過、因封鎖而 blocked 的聯絡人還原（不新建綁定）。binding.js 絕不丟錯，旗標關閉時什麼都不做
+    await restoreFollow(env, { botId, lineUserId });
+
     // 紀錄會員並同步選單
     await recordMemberInteraction(event, store, accessToken, botId);
     await syncMemberRichMenu(store, lineUserId);
@@ -374,6 +401,9 @@ export async function handleUnfollowEvent(event, env, userId, botId) {
     const store = openBotStoreFor(env, userId, botId);
     const lineUserId = event.source.userId;
     logger.info('UNFOLLOW', `用戶封鎖: ${lineUserId}`);
+
+    // LM-3A：此使用者的聯絡人綁定標成 blocked。binding.js 絕不丟錯，旗標關閉時什麼都不做
+    await markBlocked(env, { botId, lineUserId });
 
     // 更新狀態為 inactive
     const profile = await store.get('member', lineUserId);

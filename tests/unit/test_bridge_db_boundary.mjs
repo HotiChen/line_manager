@@ -75,6 +75,29 @@ describe('db.js 的 SQL 只用 bound parameter', () => {
     });
 });
 
+describe('LM-3A：LINE userId 不外流', () => {
+    it('db.js 沒有任何 SELECT 讀出 line_user_id（只寫入、或當 WHERE 條件）', () => {
+        const src = readFileSync(join(SRC, 'bridge', 'db.js'), 'utf8');
+        const statements = [...src.matchAll(/\.prepare\(\s*(`[^`]*`|"[^"\n]*")/g)].map((m) => m[1]);
+        assert.ok(statements.length > 20);
+        for (const sql of statements.filter((x) => /^[`"]\s*SELECT/i.test(x))) {
+            assert.doesNotMatch(sql, /line_user_id/, sql.slice(0, 60));
+        }
+    });
+
+    it('HTTP 處理檔（contacts.js、links.js）完全不碰 line_user_id / lineUserId', () => {
+        for (const f of ['contacts.js', 'links.js']) {
+            assert.doesNotMatch(code(join(SRC, 'bridge', f)), /line_?user_?id/i, f);
+        }
+    });
+
+    it('稽核白名單 sanitizeDetail 沒有 line_user_id、external_contact_ref、綁定碼的欄位', () => {
+        const src = readFileSync(join(SRC, 'bridge', 'db.js'), 'utf8');
+        const body = src.slice(src.indexOf('function sanitizeDetail'), src.indexOf('export async function writeAudit'));
+        assert.doesNotMatch(body, /line_user|userId|external_contact_ref|\bref\b|bind_code|\bcode\b/i);
+    });
+});
+
 describe('bridge/ 不再使用已搬到 D1 的 KV key', () => {
     it('沒有 BotKeys.system / systems / idem、ServiceKeyKeys', () => {
         for (const f of bridgeFiles) {

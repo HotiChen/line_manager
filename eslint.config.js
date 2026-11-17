@@ -58,12 +58,25 @@ export default [
     {
         // (i) bridge/ 以外不得 import bridge/；worker_src/index.js 是 composition root，例外
         files: ['worker_src/**/*.js'],
-        ignores: ['worker_src/bridge/**', 'worker_src/index.js'],
+        ignores: ['worker_src/bridge/**', 'worker_src/index.js', 'worker_src/lib/event_handler.js'],
         rules: {
             'no-restricted-imports': ['error', {
                 patterns: [{
                     group: ['**/bridge', '**/bridge/**'],
                     message: 'worker_src/bridge/ 是獨立模組：只有 worker_src/index.js（composition root）可以 import 它。',
+                }],
+            }],
+        },
+    },
+    {
+        // (i-b) LM-3A 接縫：lib/event_handler.js 只准 import bridge/binding.js（tests/helpers/import_boundary.mjs 的 LM_SIDE_BRIDGE_ALLOWED）
+        files: ['worker_src/lib/event_handler.js'],
+        rules: {
+            'no-restricted-imports': ['error', {
+                patterns: [{
+                    // 指到 bridge/ 的 specifier，但排除 ../bridge/binding.js（gitignore 風格的 negation 不處理 ../，所以用 regex）
+                    regex: '^(?!\\.\\./bridge/binding\\.js$)(.*/)?bridge(/|$)',
+                    message: 'event_handler.js 只能 import bridge/binding.js（LM-3A 的 webhook 接縫）。',
                 }],
             }],
         },

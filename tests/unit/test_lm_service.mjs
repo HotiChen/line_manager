@@ -22,6 +22,7 @@ import {
     getOwnedBot,
     listOwnedBots,
     getBotDisplayName,
+    getBotBasicId,
 } from '../../worker_src/lm_service.js';
 import * as lmService from '../../worker_src/lm_service.js';
 
@@ -37,11 +38,11 @@ beforeEach(() => {
 afterEach(() => { globalThis.fetch = originalFetch; });
 
 describe('介面形狀', () => {
-    it('只匯出約定的八個名字（LM-2A 刻意新增 getOwnedBot、listOwnedBots、getBotDisplayName）', () => {
+    it('只匯出約定的九個名字（LM-2A 刻意新增 getOwnedBot、listOwnedBots、getBotDisplayName；LM-3A 新增 getBotBasicId）', () => {
         assert.deepEqual(
             Object.keys(lmService).sort(),
             [
-                'authenticateUser', 'getBotAccessToken', 'getBotDisplayName', 'getOwnedBot',
+                'authenticateUser', 'getBotAccessToken', 'getBotBasicId', 'getBotDisplayName', 'getOwnedBot',
                 'hasMember', 'listOwnedBots', 'markMemberInactive', 'withPermission',
             ]
         );
@@ -257,5 +258,49 @@ describe('LM-2A：getOwnedBot / listOwnedBots / getBotDisplayName', () => {
         assert.equal(await getBotDisplayName(env, BOT), 'Shop A');
         assert.equal(await getBotDisplayName(env, OTHER), 'LINE 官方帳號');
         assert.equal(await getBotDisplayName({}, BOT), 'LINE 官方帳號');
+    });
+});
+
+describe('getBotBasicId（LM-3A）', () => {
+    const originalErr = console.error;
+    beforeEach(async () => {
+        console.error = () => {};
+        await env.KV_LINE_STORAGE.put(BotKeys.owner(BOT), OWNER);
+        await env.KV_LINE_STORAGE.put(`access_tokens_${OWNER}`, JSON.stringify({ main: { token: 'TOKEN_X', destination: BOT } }));
+    });
+    afterEach(() => { console.error = originalErr; });
+
+    it('以 bot 的 token 呼叫 GET /v2/bot/info，回 basicId', async () => {
+        const calls = [];
+        globalThis.fetch = async (url, init) => {
+            calls.push({ url: String(url), auth: init.headers.Authorization, method: init.method });
+            return new Response(JSON.stringify({ userId: BOT, basicId: '@123abcde', displayName: 'x' }), { status: 200 });
+        };
+        assert.equal(await getBotBasicId(env, BOT), '@123abcde');
+        assert.deepEqual(calls, [{ url: 'https://api.line.me/v2/bot/info', auth: 'Bearer TOKEN_X', method: undefined }]);
+    });
+
+    it('沒有 token → null，且不打 LINE', async () => {
+        let called = false;
+        globalThis.fetch = async () => { called = true; return new Response('{}'); };
+        assert.equal(await getBotBasicId(env, 'Unoowner0000000000000000000000001'), null);
+        assert.equal(called, false);
+    });
+
+    it('LINE 回錯、非 JSON、沒有 basicId、fetch 丟錯 → 一律 null，不丟錯，log 不含 token', async () => {
+        const logs = [];
+        console.error = (...a) => logs.push(a.join(' '));
+        for (const impl of [
+            async () => new Response('nope', { status: 401 }),
+            async () => new Response('not json', { status: 200 }),
+            async () => new Response(JSON.stringify({ userId: BOT }), { status: 200 }),
+            async () => new Response(JSON.stringify({ basicId: '  ' }), { status: 200 }),
+            async () => new Response(JSON.stringify({ basicId: 123 }), { status: 200 }),
+            async () => { throw new Error('network down'); },
+        ]) {
+            globalThis.fetch = impl;
+            assert.equal(await getBotBasicId(env, BOT), null);
+        }
+        assert.ok(!logs.join('\n').includes('TOKEN_X'));
     });
 });
