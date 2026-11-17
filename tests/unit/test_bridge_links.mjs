@@ -11,6 +11,7 @@
  */
 import { describe, it, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { withPinnedWindow } from '../helpers/pin_time.mjs';
 import { createMockKV } from '../helpers/mock_kv.mjs';
 import { createTestD1 } from '../helpers/mock_d1.mjs';
 import { seedSystem, seedKey, all, count } from '../helpers/bridge_seed.mjs';
@@ -302,13 +303,13 @@ describe('POST /admin/products', () => {
         });
     });
 
-    it('限流：同一來源連續猜密鑰，超過上限回 429 RATE_LIMITED（含 Retry-After）', async () => {
+    it('限流：同一來源連續猜密鑰，超過上限回 429 RATE_LIMITED（含 Retry-After）', async () => withPinnedWindow(async () => {
         let last;
         for (let i = 0; i < 12; i++) last = await call('POST', '/bridge/v1/admin/products', { headers: bearer('wrong', { 'CF-Connecting-IP': '198.51.100.9' }), body: valid });
         assert.equal(last.res.status, 429);
         assert.equal(errCode(last), 'RATE_LIMITED');
         assert.ok(Number(last.res.headers.get('Retry-After')) >= 1);
-    });
+    }));
 });
 
 // ───────────────────────── authorize（瀏覽器） ─────────────────────────
@@ -570,14 +571,14 @@ describe('POST /link/authorize/approve', () => {
         assert.deepEqual(scopes[1], ['link:manage']);
     });
 
-    it('限流之外：人主體的 rate limit 仍適用（沿用 authenticateUser）', async () => {
+    it('限流之外：人主體的 rate limit 仍適用（沿用 authenticateUser）', async () => withPinnedWindow(async () => {
         const p = await registerProduct();
         let last;
         for (let i = 0; i < 101; i++) last = await call('GET', `/bridge/v1/link/authorize/preview?${q(authParams(p))}`, { headers: asUser(OWNER) });
         assert.equal(last.res.status, 429);
         assert.equal(errCode(last), 'RATE_LIMITED');
         assert.ok(last.res.headers.get('Retry-After'));
-    });
+    }));
 });
 
 // ───────────────────────── links/token ─────────────────────────
@@ -760,7 +761,7 @@ describe('POST /links/token', () => {
     });
 
     describe('限流 (IP, product_id)', () => {
-        it('同一來源同一產品超過上限 → 429 RATE_LIMITED（含 Retry-After）；之後連正確的也被擋', async () => {
+        it('同一來源同一產品超過上限 → 429 RATE_LIMITED（含 Retry-After）；之後連正確的也被擋', async () => withPinnedWindow(async () => {
             const p = await registerProduct();
             let last;
             for (let i = 0; i < 31; i++) last = await exchange(p, `lmc_${'A'.repeat(43)}`, { ip: '198.51.100.1' });
@@ -770,7 +771,7 @@ describe('POST /links/token', () => {
             assert.ok(Number(last.res.headers.get('Retry-After')) >= 1);
             const { code } = codeFrom(await approve(p));
             assert.equal((await exchange(p, code, { ip: '198.51.100.1' })).res.status, 429);
-        });
+        }));
 
         it('桶是 (來源, 產品)：換來源或換產品不受影響', async () => {
             const p = await registerProduct();
@@ -782,11 +783,11 @@ describe('POST /links/token', () => {
             assert.equal((await exchange(other, c2, { ip: '198.51.100.1' })).res.status, 200);
         });
 
-        it('亂猜的格式錯誤密鑰也算進 (來源, unknown) 的桶', async () => {
+        it('亂猜的格式錯誤密鑰也算進 (來源, unknown) 的桶', async () => withPinnedWindow(async () => {
             let last;
             for (let i = 0; i < 31; i++) last = await call('POST', '/bridge/v1/links/token', { headers: bearer('junk', { 'CF-Connecting-IP': '198.51.100.3' }), body: {} });
             assert.equal(last.res.status, 429);
-        });
+        }));
 
         it('缺 KV binding → 沿用限流器既有行為：fail-open（不限流），交換仍可進行', async () => {
             const e = { ...env, KV_LINE_STORAGE: undefined };
