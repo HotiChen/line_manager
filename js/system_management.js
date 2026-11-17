@@ -15,6 +15,7 @@ import { toast } from '../helper/toast.js';
 import { showConfirm } from '../helper/modal.helper.js';
 import { apiBase } from '../helper/state.js';
 import { SCOPES, validateSystemId, buildCreatePayload, buildCurlExample, describeError } from '../helper/system_form.js';
+import { normalizeLinks, scopeShortLabel, formatIsoTime, describeLinkError } from '../helper/link_authorize_form.js';
 
 let botId = null;
 let busy = false;
@@ -37,9 +38,9 @@ function h(tag, props = {}, ...children) {
 }
 
 /** 回傳 { ok, status, data }，網路失敗時 status 為 0。不丟例外，也不自動跳 toast。 */
-async function call(method, path, body) {
+async function call(method, path, body, customHeaders) {
   try {
-    const res = await ApiClient.request(method, path, body ?? null, { rawResponse: true, showErrorToast: false });
+    const res = await ApiClient.request(method, path, body ?? null, { rawResponse: true, showErrorToast: false, customHeaders });
     let data = null;
     try {
       data = await res.json();
@@ -177,6 +178,92 @@ async function loadSystems() {
   renderList(Array.isArray(res.data?.systems) ? res.data.systems : []);
 }
 
+// ── 已連結的產品（LM-2A）──
+// 與上面的「系統」互相獨立：這一段任何地方失敗都只影響這個區塊，不會丟到 pageInit 外面。
+
+function renderLinkCard(link) {
+  const active = link.status === 'active';
+  return h(
+    'div',
+    { class: 'col-12 col-lg-6' },
+    h(
+      'div',
+      { class: 'card shadow-sm border-0 h-100' },
+      h(
+        'div',
+        { class: 'card-body' },
+        h(
+          'div',
+          { class: 'd-flex justify-content-between align-items-start gap-2 mb-2' },
+          h('h5', { class: 'mb-0 text-break', style: 'min-width:0', text: link.productName }),
+          h('span', { class: `badge flex-shrink-0 ${active ? 'bg-success' : 'bg-secondary'}`, text: active ? '使用中' : '已撤銷' })
+        ),
+        h('div', { class: 'mb-2' }, link.scopes.map((s) => h('span', { class: 'badge bg-light text-dark border me-1 mb-1', text: scopeShortLabel(s) }))),
+        h('div', { class: 'text-muted small', text: `連結時間：${formatIsoTime(link.createdAt)}` }),
+        active ? null : h('div', { class: 'text-muted small', text: `撤銷時間：${formatIsoTime(link.revokedAt)}` }),
+        active
+          ? h(
+              'div',
+              { class: 'd-flex flex-wrap gap-2 mt-3' },
+              h('button', { type: 'button', class: 'btn btn-sm btn-outline-danger', text: '撤銷', onclick: (e) => revokeLink(link, e.currentTarget) })
+            )
+          : null
+      )
+    )
+  );
+}
+
+function showLinkNotice(message) {
+  const el = byId('link-notice');
+  el.textContent = message || '';
+  el.classList.toggle('d-none', !message);
+}
+
+async function loadLinks() {
+  byId('link-loading').classList.remove('d-none');
+  byId('link-empty').classList.add('d-none');
+  showLinkNotice('');
+  try {
+    if (!botId) {
+      byId('link-list').replaceChildren();
+      showLinkNotice('無法確認目前的專案，暫時無法顯示已連結的產品。');
+      return;
+    }
+    const res = await call('GET', '/bridge/v1/admin/links', null, { 'X-Bot-Id': botId });
+    if (!res.ok) {
+      byId('link-list').replaceChildren();
+      // Bridge 未啟用時（404 沒有 body）或其他失敗：只在這個區塊提示
+      showLinkNotice(describeLinkError(res.status, res.data, 'admin'));
+      return;
+    }
+    const links = normalizeLinks(res.data);
+    byId('link-list').replaceChildren(...links.map(renderLinkCard));
+    byId('link-empty').classList.toggle('d-none', links.length > 0);
+  } catch {
+    showLinkNotice('發生未知錯誤');
+  } finally {
+    byId('link-loading').classList.add('d-none');
+  }
+}
+
+async function revokeLink(link, button) {
+  // showConfirm 會把標題與訊息逸出，產品名稱（外部輸入）放進去是安全的
+  const confirmed = await showConfirm({
+    title: '撤銷連結',
+    message: `撤銷「${link.productName.slice(0, 40)}」後，該產品立即無法再使用，需重新授權才能恢復。\n確定要撤銷嗎？`,
+    confirmText: '撤銷',
+    type: 'danger',
+  });
+  if (!confirmed) return;
+
+  await withBusy(button, async () => {
+    const res = await call('DELETE', `/bridge/v1/admin/links/${encodeURIComponent(link.linkId)}`, null, { 'X-Bot-Id': botId });
+    if (!res.ok) return toast.error(describeLinkError(res.status, res.data, 'admin'));
+    toast.success('已撤銷，該產品立即無法再使用');
+    await loadLinks();
+  });
+}
+
 // ── 動作 ──
 
 /** 顯示金鑰。金鑰只放進唯讀欄位，不存任何變數；對話框關閉時清掉。 */
@@ -292,4 +379,6 @@ export async function pageInit() {
 
   await loadBot();
   await loadSystems();
+  // 連結區塊自成一體：不 await —— 它慢或失敗都不該拖住全頁的載入遮罩與上面的系統列表（loadLinks 自己吞掉所有錯誤）
+  loadLinks();
 }

@@ -47,6 +47,28 @@
             </div>
         </div>
     </div>
+
+    <!-- 已連結的產品（LM-2A）：產品經「同意頁」取得的受限連結；與上面手動註冊的「系統」是兩回事 -->
+    <section class="mt-5" id="link-section">
+        <h4 class="mb-1">已連結的產品</h4>
+        <p class="text-muted small mb-3">
+            外部產品經你在「授權頁」按下同意後，會連結到這個官方帳號。撤銷後該產品立即無法再使用，需重新授權才能恢復。
+        </p>
+
+        <div class="alert alert-warning d-none" id="link-notice" role="alert"></div>
+
+        <div class="row g-3" id="link-list"></div>
+
+        <div class="text-center text-muted py-4 d-none" id="link-empty">
+            <i class="bi bi-link-45deg fs-1 d-block mb-2"></i>
+            還沒有任何產品連結到這個官方帳號
+        </div>
+
+        <div class="text-center text-muted py-4" id="link-loading">
+            <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+            載入中...
+        </div>
+    </section>
 </div>
 
 <!-- 註冊新系統 -->

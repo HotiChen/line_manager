@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 網址含 state 與 redirect_uri；離開此頁時不要把它當 Referer 送給任何人 -->
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>授權連結產品 - Pinti Line Bot</title>
+    <!-- 防點擊劫持：被嵌進 iframe 時，在任何內容渲染之前就標記為 framed；js/link_authorize.js 會再檢查一次 -->
+    <script>
+        try { if (window.top !== window.self) document.documentElement.classList.add('framed'); }
+        catch (e) { document.documentElement.classList.add('framed'); }
+    </script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <style>
+        :root {
+            --la-bg: #f8f9fa;
+            --la-card: #ffffff;
+            --la-text: #212529;
+            --la-muted: #6c757d;
+            --la-panel: #f1f3f5;
+            --la-border: #dee2e6;
+            --la-shadow: rgba(0, 0, 0, 0.08);
+            --la-icon-bg: #e7f1ff;
+            --la-icon: #0d6efd;
+            --la-danger-bg: #f8d7da;
+            --la-danger: #dc3545;
+        }
+
+        /* 深色：跟隨 js/theme-switcher.js 存的 localStorage.theme（寫在 data-theme），沒有就跟系統 */
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme="light"]) {
+                --la-bg: #1a1d23;
+                --la-card: #252932;
+                --la-text: #f3f4f6;
+                --la-muted: #c4c9d1;
+                --la-panel: #2d3340;
+                --la-border: #3b4252;
+                --la-shadow: rgba(0, 0, 0, 0.4);
+                --la-icon-bg: #1f2d4a;
+                --la-icon: #8ab4ff;
+                --la-danger-bg: #4a2227;
+                --la-danger: #ff8a95;
+            }
+        }
+
+        :root[data-theme="dark"] {
+            --la-bg: #1a1d23;
+            --la-card: #252932;
+            --la-text: #f3f4f6;
+            --la-muted: #c4c9d1;
+            --la-panel: #2d3340;
+            --la-border: #3b4252;
+            --la-shadow: rgba(0, 0, 0, 0.4);
+            --la-icon-bg: #1f2d4a;
+            --la-icon: #8ab4ff;
+            --la-danger-bg: #4a2227;
+            --la-danger: #ff8a95;
+        }
+
+        html {
+            color-scheme: light dark;
+        }
+
+        body {
+            background-color: var(--la-bg);
+            color: var(--la-text);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px 0;
+        }
+
+        .auth-card {
+            max-width: 440px;
+            width: calc(100% - 32px);
+            border-radius: 16px;
+            border: none;
+            background-color: var(--la-card);
+            color: var(--la-text);
+            box-shadow: 0 10px 25px var(--la-shadow);
+        }
+
+        .icon-circle {
+            width: 72px;
+            height: 72px;
+            background-color: var(--la-icon-bg);
+            color: var(--la-icon);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.2rem;
+            margin: 0 auto 1.25rem;
+        }
+
+        .icon-circle.is-danger {
+            background-color: var(--la-danger-bg);
+            color: var(--la-danger);
+        }
+
+        .muted {
+            color: var(--la-muted);
+        }
+
+        .panel {
+            background-color: var(--la-panel);
+            border-radius: 12px;
+            padding: 12px 14px;
+        }
+
+        /* 產品名稱是外部輸入：任何長度、任何字元都不能撐破版面 */
+        .product-name {
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .scope-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .scope-list li {
+            display: flex;
+            gap: 8px;
+            align-items: flex-start;
+            padding: 4px 0;
+        }
+
+        .scope-list i {
+            color: var(--la-icon);
+            margin-top: 2px;
+        }
+
+        .scope-list li.is-unknown i {
+            color: var(--la-danger);
+        }
+
+        .btn-row .btn {
+            min-height: 44px;
+        }
+
+        /* 取消鈕在深色底上要看得清楚（Bootstrap 預設的 outline-secondary 灰色在深色下對比不足） */
+        #btn-cancel {
+            color: var(--la-text);
+            border-color: var(--la-muted);
+            background: transparent;
+        }
+
+        /* 被嵌入 iframe：什麼都不渲染，只留一行提示 */
+        .framed-only {
+            display: none;
+            text-align: center;
+            padding: 24px;
+            color: var(--la-text);
+        }
+
+        html.framed .auth-card {
+            display: none !important;
+        }
+
+        html.framed .framed-only {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <p class="framed-only" id="framed-message">請在瀏覽器直接開啟此頁面。</p>
+
+    <main class="auth-card card p-3 p-sm-4" id="auth-card">
+        <div class="card-body px-1 px-sm-3">
+
+            <!-- 載入中 -->
+            <div id="state-loading" class="text-center">
+                <div class="spinner-border text-primary mb-3" style="width: 3rem; height: 3rem;" role="status"></div>
+                <h4 class="fw-bold">正在確認授權要求...</h4>
+                <p class="muted mb-0">請稍候。</p>
+            </div>
+
+            <!-- 同意畫面 -->
+            <div id="state-consent" class="d-none">
+                <div class="icon-circle"><i class="bi bi-link-45deg"></i></div>
+                <h4 class="fw-bold text-center mb-1">授權連結產品</h4>
+                <p class="text-center mb-3 product-name">
+                    <strong id="product-name"></strong>
+                    <span class="muted"> 想連結到你的 LINE 官方帳號</span>
+                </p>
+
+                <!-- 要連結的官方帳號 -->
+                <div class="panel mb-3">
+                    <div class="small muted mb-1">要連結的官方帳號</div>
+                    <div id="bot-single" class="fw-semibold product-name d-none"></div>
+                    <select id="bot-select" class="form-select d-none" aria-label="選擇要連結的官方帳號"></select>
+                    <div id="bot-empty" class="text-danger-emphasis d-none" role="alert">
+                        你沒有可授權的官方帳號（需為管理員）。
+                    </div>
+                </div>
+
+                <!-- 權限說明 -->
+                <div class="panel mb-3">
+                    <div class="small muted mb-2">同意後，這個產品可以：</div>
+                    <ul class="scope-list" id="scope-list"></ul>
+                    <div id="scope-unknown" class="small mt-2 d-none" role="alert" style="color: var(--la-danger);">
+                        這個授權要求包含無法辨識的權限，為了安全已停用「同意」。請回到產品重新開始，或聯絡產品提供者。
+                    </div>
+                </div>
+
+                <p class="small muted mb-3">
+                    <i class="bi bi-shield-lock me-1"></i>
+                    此產品無法取得你的客戶的 LINE 帳號資料，也無法發送任意訊息。你隨時可以在後台「系統整合」撤銷這個連結。
+                </p>
+
+                <div class="alert alert-danger small d-none" id="action-error" role="alert"></div>
+
+                <div class="d-grid gap-2 btn-row">
+                    <button id="btn-approve" type="button" class="btn btn-primary rounded-pill" disabled>
+                        <i class="bi bi-check-circle me-2"></i>同意
+                    </button>
+                    <button id="btn-cancel" type="button" class="btn btn-outline-secondary rounded-pill">
+                        <i class="bi bi-x-circle me-2"></i>取消
+                    </button>
+                </div>
+            </div>
+
+            <!-- 導向中 -->
+            <div id="state-redirecting" class="d-none text-center">
+                <div class="spinner-border text-primary mb-3" role="status"></div>
+                <h5 class="fw-bold">正在導回產品...</h5>
+            </div>
+
+            <!-- 錯誤 -->
+            <div id="state-error" class="d-none text-center">
+                <div class="icon-circle is-danger"><i class="bi bi-x-lg"></i></div>
+                <h4 class="fw-bold mb-2">無法繼續授權</h4>
+                <p class="muted mb-0" id="error-message">發生未知錯誤</p>
+            </div>
+        </div>
+    </main>
+
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <script type="module" src="../js/link_authorize.js"></script>
+</body>
+
+</html>
