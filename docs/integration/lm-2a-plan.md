@@ -306,3 +306,72 @@ curl -sS -X POST "https://<你的網域>/lm/bridge/v1/admin/products" \
 
 **(g) 排錯**：`GET /bridge/v1/health` 回 503 `bridge_not_configured` → 缺 `BRIDGE_DB` 綁定或缺表（回到 (a)(b)）。
 稽核可在 Console 查：`SELECT at, action, result, bot_id, detail FROM audit_log WHERE action IN ('product_registered','link_authorized','link_revoked','key_rotated','code_exchange_failed') ORDER BY id DESC LIMIT 50;`
+
+## 15. 2A-3 真機實測手冊（不需要 Image Picker）
+
+目的：用「假產品」在正式環境走完整條連結流程，順便驗證只有真實 D1 / 真實 LIFF 才看得到的假設。
+**所有密鑰只放在你自己終端機的環境變數；不要貼進對話、文件或任何會 commit 的檔案。**
+假產品用 `https://example.com/callback` 當回呼：授權完成後瀏覽器會停在那個網址（頁面內容不重要），
+**網址列就是結果**——裡面的 `code=` 與 `state=` 是下一步要用的。
+
+前置：§14 (a)(b) 已在 `bridge-db` 完成（dev 庫若要測也要補）。
+
+### 步驟
+
+1. **設定 Secret**：Worker `pinti-line` → Settings → Variables and Secrets，新增兩個型別 **Secret**：
+   `BRIDGE_ADMIN_SECRET`（`openssl rand -base64 32` 產生）、`BRIDGE_ENABLED` = `1`。儲存並部署。
+2. **健康檢查**：瀏覽器開 `https://imhoti.tw/lm/bridge/v1/health` → `{"ok":true}`。
+3. **終端機準備變數**（輸入時不顯示）：
+   ```bash
+   read -rs ADMIN; export ADMIN       # 貼上 BRIDGE_ADMIN_SECRET 後按 Enter
+   export B=https://imhoti.tw/lm/bridge/v1
+   ```
+4. **登記假產品**：
+   ```bash
+   curl -sS -X POST "$B/admin/products" -H "Authorization: Bearer $ADMIN" -H "Content-Type: application/json" \
+     -d '{"name":"測試產品","redirect_uris":["https://example.com/callback"],"url_domains":["example.com"],"scopes":["link:manage","contacts:bind","messages:send"]}'
+   ```
+   預期 201，記下 `product_id`（`prd_…`），並把 `product_secret`（`bps_…`）存進變數：
+   `read -rs PSEC; export PSEC`、`export PID=prd_…`。
+5. **授權（手機或電腦瀏覽器皆可，建議用外部瀏覽器看得到網址列）**：開
+   `https://imhoti.tw/lm/bridge/v1/link/authorize?product_id=<PID>&state=abc123&redirect_uri=https%3A%2F%2Fexample.com%2Fcallback`
+   - 預期：LIFF 登入 → 同意頁顯示「測試產品」、三項權限、你的官方帳號 → 按「同意」。
+   - **觀察**：登入回來後同意頁是否還正常顯示（驗證 LIFF 登入後參數保留）。
+   - 結果：瀏覽器跳到 `https://example.com/callback?code=lmc_…&state=abc123`。`state` 必須是 `abc123`。
+6. **換碼**（5 分鐘內、只能用一次）：
+   ```bash
+   read -r CODE; export CODE          # 貼上網址列裡 code= 後面那串
+   curl -sS -X POST "$B/links/token" -H "Authorization: Bearer $PSEC" -H "Content-Type: application/json" \
+     -d "{\"code\":\"$CODE\",\"redirect_uri\":\"https://example.com/callback\"}"
+   ```
+   預期 200：`link_id`、`service_key`（`brk_…`）、`scopes`。存成 `LID`、`LKEY`（`read -rs LKEY; export LKEY`）。
+7. **負向測試**（每項都要失敗才算過）：
+   - 同一個 code 再換一次 → `INVALID_CODE`（單次使用；驗證 D1 `meta.changes`）。
+   - 用 `LKEY` 呼叫 `$B/raw/push` 或 `$B/systems` → 拒絕（連結金鑰不能碰舊端點）。
+   - 授權網址把 `state` 以外的 `redirect_uri` 改成別的網址 → 直接顯示錯誤，**不會導向**。
+8. **連結金鑰操作**（`H='-H "Authorization: Bearer '$LKEY'" -H "X-Bot-Id: <你的 bot_id>"'`，bot_id 可從後台取得）：
+   - `GET $B/links/$LID` → `status: active`。
+   - `POST $B/links/$LID/rotate-key` → 回新 `service_key`；**舊 key 立刻 401**，新 key 可用。
+9. **後台檢視**：後台「系統管理」→「已連結的產品」應看到「測試產品」。
+10. **重新授權**：重做步驟 5–6 → 舊 link 自動撤銷、新 link 產生，後台只剩一條使用中（驗證部分唯一索引與批次寫入）。
+11. **撤銷兩種路徑**：
+    - 產品端：`DELETE $B/links/$LID`（204）→ 再 `GET` 回 `LINK_REVOKED`。
+    - 管理端：對另一條 link，後台按「撤銷」並確認 → 該 key 立即失效。
+12. **稽核**：D1 Console 執行 §14 (g) 的 `audit_log` 查詢，應看到 `product_registered`、`link_authorized`、`key_rotated`、`link_revoked`，且 `detail` 沒有任何密鑰或授權碼。
+13. **收尾**：刪除 `BRIDGE_ENABLED`（Bridge 回到關閉）；假產品以 §14 (f) 停用；`unset ADMIN PSEC LKEY CODE`。
+
+### 結果回報（只回報「通過／失敗＋看到的錯誤代碼」，不要貼任何金鑰或授權碼）
+
+| # | 項目 | 通過？ |
+|---|------|--------|
+| 2 | health ok | |
+| 5 | LIFF 登入後參數保留、state 原樣帶回 | |
+| 6 | 換碼成功 | |
+| 7 | 重放被拒、舊端點被拒、壞 redirect 不導向 | |
+| 8 | rotate 後舊 key 失效 | |
+| 10 | 重新授權後只剩一條使用中 | |
+| 11 | 兩種撤銷皆立即生效 | |
+| 12 | 稽核無敏感資料 | |
+
+失敗時的對照：換碼一直 `INVALID_CODE` → 確認 `redirect_uri` 與登記值逐字相同、碼未過 5 分鐘；
+同意頁空白 → 是否被內嵌（必須整頁開啟）；503 → 回 §14 (g)。
