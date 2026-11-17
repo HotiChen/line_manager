@@ -279,12 +279,20 @@ describe('POST /contacts/bind-tokens', () => {
     });
 
     it('每連結限流：1 分鐘 30 次，第 31 次 429 RATE_LIMITED + Retry-After；其他連結不受影響', async () => {
-        for (let i = 0; i < 30; i++) assert.equal((await issue(`customer-${String(i).padStart(4, '0')}`)).res.status, 201);
-        const r = await issue('customer-9999');
-        assert.equal(r.res.status, 429);
-        assert.equal(errCode(r), 'RATE_LIMITED');
-        assert.ok(Number(r.res.headers.get('Retry-After')) >= 1);
-        assert.equal((await issue(REF, KEY_B)).res.status, 201);
+        // 固定視窗限流：把時間釘在視窗中段，避免 31 次請求跨過整分鐘邊界而偶發失敗（CI 曾因此紅燈）
+        const realNow = Date.now;
+        const pinned = Math.floor(realNow() / 60000) * 60000 + 20000;
+        Date.now = () => pinned;
+        try {
+            for (let i = 0; i < 30; i++) assert.equal((await issue(`customer-${String(i).padStart(4, '0')}`)).res.status, 201);
+            const r = await issue('customer-9999');
+            assert.equal(r.res.status, 429);
+            assert.equal(errCode(r), 'RATE_LIMITED');
+            assert.ok(Number(r.res.headers.get('Retry-After')) >= 1);
+            assert.equal((await issue(REF, KEY_B)).res.status, 201);
+        } finally {
+            Date.now = realNow;
+        }
     });
 
     it('每連結有效未用碼上限 1000：超過回 429 RATE_LIMITED，既有 ref 仍可換新碼', async () => {

@@ -229,14 +229,22 @@ describe('tryConsumeBindCode：失敗一律 {handled:false}，沒有任何綁定
     });
 
     it('限流：同一 (bot, 使用者) 超過嘗試上限後，連正確的碼也暫時不處理', async () => {
-        const code = await issue();
-        for (let i = 0; i < 10; i++) {
-            assert.equal((await tryConsumeBindCode(env, { botId: BOT, lineUserId: USER, text: 'LM-23456789' })).handled, false);
+        // 固定視窗限流：時間釘在視窗中段，避免嘗試跨過整分鐘邊界而偶發失敗
+        const realNow = Date.now;
+        const pinned = Math.floor(realNow() / 60000) * 60000 + 20000;
+        Date.now = () => pinned;
+        try {
+            const code = await issue();
+            for (let i = 0; i < 10; i++) {
+                assert.equal((await tryConsumeBindCode(env, { botId: BOT, lineUserId: USER, text: 'LM-23456789' })).handled, false);
+            }
+            assert.deepEqual(await tryConsumeBindCode(env, { botId: BOT, lineUserId: USER, text: code }), { handled: false });
+            assert.equal(await count(d1.db, 'contacts'), 0);
+            // 另一個使用者不受影響
+            assert.equal((await tryConsumeBindCode(env, { botId: BOT, lineUserId: USER2, text: code })).handled, true);
+        } finally {
+            Date.now = realNow;
         }
-        assert.deepEqual(await tryConsumeBindCode(env, { botId: BOT, lineUserId: USER, text: code }), { handled: false });
-        assert.equal(await count(d1.db, 'contacts'), 0);
-        // 另一個使用者不受影響
-        assert.equal((await tryConsumeBindCode(env, { botId: BOT, lineUserId: USER2, text: code })).handled, true);
     });
 });
 
