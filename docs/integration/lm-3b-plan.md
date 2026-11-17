@@ -1,6 +1,6 @@
 # LM-3B 設計：受限 `/messages`（產品對已綁定客戶發通知）
 
-狀態：設計，尚未實作。前置：LM-3A（聯絡人綁定）已上線並真機驗證（封鎖／還原與關鍵字回覆除外，見 lm-3a-plan §14）。
+狀態：3B-1（後端）已實作，見 §12；3B-2（真機實測）待做。前置：LM-3A（聯絡人綁定）已上線並真機驗證（封鎖／還原與關鍵字回覆除外，見 lm-3a-plan §14）。
 規格來源：`bridge-v1.yaml` 的 `POST /bridge/v1/messages` 與 `Notification`、`MessageResult`。
 
 ## 1. 目標與不做的事
@@ -115,3 +115,57 @@ LM 不替換變數、不套用商家的關鍵字或會員資料。
 - 限流：每連結、每聯絡人（時間釘在視窗中段，避免跨分鐘偶發失敗）。
 - 稽核與回應不含 ref、userId、標題、內文（掃描斷言）；系統金鑰打 `/messages` 被拒；連結金鑰打 `/raw` 仍被拒。
 - Flex 內容快照：只有預期欄位、`altText` 正確、按鈕 URI 即為白名單內的網址。
+
+## 12. 實作與設計的對照（3B-1 實作時的決定）
+
+### 12.1 §8 七個問題的決定（全部採預設答案）
+
+1. 回應 `200 {message_id, status:"sent", sent_at}`；不用 202。
+2. `title`／`body`（以及 `action.label`）不可含 `http://`、`https://`（不分大小寫）→ `INVALID_REQUEST`（400）。
+3. 登記網域本身與其子網域都算；比對前主機名稱轉小寫、去一個尾端點；`evil-example.com`、`example.com.evil.com` 不通過。
+4. `CONTACT_NOT_BOUND`、`RECIPIENT_BLOCKED` 不快取（釋放冪等鍵，同一把鍵之後可重判）。
+5. 限流：每連結 60 則／分鐘、每（連結, ref）10 則／小時。
+6. 固定 Flex bubble 外觀，不可自訂顏色、圖片。
+7. 沒有查詢端點與送達回報（`GET /messages/{message_id}` 在規格中保留為 planned）。
+
+### 12.2 與設計文字不同或設計沒寫死的地方
+
+- **`line_user_id` 的讀取**：3A 的邊界測試規定 `db.js` 沒有任何 SELECT 讀出 `line_user_id`。送訊息必須讀它，所以新增 `getContactForSend`
+  （全檔唯一一句，查詢同時以 `link_id`、`external_contact_ref`、`bot_id` 限定），並把邊界測試改成「恰好只有這一句、且只有 `notify.js` 使用」。
+  這是把「完全沒有」收斂成「唯一一個例外」，不是刪除測試。回傳值只在 handler 內存活。
+- **聯絡人查詢多比對 `bot_id`**：綁定列的 `bot_id` 與連結的 bot 不同時視為未綁定（防禦性，正常資料不會發生）。
+- **產品網域**：用既有 `getProduct`（`url_domains` 已在其回傳值），沒有新增查詢；只在有 `action` 時才查。
+- **retry key 抽成 `bridge/retry_key.js`**：從 `messages.js` 原樣搬出，`/raw` 的衍生值不變（既有測試未動）。
+  通知的 `system` 參數是 `link:{link_id}`，所以衍生輸入是 `bot|link:{link_id}|冪等鍵`。
+- **標頭名稱**：通知用規格的 `Idempotency-Key`；`/raw` 沿用 `X-Idempotency-Key`。通知端點不接受後者。
+- **驗證順序**：認證 → 每連結限流（先於驗證計數，所以格式錯誤的請求也會消耗額度）→ `Idempotency-Key` → 本文 → 白名單 → 每聯絡人限流 → 冪等搶佔 → 聯絡人 → 額度 → 送出。
+  被限流的請求沒有搶佔冪等鍵；但重送（回放）也會消耗每聯絡人的小時額度，因為限流在冪等之前。
+- **額外驗證**：`title`／`body`／`label` 不可全是空白；`body` 只允許 `\n`（不允許 `\r`）；U+2028／U+2029 與 C1 控制字元也視為控制字元；
+  長度以 code point 計。本文上限 20000 字元，超過回 413 `INVALID_REQUEST`（其他錯誤碼表沒有 413 專用碼）。
+- **URL 正規化**：送給 LINE 的是 `new URL(...).href`（驗證過的那一個字串），不是原始輸入；正規化後長度也必須 ≤ 1000。
+  任何主機名稱最後一段全為數字（含 `0x7f.1`、`2130706433` 這類會被正規化成 IP 的寫法）、IPv6 一律拒絕，即使登記了也一樣。
+- **錯誤狀態碼**：LINE 5xx／網路錯誤／其他非預期狀態 → 502 `INTERNAL`（`retryable` 依是否 5xx／網路；設計只寫 `INTERNAL`，狀態碼仿 `/raw` 的 502）；
+  無 token 與 LINE 401 → 503 `INTERNAL`（訊息 `bot_not_configured`）；資料庫不可用 → 503（訊息 `bridge_not_configured`，同 `links.js`）。
+- **確定性失敗的範圍**：搶佔冪等鍵之後，只有 LINE 400 算確定性失敗而快取（訊息固定為 `LINE rejected the message`，不轉述 LINE 的內容）。
+  其餘（未綁定、封鎖、額度、LINE 429、5xx、網路、無 token）都釋放。驗證類錯誤發生在搶佔之前，不涉及冪等。
+- **LINE 409 視為成功**時不記用量（`/raw` 同樣的作法）；快取的是新產生的 `message_id`。
+- **稽核**：`message_sent`（result `ok`）、`message_blocked`（`CONTACT_NOT_BOUND`、`RECIPIENT_BLOCKED`、`INVALID_URL_DOMAIN`，result `blocked`）、
+  `message_failed`（其餘，result `failed`）；`detail` 只有 `product_id`、`link_id`、`message_id`（僅成功）、`error_code`、`status`、`cost`。
+  `sanitizeDetail` 只新增 `message_id`（`^msg_[0-9a-f]{16}$`）。回放與驗證失敗（400／IDEMPOTENCY_KEY_REUSE／IN_PROGRESS／被限流）不寫稽核。
+  `INVALID_URL_DOMAIN` 例外地寫稽核，因為那是濫用訊號。
+- **per-contact 限流的 KV key**：`rl_notifyc.{link_id}.{sha256(ref) 前 32 碼}_{視窗}`，不含 ref 明文。
+- **已知限制**：`line_api.js` 在 LINE 回非 2xx 時會 `console.error` 該回應本文（既有行為，未改動）；測試用的 LINE 回應不含敏感內容，
+  真實的 LINE 錯誤本文一般是 `{message, details[{message, property}]}`，沒有使用者文字。
+
+### 12.3 營運備註
+
+- **沒有資料庫遷移**：用既有的 `idempotency`、`contacts`、`audit_log`、`products.url_domains`（`system` 欄無 CHECK／FK）。
+- 合併部署後 Bridge 仍受 `BRIDGE_ENABLED=1` 控制；旗標關閉時 `/bridge/*` 全部 404，行為不變。
+- 產品要能用 action 按鈕，必須先在產品登記（`POST /bridge/v1/admin/products`）時填好 `url_domains`；沒有登記網域的產品只能發純文字通知。
+- 連結金鑰的 scope 需含 `messages:send`（連結流程本來就會發）；系統金鑰（`raw:push`）打 `/messages` 一律 401。
+
+### 12.4 無法在單元測試中驗證的事
+
+- 真實 LINE 對 Flex bubble 的渲染（排版、換行、按鈕外觀）與 `altText` 在通知列的呈現：待 3B-2 真機。
+- 真實 D1 的並行語意（測試用 Miniflare 內的 SQLite，語意相近但不是正式 D1）。
+- LINE 對 `X-Line-Retry-Key` 重送的 409 行為只用模擬回應驗證。

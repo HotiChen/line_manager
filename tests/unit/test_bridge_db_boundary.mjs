@@ -76,13 +76,23 @@ describe('db.js 的 SQL 只用 bound parameter', () => {
 });
 
 describe('LM-3A：LINE userId 不外流', () => {
-    it('db.js 沒有任何 SELECT 讀出 line_user_id（只寫入、或當 WHERE 條件）', () => {
+    it('db.js 只有 getContactForSend 這一句 SELECT 讀出 line_user_id（LM-3B 送訊息用；其餘只寫入、或當 WHERE 條件）', () => {
         const src = readFileSync(join(SRC, 'bridge', 'db.js'), 'utf8');
         const statements = [...src.matchAll(/\.prepare\(\s*(`[^`]*`|"[^"\n]*")/g)].map((m) => m[1]);
         assert.ok(statements.length > 20);
-        for (const sql of statements.filter((x) => /^[`"]\s*SELECT/i.test(x))) {
-            assert.doesNotMatch(sql, /line_user_id/, sql.slice(0, 60));
+        const readers = statements.filter((x) => /^[`"]\s*SELECT/i.test(x) && /line_user_id/.test(x));
+        assert.deepEqual(readers, ['"SELECT status, line_user_id FROM contacts WHERE link_id = ?1 AND external_contact_ref = ?2 AND bot_id = ?3"']);
+        // 而且這句一定在 getContactForSend 之內，並且同時以連結與 bot 限定範圍
+        const fn = src.slice(src.indexOf('export async function getContactForSend'), src.indexOf('export async function deleteContact'));
+        assert.ok(fn.includes(readers[0]));
+    });
+
+    it('getContactForSend 只有 notify.js 在用（其他 bridge 檔案與 LM 核心都不用）', () => {
+        for (const f of walk(SRC)) {
+            if (f.endsWith('/bridge/db.js') || f.endsWith('/bridge/notify.js')) continue;
+            assert.doesNotMatch(code(f), /getContactForSend/, relative(ROOT, f));
         }
+        assert.match(code(join(SRC, 'bridge', 'notify.js')), /getContactForSend/);
     });
 
     it('HTTP 處理檔（contacts.js、links.js）完全不碰 line_user_id / lineUserId', () => {
