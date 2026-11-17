@@ -10,6 +10,7 @@
  *   /systems*                         人主體（LIFF）+ owner
  *   /admin/*、/link/*、/links/*       連結流程（LM-2A，links.js；新錯誤格式 bridgeError）
  *   /contacts/*                       聯絡人綁定（LM-3A，contacts.js；連結金鑰＋contacts:bind）
+ *   POST /messages                    受限通知（LM-3B，notify.js；連結金鑰＋messages:send）
  *   其他                              404
  *
  * Feature flag：只有 env.BRIDGE_ENABLED === "1"（精確字串）才啟用。
@@ -20,11 +21,12 @@
  */
 import { jsonResponse } from "../lib/utils.js";
 import { authenticateUser } from "../lm_service.js";
-import { isSystemsRoute, isLinkRoute, isContactsRoute, isBridgeServiceRoute, HEALTH_PATH } from "./routes.js";
+import { isSystemsRoute, isLinkRoute, isContactsRoute, isNotifyRoute, isBridgeServiceRoute, HEALTH_PATH } from "./routes.js";
 import * as MessagesHandler from "./messages.js";
 import * as SystemsHandler from "./systems.js";
 import * as LinksHandler from "./links.js";
 import * as ContactsHandler from "./contacts.js";
+import * as NotifyHandler from "./notify.js";
 import { BridgeDbError, bridgeUnavailable, pingDb } from "./db.js";
 
 /**
@@ -86,6 +88,11 @@ async function dispatch(request, env, pathname) {
   // 聯絡人綁定（LM-3A）：連結金鑰＋contacts:bind，回應一律用 bridgeError 格式
   if (isContactsRoute(pathname)) {
     return ContactsHandler.route(request, env, pathname);
+  }
+
+  // 受限通知（LM-3B）：連結金鑰＋messages:send，回應一律用 bridgeError 格式
+  if (isNotifyRoute(pathname)) {
+    return NotifyHandler.route(request, env, pathname);
   }
 
   if (isBridgeServiceRoute(pathname)) {

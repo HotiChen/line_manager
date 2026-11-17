@@ -25,6 +25,7 @@ import { bridgeRateLimit } from "../middleware/rate_limiter.js";
 import { sha256Hex } from "../lib/crypto_util.js";
 import { getBotAccessToken, hasMember, markMemberInactive } from "../lm_service.js";
 import { pushMessage, multicastMessage, LineApiError, MULTICAST_MAX_RECIPIENTS } from "../lib/line_api.js";
+import { retryKeyFor } from "./retry_key.js";
 import { checkQuota, recordUsage, markExhausted } from "./quota.js";
 import {
   BridgeDbError, bridgeUnavailable, claimIdempotency, completeIdempotency, releaseIdempotency, writeAudit,
@@ -80,13 +81,6 @@ function parseRequest(kind, body) {
   const recipients = [...new Set(body.to)];
   if (recipients.length > MULTICAST_MAX_RECIPIENTS) return { error: `to must have at most ${MULTICAST_MAX_RECIPIENTS} recipients` };
   return { recipients, messages: body.messages };
-}
-
-/** 由冪等鍵衍生 UUID v4 形狀的 retry key（LINE 要求 UUID）。綁 (bot, system, key)，同一把永遠相同。 */
-async function retryKeyFor(botId, system, idemKey) {
-  const h = await sha256Hex(`${botId}|${system}|${idemKey}`);
-  const variant = "89ab"[parseInt(h[16], 16) % 4];
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
 // ── 實際送出 ──

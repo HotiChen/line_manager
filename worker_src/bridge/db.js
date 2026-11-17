@@ -578,8 +578,9 @@ export async function getLinkKeyContext(env, keyHash) {
 
 // ── 聯絡人綁定（LM-3A）──
 //
-// line_user_id 只存在 contacts 表，而且這一節沒有任何函式把它讀出來：HTTP 處理函式拿到的只有狀態與時間。
-// webhook 路徑（binding.js）自己手上就有 lineUserId，只會把它寫進來或當查詢條件。
+// line_user_id 只存在 contacts 表。這一節只有一個函式把它讀出來：getContactForSend（LM-3B，只給 notify.js 送出訊息用，
+// 回傳值只在 handler 內存活，不進回應、audit、log；test_bridge_db_boundary 釘住「只有這一句 SELECT 讀它」）。
+// 其餘 HTTP 處理函式拿到的只有狀態與時間。webhook 路徑（binding.js）自己手上就有 lineUserId，只會把它寫進來或當查詢條件。
 
 /** 每條連結同時有效（未用、未過期）的綁定碼上限 */
 export const MAX_LIVE_BIND_CODES_PER_LINK = 1000;
@@ -710,6 +711,22 @@ export async function getContactSnapshot(env, { linkId, ref, now = Date.now() })
       contact: row.contact_status ? { status: row.contact_status, boundAt: row.bound_at } : null,
       hasPendingCode: row.pending === 1,
     };
+  });
+}
+
+/**
+ * LM-3B：送訊息前解析聯絡人。只在「這條連結 + 這個 bot」範圍內找（別條連結的 ref 看起來就是不存在）。
+ * 這是全檔唯一讀出 line_user_id 的查詢；呼叫端只能把它交給 LINE，不可放進回應、audit 或 log。
+ *
+ * @returns {Promise<null | {status: string, lineUserId: string}>}
+ */
+export async function getContactForSend(env, { linkId, ref, botId }) {
+  return withDb(env, async (db) => {
+    const row = await db
+      .prepare("SELECT status, line_user_id FROM contacts WHERE link_id = ?1 AND external_contact_ref = ?2 AND bot_id = ?3")
+      .bind(linkId, ref, botId)
+      .first();
+    return row ? { status: row.status, lineUserId: row.line_user_id } : null;
   });
 }
 
@@ -846,6 +863,8 @@ const MAX_LIST = 10;
 const PRODUCT_ID_RE = /^prd_[a-z0-9]{6,32}$/;
 const LINK_ID_RE = /^lnk_[a-z0-9]{6,32}$/;
 const ERROR_CODE_RE = /^[A-Z][A-Z_]{1,31}$/;
+// LM-3B：LM 產生的訊息關聯代號（msg_ + 16 個小寫 hex）。稽核只收這個格式的字串
+const MESSAGE_ID_RE = /^msg_[0-9a-f]{16}$/;
 
 /**
  * detail 白名單：只收這幾個欄位，且型別嚴格；其餘一律丟掉。
@@ -860,7 +879,7 @@ function sanitizeDetail(detail) {
   }
   if (typeof detail.error === "string" && CODE_RE.test(detail.error)) out.error = detail.error;
   if (typeof detail.disabled === "boolean") out.disabled = detail.disabled;
-  for (const [k, re] of [["product_id", PRODUCT_ID_RE], ["link_id", LINK_ID_RE], ["error_code", ERROR_CODE_RE]]) {
+  for (const [k, re] of [["product_id", PRODUCT_ID_RE], ["link_id", LINK_ID_RE], ["error_code", ERROR_CODE_RE], ["message_id", MESSAGE_ID_RE]]) {
     const v = detail[k];
     if (typeof v === "string" && re.test(v)) out[k] = v;
   }

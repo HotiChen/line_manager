@@ -7,6 +7,7 @@
  *   其他 /bridge/v1/*                  系統主體（Bearer service key + X-Bot-Id）
  *
  *   /bridge/v1/contacts/*              聯絡人綁定（LM-3A）：contacts.js，連結金鑰＋contacts:bind，不走 service key
+ *   /bridge/v1/messages                受限通知（LM-3B）：notify.js，連結金鑰＋messages:send，不走 service key
  *   /bridge/v1/admin/*、/link/*、/links/*  連結流程（LM-2A）：links.js 依端點各自認證
  *                                      （營運密鑰、瀏覽器、LIFF 人主體、產品密鑰、連結金鑰），不走 service key
  *
@@ -22,6 +23,19 @@ const LINK_ROOTS = ["/bridge/v1/admin", "/bridge/v1/link", "/bridge/v1/links"];
 
 /** 聯絡人綁定的路徑根（LM-3A，由 contacts.js 處理；一律用連結金鑰認證） */
 const CONTACTS_ROOT = "/bridge/v1/contacts";
+
+/** 受限通知端點（LM-3B，由 notify.js 處理；精確比對，/messages/ 之下沒有任何端點） */
+export const NOTIFY_PATH = "/bridge/v1/messages";
+
+/**
+ * 是否為受限通知路由（LM-3B，POST /bridge/v1/messages；連結金鑰＋messages:send，bridgeError 格式）。
+ *
+ * @param {string} pathname
+ * @returns {boolean}
+ */
+export function isNotifyRoute(pathname) {
+  return pathname === NOTIFY_PATH;
+}
 
 /**
  * 是否為聯絡人綁定路由（LM-3A，/bridge/v1/contacts 或其子路徑；連結金鑰＋contacts:bind，bridgeError 格式）。
@@ -68,6 +82,7 @@ export function isBridgeServiceRoute(pathname) {
   if (isSystemsRoute(pathname)) return false;
   if (isLinkRoute(pathname)) return false;
   if (isContactsRoute(pathname)) return false;
+  if (isNotifyRoute(pathname)) return false;
   if (pathname === HEALTH_PATH) return false;
   return true;
 }

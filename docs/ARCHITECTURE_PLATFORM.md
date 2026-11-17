@@ -303,6 +303,7 @@ quota_${botId}_${YYYYMM}                { pushed, free, plan, updatedAt }
 > | CRM（`/members*`、tags） | ⬜ 未做 |
 > | 身分綁定（`/link/*`） | ⬜ 未做 |
 > | 聯絡人綁定（user 目標，綁定碼訊息）：`POST /bridge/v1/contacts/bind-tokens`、`GET\|DELETE /bridge/v1/contacts/{ref}`、webhook 辨識綁定碼、unfollow／follow 同步狀態 | ✅ 程式完成（LM-3A-1：`bridge/{contacts,binding}.js`），**待部署並手動套用 `migrations/0003_bridge_contacts.sql`**；`bind_url` 預填連結待真實 OA 驗證（3A-2）。**群組／聊天室的綁定碼路徑仍未做**（只處理 `source.type === "user"`） |
+> | 受限通知：`POST /bridge/v1/messages`（連結金鑰＋`messages:send`；固定外觀 Flex、`action.url` 網域白名單、冪等、每連結與每聯絡人限流、額度對帳、封鎖同步） | ✅ 程式完成（LM-3B-1：`bridge/notify.js`、`bridge/retry_key.js`；**沒有資料庫遷移**），真機實測待 3B-2；回 200 `status: sent`（同步），沒有查詢端點與送達回報 |
 > | 事件轉發（webhook 出去、`member.unfollowed` 等） | ⬜ 未做 |
 > | 管理後台的「系統」頁面 | ✅ `js/system_management.js`；側邊欄入口預設隱藏，`GET /features` 回 `bridge:true` 才顯示 |
 >
