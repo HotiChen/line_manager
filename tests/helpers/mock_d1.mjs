@@ -47,6 +47,48 @@ export async function applyMigrations(db) {
     }
 }
 
+const RAW = Symbol('rawStatement');
+const TRANSIENT = /fetch failed/i;
+
+/**
+ * Miniflare 的 D1 binding 是經本機 HTTP 呼叫 workerd；機器忙碌（CI、並行跑測試）時偶爾回
+ * `fetch failed`（連線層錯誤，不是 SQL 錯誤），會讓並行測試偶發紅燈。這裡只對這一種暫時性錯誤重試，
+ * 其他錯誤（包含 SQL 失敗）一律原樣丟出，測試語意不變。
+ */
+async function withRetry(fn) {
+    let lastErr;
+    for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+            return await fn();
+        } catch (err) {
+            lastErr = err;
+            if (!TRANSIENT.test(String(err && err.message))) throw err;
+            await new Promise((r) => setTimeout(r, 25 * (attempt + 1)));
+        }
+    }
+    throw lastErr;
+}
+
+function wrapStatement(stmt) {
+    return {
+        [RAW]: stmt,
+        bind: (...args) => wrapStatement(stmt.bind(...args)),
+        run: (...a) => withRetry(() => stmt.run(...a)),
+        first: (...a) => withRetry(() => stmt.first(...a)),
+        all: (...a) => withRetry(() => stmt.all(...a)),
+        raw: (...a) => withRetry(() => stmt.raw(...a)),
+    };
+}
+
+function wrapDb(db) {
+    return {
+        prepare: (sql) => wrapStatement(db.prepare(sql)),
+        batch: (stmts) => withRetry(() => db.batch(stmts.map((x) => (x && x[RAW]) || x))),
+        exec: (sql) => withRetry(() => db.exec(sql)),
+        dump: (...a) => db.dump(...a),
+    };
+}
+
 /**
  * @returns {Promise<{
  *   db: object,
@@ -61,7 +103,7 @@ export async function createTestD1() {
         script: 'export default { fetch() { return new Response("ok") } }',
         d1Databases: { BRIDGE_DB: 'test-bridge-db' },
     });
-    const db = await mf.getD1Database('BRIDGE_DB');
+    const db = wrapDb(await mf.getD1Database('BRIDGE_DB'));
     await applyMigrations(db);
 
     return {
