@@ -6,6 +6,7 @@
  *   markMemberInactive(env, botId, lineUserId) -> void（盡力而為，不丟錯，保留其他欄位）
  *   authenticateUser(request, env)             -> {authenticated:true,userId} | {authenticated:false,status,error}
  *   withPermission                             -> middleware/permission.js 的 re-export
+ *   getOwnedBot / listOwnedBots / getBotDisplayName（LM-2A 連結流程）-> 唯讀、不丟錯
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,6 +19,9 @@ import {
     markMemberInactive,
     authenticateUser,
     withPermission,
+    getOwnedBot,
+    listOwnedBots,
+    getBotDisplayName,
 } from '../../worker_src/lm_service.js';
 import * as lmService from '../../worker_src/lm_service.js';
 
@@ -33,10 +37,13 @@ beforeEach(() => {
 afterEach(() => { globalThis.fetch = originalFetch; });
 
 describe('介面形狀', () => {
-    it('只匯出約定的五個名字', () => {
+    it('只匯出約定的八個名字（LM-2A 刻意新增 getOwnedBot、listOwnedBots、getBotDisplayName）', () => {
         assert.deepEqual(
             Object.keys(lmService).sort(),
-            ['authenticateUser', 'getBotAccessToken', 'hasMember', 'markMemberInactive', 'withPermission']
+            [
+                'authenticateUser', 'getBotAccessToken', 'getBotDisplayName', 'getOwnedBot',
+                'hasMember', 'listOwnedBots', 'markMemberInactive', 'withPermission',
+            ]
         );
     });
 
@@ -182,5 +189,73 @@ describe('authenticateUser', () => {
     it('authenticated:false 的結果不帶 userId', async () => {
         const r = await authenticateUser(req(), env);
         assert.equal('userId' in r, false);
+    });
+});
+
+describe('LM-2A：getOwnedBot / listOwnedBots / getBotDisplayName', () => {
+    const OTHER = 'Ubbbbbbbbbbbbbbbbbbbbbbbbbbbbbb02';
+    const STRANGER = 'Ustranger0000000000000000000009';
+
+    async function seed(botId, users, info) {
+        const kv = env.KV_LINE_STORAGE;
+        await kv.put(BotKeys.permissions(botId), JSON.stringify({ users }));
+        if (info) await kv.put(BotKeys.info(botId), JSON.stringify(info));
+    }
+
+    it('getOwnedBot：owner → {botId, displayName}', async () => {
+        await seed(BOT, [{ userId: OWNER, role: 'owner' }], { displayName: 'Shop A' });
+        assert.deepEqual(await getOwnedBot(env, OWNER, BOT), { botId: BOT, displayName: 'Shop A' });
+    });
+
+    it('getOwnedBot：member、陌生人、bot 不存在 → null（同一個答案）', async () => {
+        await seed(BOT, [{ userId: OWNER, role: 'owner' }, { userId: MEMBER, role: 'member' }], { displayName: 'Shop A' });
+        assert.equal(await getOwnedBot(env, MEMBER, BOT), null);
+        assert.equal(await getOwnedBot(env, STRANGER, BOT), null);
+        assert.equal(await getOwnedBot(env, OWNER, OTHER), null);
+    });
+
+    it('getOwnedBot：壞輸入（空、含冒號）→ null，不丟錯', async () => {
+        assert.equal(await getOwnedBot(env, '', BOT), null);
+        assert.equal(await getOwnedBot(env, OWNER, 'a:b'), null);
+        assert.equal(await getOwnedBot({}, OWNER, BOT), null);
+    });
+
+    it('getOwnedBot：KV 壞掉 → null，不丟錯', async () => {
+        const orig = console.error;
+        console.error = () => {};
+        try {
+            assert.equal(await getOwnedBot({ KV_LINE_STORAGE: { get: async () => { throw new Error('kv down'); } } }, OWNER, BOT), null);
+        } finally { console.error = orig; }
+    });
+
+    it('getOwnedBot：沒有 info 時用通用名稱；用 name 欄位也可', async () => {
+        await seed(BOT, [{ userId: OWNER, role: 'owner' }]);
+        assert.equal((await getOwnedBot(env, OWNER, BOT)).displayName, 'LINE 官方帳號');
+        await env.KV_LINE_STORAGE.put(BotKeys.info(BOT), JSON.stringify({ name: 'Named' }));
+        assert.equal((await getOwnedBot(env, OWNER, BOT)).displayName, 'Named');
+    });
+
+    it('listOwnedBots：只回 owner 角色的 bot，且以 permissions 重新驗證（索引說是 owner 不算數）', async () => {
+        await seed(BOT, [{ userId: OWNER, role: 'owner' }], { displayName: 'Mine' });
+        await seed(OTHER, [{ userId: 'Uother', role: 'owner' }, { userId: OWNER, role: 'member' }], { displayName: 'Not mine' });
+        const forged = 'Ubbbbbbbbbbbbbbbbbbbbbbbbbbbbbb03';
+        await env.KV_LINE_STORAGE.put(`user:${OWNER}:bots`, JSON.stringify({
+            bots: [{ botId: BOT, role: 'owner' }, { botId: OTHER, role: 'owner' }, { botId: forged, role: 'owner' }, { botId: BOT, role: 'owner' }],
+        }));
+        assert.deepEqual(await listOwnedBots(env, OWNER), [{ botId: BOT, displayName: 'Mine' }]);
+    });
+
+    it('listOwnedBots：沒有索引或壞資料 → 空陣列', async () => {
+        assert.deepEqual(await listOwnedBots(env, OWNER), []);
+        await env.KV_LINE_STORAGE.put(`user:${OWNER}:bots`, '{oops');
+        assert.deepEqual(await listOwnedBots(env, OWNER), []);
+        assert.deepEqual(await listOwnedBots({}, OWNER), []);
+    });
+
+    it('getBotDisplayName：有名稱回名稱；沒有或壞掉回通用名稱，不丟錯', async () => {
+        await seed(BOT, [], { displayName: 'Shop A' });
+        assert.equal(await getBotDisplayName(env, BOT), 'Shop A');
+        assert.equal(await getBotDisplayName(env, OTHER), 'LINE 官方帳號');
+        assert.equal(await getBotDisplayName({}, BOT), 'LINE 官方帳號');
     });
 });

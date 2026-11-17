@@ -90,6 +90,8 @@ export async function pingDb(env) {
 /**
  * 以金鑰雜湊查金鑰與其系統（單一查詢，LEFT JOIN）。
  * 「金鑰在但系統不存在」（system: null）與「金鑰不存在」（回 null）可區分。
+ * 連結金鑰（service_keys.link_id 非空，LM-2A）在這裡一律當作「不存在」：它們不得通過 /raw/* 與 /systems*，
+ * 只能走 getLinkKeyContext。
  *
  * @returns {Promise<null | {
  *   key: {botId: string, system: string, scopes: string[], revokedAt: number|null},
@@ -104,7 +106,7 @@ export async function getKeyWithSystem(env, keyHash) {
                 s.bot_id AS s_bot_id, s.disabled AS s_disabled, s.rate_limit AS s_rate_limit
            FROM service_keys k
            LEFT JOIN systems s ON s.bot_id = k.bot_id AND s.system = k.system
-          WHERE k.key_hash = ?1`
+          WHERE k.key_hash = ?1 AND k.link_id IS NULL`
       )
       .bind(keyHash)
       .first();
@@ -280,6 +282,283 @@ export async function deleteSystem(env, botId, system, now = Date.now()) {
   });
 }
 
+// ── 產品（LM-2A）──
+
+function rowToProduct(row) {
+  const asList = (text) => {
+    const v = parseJson(text, []);
+    return Array.isArray(v) ? v : [];
+  };
+  return {
+    productId: row.product_id,
+    name: row.name,
+    secretHash: row.secret_hash,
+    redirectUris: asList(row.redirect_uris),
+    urlDomains: asList(row.url_domains),
+    scopes: asList(row.scopes),
+    disabled: row.disabled === 1,
+    createdAt: row.created_at,
+  };
+}
+
+/**
+ * 登記產品。product_id 撞主鍵 → {created:false, conflict:true}。
+ *
+ * @returns {Promise<{created: true} | {created: false, conflict: true}>}
+ */
+export async function createProduct(env, { productId, name, secretHash, redirectUris, urlDomains, scopes, now = Date.now() }) {
+  return withDb(env, async (db) => {
+    try {
+      await db
+        .prepare(
+          `INSERT INTO products (product_id, name, secret_hash, redirect_uris, url_domains, scopes, disabled, created_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7)`
+        )
+        .bind(productId, name, secretHash, JSON.stringify(redirectUris), JSON.stringify(urlDomains ?? []), JSON.stringify(scopes), now)
+        .run();
+    } catch (err) {
+      if (/UNIQUE constraint failed/i.test(String(err && err.message))) return { created: false, conflict: true };
+      throw err;
+    }
+    return { created: true };
+  });
+}
+
+/** @returns {Promise<null | {productId: string, name: string, secretHash: string, redirectUris: string[], urlDomains: string[], scopes: string[], disabled: boolean, createdAt: number}>} */
+export async function getProduct(env, productId) {
+  return withDb(env, async (db) => {
+    const row = await db.prepare("SELECT product_id, name, secret_hash, redirect_uris, url_domains, scopes, disabled, created_at FROM products WHERE product_id = ?1").bind(productId).first();
+    return row ? rowToProduct(row) : null;
+  });
+}
+
+// ── 授權碼（LM-2A）──
+
+/** 過期超過這麼久的授權碼在下一次發碼時順手清掉（idx_auth_codes_expiry） */
+const AUTH_CODE_PURGE_AFTER_MS = 60 * 60 * 1000;
+
+/** 存一組授權碼（只存雜湊），並順手清掉早已過期的舊碼。 */
+export async function createAuthCode(env, { codeHash, productId, botId, redirectUri, scopes, createdBy, expiresAt, now = Date.now() }) {
+  return withDb(env, async (db) => {
+    await db.batch([
+      db.prepare("DELETE FROM auth_codes WHERE expires_at < ?1").bind(now - AUTH_CODE_PURGE_AFTER_MS),
+      db
+        .prepare(
+          `INSERT INTO auth_codes (code_hash, product_id, bot_id, redirect_uri, scopes, created_by, expires_at, used_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)`
+        )
+        .bind(codeHash, productId, botId, redirectUri, JSON.stringify(scopes), createdBy, expiresAt),
+    ]);
+  });
+}
+
+/**
+ * 消耗授權碼：單一 UPDATE，條件是「未使用、未過期、產品與 redirect_uri 都與發碼時完全相同」。
+ * meta.changes === 1 才算成功，所以並行的兩次交換只有一個會贏。
+ * 條件不符（過期、已用、不存在、產品或 redirect_uri 不符）一律回 null，呼叫端不得區分原因；
+ * 不符的請求也不會消耗掉合法持有人的碼。
+ *
+ * @returns {Promise<null | {botId: string, scopes: string[], createdBy: string}>}
+ */
+export async function consumeAuthCode(env, { codeHash, productId, redirectUri, now = Date.now() }) {
+  return withDb(env, async (db) => {
+    const [updated, selected] = await db.batch([
+      db
+        .prepare(
+          `UPDATE auth_codes SET used_at = ?4
+            WHERE code_hash = ?1 AND product_id = ?2 AND redirect_uri = ?3
+              AND used_at IS NULL AND expires_at > ?4`
+        )
+        .bind(codeHash, productId, redirectUri, now),
+      db.prepare("SELECT bot_id, scopes, created_by FROM auth_codes WHERE code_hash = ?1").bind(codeHash),
+    ]);
+    if (updated.meta.changes !== 1) return null;
+    const row = selected.results[0];
+    if (!row) return null;
+    const scopes = parseJson(row.scopes, []);
+    return { botId: row.bot_id, scopes: Array.isArray(scopes) ? scopes : [], createdBy: row.created_by };
+  });
+}
+
+// ── 連結（LM-2A）──
+
+function rowToLink(row) {
+  const scopes = parseJson(row.scopes, []);
+  return {
+    linkId: row.link_id,
+    productId: row.product_id,
+    productName: row.product_name ?? null,
+    botId: row.bot_id,
+    scopes: Array.isArray(scopes) ? scopes : [],
+    status: row.status,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    revokedAt: row.revoked_at ?? null,
+  };
+}
+
+/** 連結金鑰在 service_keys.system 欄位的值。含 ":"，所以不可能與系統名稱（[a-z0-9_-]）撞名。 */
+const linkSystemName = (linkId) => `link:${linkId}`;
+
+/**
+ * 建立連結並發第一把金鑰（同一個 batch）：
+ * 先撤銷同 (product, bot) 既有 active 連結與其金鑰，再建新連結、發新金鑰。
+ * 任何一步失敗整批回滾，不留孤兒；唯一索引 uq_links_active 是最後一道防線。
+ *
+ * @returns {Promise<{revokedLinkIds: string[]}>} 被這次重新授權取代的舊連結
+ */
+export async function createLinkWithKey(env, { linkId, productId, botId, scopes, createdBy, keyHash, now = Date.now() }) {
+  return withDb(env, async (db) => {
+    const results = await db.batch([
+      db.prepare("SELECT link_id FROM links WHERE product_id = ?1 AND bot_id = ?2 AND status = 'active'").bind(productId, botId),
+      db
+        .prepare(
+          `UPDATE service_keys SET revoked_at = ?3
+            WHERE revoked_at IS NULL
+              AND link_id IN (SELECT link_id FROM links WHERE product_id = ?1 AND bot_id = ?2 AND status = 'active')`
+        )
+        .bind(productId, botId, now),
+      db
+        .prepare("UPDATE links SET status = 'revoked', revoked_at = ?3 WHERE product_id = ?1 AND bot_id = ?2 AND status = 'active'")
+        .bind(productId, botId, now),
+      db
+        .prepare(
+          `INSERT INTO links (link_id, product_id, bot_id, scopes, status, created_by, created_at, revoked_at)
+           VALUES (?1, ?2, ?3, ?4, 'active', ?5, ?6, NULL)`
+        )
+        .bind(linkId, productId, botId, JSON.stringify(scopes), createdBy, now),
+      db
+        .prepare(
+          `INSERT INTO service_keys (key_hash, bot_id, system, scopes, created_at, revoked_at, link_id)
+           VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)`
+        )
+        .bind(keyHash, botId, linkSystemName(linkId), JSON.stringify(scopes), now, linkId),
+    ]);
+    return { revokedLinkIds: results[0].results.map((r) => r.link_id) };
+  });
+}
+
+/** @returns {Promise<object|null>} */
+export async function getLink(env, linkId) {
+  return withDb(env, async (db) => {
+    const row = await db
+      .prepare(`SELECT l.link_id AS link_id, l.product_id AS product_id, l.bot_id AS bot_id, l.scopes AS scopes, l.status AS status, l.created_by AS created_by, l.created_at AS created_at, l.revoked_at AS revoked_at, p.name AS product_name FROM links l LEFT JOIN products p ON p.product_id = l.product_id WHERE l.link_id = ?1`)
+      .bind(linkId)
+      .first();
+    return row ? rowToLink(row) : null;
+  });
+}
+
+/** 後台列表：這個 bot 的連結（含已撤銷的），新的在前。 */
+export async function listLinksForBot(env, botId, limit = 200) {
+  return withDb(env, async (db) => {
+    const { results } = await db
+      .prepare(
+        `SELECT l.link_id AS link_id, l.product_id AS product_id, l.bot_id AS bot_id, l.scopes AS scopes, l.status AS status, l.created_by AS created_by, l.created_at AS created_at, l.revoked_at AS revoked_at, p.name AS product_name FROM links l LEFT JOIN products p ON p.product_id = l.product_id
+          WHERE l.bot_id = ?1 ORDER BY l.created_at DESC, l.link_id LIMIT ?2`
+      )
+      .bind(botId, limit)
+      .all();
+    return results.map(rowToLink);
+  });
+}
+
+/**
+ * 撤銷連結與它的全部金鑰（同一個 batch）。只動「這個 bot 的 active 連結」。
+ *
+ * @returns {Promise<boolean>} 有撤銷 → true；不存在、不屬於這個 bot、或早已撤銷 → false
+ */
+export async function revokeLink(env, { linkId, botId, now = Date.now() }) {
+  return withDb(env, async (db) => {
+    const results = await db.batch([
+      db
+        .prepare(
+          `UPDATE service_keys SET revoked_at = ?3
+            WHERE link_id = ?1 AND revoked_at IS NULL
+              AND EXISTS (SELECT 1 FROM links WHERE link_id = ?1 AND bot_id = ?2 AND status = 'active')`
+        )
+        .bind(linkId, botId, now),
+      db
+        .prepare("UPDATE links SET status = 'revoked', revoked_at = ?3 WHERE link_id = ?1 AND bot_id = ?2 AND status = 'active'")
+        .bind(linkId, botId, now),
+    ]);
+    return results[1].meta.changes === 1;
+  });
+}
+
+/**
+ * 輪替連結金鑰：同一個 batch 內撤銷舊的、發新的（scopes 取自連結）。
+ * 全成功或全回滾；並行輪替後恰好剩一把有效。連結不是 active → false，不留孤兒金鑰。
+ *
+ * @returns {Promise<boolean>}
+ */
+export async function rotateLinkKey(env, { linkId, botId, keyHash, now = Date.now() }) {
+  return withDb(env, async (db) => {
+    const results = await db.batch([
+      db
+        .prepare(
+          `UPDATE service_keys SET revoked_at = ?3
+            WHERE link_id = ?1 AND revoked_at IS NULL
+              AND EXISTS (SELECT 1 FROM links WHERE link_id = ?1 AND bot_id = ?2 AND status = 'active')`
+        )
+        .bind(linkId, botId, now),
+      db
+        .prepare(
+          `INSERT INTO service_keys (key_hash, bot_id, system, scopes, created_at, revoked_at, link_id)
+           SELECT ?3, bot_id, 'link:' || link_id, scopes, ?4, NULL, link_id
+             FROM links WHERE link_id = ?1 AND bot_id = ?2 AND status = 'active'`
+        )
+        .bind(linkId, botId, keyHash, now),
+    ]);
+    return results[1].meta.changes === 1;
+  });
+}
+
+/**
+ * 連結金鑰認證用：以金鑰雜湊一次查到「金鑰 → 連結 → 產品」（LEFT JOIN）。
+ * 系統金鑰（link_id 為空）回 {key:{linkId:null}, link:null, product:null}；呼叫端必須拒絕。
+ *
+ * @returns {Promise<null | {
+ *   key: {linkId: string|null, botId: string, scopes: string[], revokedAt: number|null},
+ *   link: null | {linkId: string, productId: string, botId: string, scopes: string[], status: string},
+ *   product: null | {disabled: boolean},
+ * }>}
+ */
+export async function getLinkKeyContext(env, keyHash) {
+  return withDb(env, async (db) => {
+    const row = await db
+      .prepare(
+        `SELECT k.link_id AS k_link_id, k.bot_id AS k_bot_id, k.scopes AS k_scopes, k.revoked_at AS k_revoked_at,
+                l.link_id AS l_link_id, l.product_id AS l_product_id, l.bot_id AS l_bot_id, l.scopes AS l_scopes, l.status AS l_status,
+                p.product_id AS p_product_id, p.disabled AS p_disabled
+           FROM service_keys k
+           LEFT JOIN links l ON l.link_id = k.link_id
+           LEFT JOIN products p ON p.product_id = l.product_id
+          WHERE k.key_hash = ?1`
+      )
+      .bind(keyHash)
+      .first();
+    if (!row) return null;
+    const list = (text) => {
+      const v = parseJson(text, []);
+      return Array.isArray(v) ? v : [];
+    };
+    return {
+      key: {
+        linkId: row.k_link_id ?? null,
+        botId: row.k_bot_id,
+        scopes: list(row.k_scopes),
+        revokedAt: row.k_revoked_at ?? null,
+      },
+      link:
+        row.l_link_id === null || row.l_link_id === undefined
+          ? null
+          : { linkId: row.l_link_id, productId: row.l_product_id, botId: row.l_bot_id, scopes: list(row.l_scopes), status: row.l_status },
+      product: row.p_product_id === null || row.p_product_id === undefined ? null : { disabled: row.p_disabled === 1 },
+    };
+  });
+}
+
 // ── 冪等 ──
 
 function idemRow(row) {
@@ -364,6 +643,10 @@ const CODE_RE = /^[a-z0-9_]{1,64}$/;
 const NAME_RE = /^[A-Za-z]{1,32}$/;
 const SCOPE_RE = /^[a-z]{1,32}:[a-z]{1,32}$/;
 const MAX_LIST = 10;
+// LM-2A：產品與連結代號（程式產生：prd_／lnk_ + 小寫英數）；error_code 是 bridge-v1 的錯誤碼（大寫底線）
+const PRODUCT_ID_RE = /^prd_[a-z0-9]{6,32}$/;
+const LINK_ID_RE = /^lnk_[a-z0-9]{6,32}$/;
+const ERROR_CODE_RE = /^[A-Z][A-Z_]{1,31}$/;
 
 /**
  * detail 白名單：只收這幾個欄位，且型別嚴格；其餘一律丟掉。
@@ -378,6 +661,10 @@ function sanitizeDetail(detail) {
   }
   if (typeof detail.error === "string" && CODE_RE.test(detail.error)) out.error = detail.error;
   if (typeof detail.disabled === "boolean") out.disabled = detail.disabled;
+  for (const [k, re] of [["product_id", PRODUCT_ID_RE], ["link_id", LINK_ID_RE], ["error_code", ERROR_CODE_RE]]) {
+    const v = detail[k];
+    if (typeof v === "string" && re.test(v)) out[k] = v;
+  }
   for (const [k, re] of [["fields", NAME_RE], ["scopes", SCOPE_RE]]) {
     const v = detail[k];
     if (Array.isArray(v) && v.length <= MAX_LIST && v.every((x) => typeof x === "string" && re.test(x))) out[k] = v;

@@ -1,6 +1,9 @@
 # LM-2A 設計：授權碼流程與「已連結的產品」
 
-狀態：**設計草案，待確認**（尚未實作）。範圍：讓外部產品（例如 Image Picker）經由「使用者同意」
+狀態：**設計已確認；2A-1（後端）已實作，待部署與手動遷移**（2A-2 前端、2A-3 真機實測尚未開始）。
+已確認的決定：產品登記採選項 A（管理端點＋`BRIDGE_ADMIN_SECRET`）；重新授權＝撤銷舊連結、發新連結；
+連結 scope 預設全開 `link:manage`、`contacts:bind`、`messages:send`（受產品登記的 scope 上限約束），同意頁不細分。
+實作與設計的差異見第 13 節，部署後要做的事見第 14 節。範圍：讓外部產品（例如 Image Picker）經由「使用者同意」
 取得一把只屬於某個 bot、權限受限的 Bridge 金鑰，並讓 owner 在後台查看與撤銷。
 前置：LM-1A／1B／1C 已上線（Bridge 獨立、D1、`brk_` 金鑰、`raw:push`、錯誤格式 helper）。
 契約來源：[`bridge-v1.yaml`](bridge-v1.yaml)；取捨：[`gap-analysis.md`](gap-analysis.md) D-1、D-5、D-7。
@@ -175,7 +178,7 @@ CREATE INDEX idx_service_keys_link ON service_keys (link_id);
 
 | 步 | 內容 | 你要做的事 |
 |---|---|---|
-| 2A-1 | 後端：遷移 0002、`db.js` 擴充、產品登記、授權碼、換金鑰、連結管理、連結金鑰認證 | 合併部署後，在兩個 D1 Console 貼 0002 |
+| 2A-1 | 後端：遷移 0002、`db.js` 擴充、產品登記、授權碼、換金鑰、連結管理、連結金鑰認證（**程式完成，待部署**） | 合併部署後，在兩個 D1 Console 貼 0002（第 14 節） |
 | 2A-2 | 前端：同意頁＋後台「已連結的產品」 | 合併部署即可 |
 | 2A-3 | 真機實測：用 curl 走完整流程 | 設 `BRIDGE_ENABLED=1`、`BRIDGE_ADMIN_SECRET`，登記一個測試產品 |
 
@@ -199,3 +202,85 @@ CREATE INDEX idx_service_keys_link ON service_keys (link_id);
 1. §4 產品登記：**選 A**（管理端點＋營運密鑰）？
 2. 重新授權：**撤銷舊連結、發新連結**，可以嗎？
 3. 權限預設：連結預設 scope 為 `link:manage`、`contacts:bind`、`messages:send` 全開，同意頁不給 owner 單獨取消某一項，可以嗎？（簡化 MVP；之後要細分再加）
+
+## 13. 實作與設計的對照（2A-1 實作時的決定）
+
+檔案：`migrations/0002_bridge_links.sql`、`worker_src/bridge/{links,scopes}.js`（新）、`db.js`／`auth.js`／`routes.js`／`index.js`（擴充）、
+`worker_src/lm_service.js`（新增三個唯讀函式）。測試：`tests/unit/test_bridge_links.mjs`（端點，含攻擊情境）、`test_bridge_links_db.mjs`（資料層原子性）。
+
+- **產品密鑰格式**：`bps_<12 位小寫 hex>_<32 bytes base64url>`，其中 12 位 hex 就是 `product_id`（`prd_<同 12 位>`）的尾碼。
+  這樣 `links/token` 只靠 `Authorization` 就能知道「在對哪個產品猜密鑰」，限流可以在查資料庫之前先做，契約的 request body 不必多一個欄位。
+  `product_id` 本來就不是祕密（出現在 authorize 網址）；真正的祕密是後面 43 字元，資料庫只存整串的 SHA-256，以常數時間比對。
+- **連結金鑰的 `service_keys.system`**：寫成 `link:<link_id>`。含 `:`，而系統名稱 regex 不允許 `:`，所以不可能與任何系統撞名，
+  `rotateKey`／`deleteSystem` 的 `WHERE bot_id AND system` 也不會碰到連結金鑰。
+- **既有系統認證路徑的隔離**：`getKeyWithSystem` 的 SQL 加 `AND k.link_id IS NULL`，連結金鑰在 `/raw/*` 一律當作「查無金鑰」（401，與不存在同一個回應）。
+  系統金鑰（`link_id` 為空）在連結端點是 `INVALID_KEY`。
+- **認證順序與設計稿的小差異**：設計稿寫「金鑰未撤銷 → 連結 active」。但撤銷連結時會一併撤銷金鑰，若先檢查金鑰，
+  已撤銷連結的金鑰永遠只會看到 `INVALID_KEY`，達不到「連結撤銷後立即 `LINK_REVOKED`」。所以實作是：
+  查不到／系統金鑰／孤兒金鑰 → `INVALID_KEY`；**連結已撤銷 → `LINK_REVOKED`（先於金鑰撤銷檢查）**；金鑰已撤銷（例如輪替掉）→ `INVALID_KEY`；產品停用 → `LINK_REVOKED`；scope 不足 → `SCOPE_DENIED`。
+  `principal.scopes` = 金鑰 ∩ 連結 ∩ 三個連結 scope：資料庫就算被寫入 `raw:push` 也不會被當成權限。
+- **授權碼消耗條件**：單一 `UPDATE … WHERE code_hash=? AND product_id=? AND redirect_uri=? AND used_at IS NULL AND expires_at>?`（`meta.changes === 1` 才成功）。
+  產品或 redirect_uri 不符時 UPDATE 不會命中，因此**不會燒掉合法持有人的碼**；對外仍是同一個 `INVALID_CODE`。
+- **授權碼清理**：每次發碼順手刪除「過期超過 1 小時」的舊碼（`idx_auth_codes_expiry`），不另設排程。
+- **同意頁用的額外資料**：`preview` 另回 `cancel_redirect_to`（已驗證過的 `redirect_uri?error=access_denied&state=…`），前端按「取消」直接導過去，不必自己組網址。
+- **後台端點如何指定 bot**：`GET /admin/links`、`DELETE /admin/links/{id}` 以 `X-Bot-Id`（或 `?bot_id=`）指定 bot，再用 `getOwnedBot` 檢查 owner；不是 owner 與 bot 不存在都是 404。
+- **`lm_service.js` 新增**（唯讀、不丟錯）：`getOwnedBot(env, userId, botId)`（以 `bot:{id}:permissions` 為準的 owner 檢查，回 id＋顯示名稱）、
+  `listOwnedBots(env, userId)`（候選取自 `user:{id}:bots`，逐一用 `getOwnedBot` 重新驗證）、`getBotDisplayName(env, botId)`（交換授權碼時回 `bot_display_name`，此時沒有人主體）。
+- **稽核**：`product_registered`（actor `system/admin_endpoint`）、`link_authorized`（actor 為按同意的使用者）、`link_revoked`（自動被重新授權取代、連結金鑰解除、後台撤銷三種都記）、
+  `key_rotated`、`code_exchange_failed`（只記 `product_id` 與 `error_code`；只有「產品確實存在」才記，避免任意 id 灌爆表）。`sanitizeDetail` 新增 `product_id`（`^prd_[a-z0-9]{6,32}$`）、`link_id`（`^lnk_[a-z0-9]{6,32}$`）、`error_code`（`^[A-Z][A-Z_]{1,31}$`）。
+- **限流**：`links/token` 以 `(CF-Connecting-IP, product_id)` 每分鐘 30 次（格式不合的密鑰歸入 `unknown` 桶）；`admin/products` 以 IP 每分鐘 10 次。
+  沿用 `checkRateLimit`（KV）：**缺 KV binding 或 KV 出錯時 fail-open**（既有行為，未改）。
+- **`BRIDGE_ALLOW_LOCALHOST_REDIRECT=1`**：只給測試／本機開發，允許登記 `http(s)://localhost|127.0.0.1|[::1]`；預設與其他任何值都不允許。正式環境不要設。
+- **掛載前綴**：同意頁網址以 `env.MOUNT_PATH`（與 `worker_src/lib/mount.js` 相同的正規化規則）組成 `<MOUNT_PATH>/pages/link_authorize.html`。
+  Bridge 不得 import `lib/mount.js`，所以 `links.js` 的 `mountPrefix` 複製了那幾行，並有測試釘住兩者一致。
+- **不在這一張**：`pages/link_authorize.html`、後台「已連結的產品」（2A-2）；`contacts/bind-tokens`、`/messages`（LM-3）。
+  停用產品目前只能直接改 D1（`UPDATE products SET disabled = 1 WHERE product_id = '…'`）；沒有 API。
+
+## 14. 操作手冊（部署後由人執行）
+
+合併部署後 Bridge 仍是關閉的（`BRIDGE_ENABLED` 未設）。遷移與 secret 都就緒之後才開旗標。
+
+**(a) 套用遷移 0002（兩個資料庫各一次）**：Cloudflare 控制台 → Storage & Databases → D1 → `bridge-db` → **Console**，
+貼上 `migrations/0002_bridge_links.sql` 的**全部內容**並執行；再對 `bridge-db-dev` 重複一次。
+`ALTER TABLE service_keys ADD COLUMN link_id` **不可重複執行**：同一份檔案每個資料庫只貼一次。
+萬一貼了第二次，第一句 `CREATE TABLE products` 就會因為「already exists」失敗，不會破壞既有資料；
+若是只貼到一半失敗，請先用 (b) 檢查已建立了哪些表，只補貼缺的敘述（不要整份重貼）。
+
+**(b) 驗證**：同一個 Console 執行
+
+```sql
+SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;
+```
+
+預期比 LM-1B 多出 `auth_codes`、`links`、`products`，總共 `audit_log`、`auth_codes`、`idempotency`、`links`、`products`、`service_keys`、`systems`
+（可能另有 `sqlite_sequence`，正常）。再確認欄位：`SELECT link_id FROM service_keys LIMIT 1;` 不報錯（可能是空結果）。
+
+**(c) 設定營運密鑰 `BRIDGE_ADMIN_SECRET`**（Worker Secret，不是 Variable）：產生一串夠長的隨機值（例如 `openssl rand -base64 32`），
+用 `npx wrangler secret put BRIDGE_ADMIN_SECRET`（dev 環境加 `--env dev`），或在 Cloudflare 控制台 → Workers → 該 Worker → Settings → Variables and Secrets 新增型別 **Secret**。
+不要寫進 `wrangler.jsonc`、文件或任何會 commit 的檔案。**未設定時 `POST /bridge/v1/admin/products` 一律回 404。**
+
+**(d) 開旗標**：確認 (a)(b)(c) 無誤後，把 `BRIDGE_ENABLED` 設為 `1`；`GET /bridge/v1/health` 回 `{"ok":true}`。
+
+**(e) 登記產品**（範例只有佔位符，請自行填入；回應的 `product_secret` 只會出現這一次，立刻交給對方保管）：
+
+```bash
+curl -sS -X POST "https://<你的網域>/lm/bridge/v1/admin/products" \
+  -H "Authorization: Bearer <BRIDGE_ADMIN_SECRET>" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "name": "<產品名稱，同意頁會顯示>",
+        "redirect_uris": ["https://<產品網域>/<回呼路徑>"],
+        "url_domains": ["<產品網域>"],
+        "scopes": ["link:manage", "contacts:bind", "messages:send"]
+      }'
+# 201 → { "product_id": "prd_…", "product_secret": "bps_…", ... }
+```
+
+`redirect_uris` 必須是 https（不可含 `#`、帳號密碼，也不可預先帶 `code`／`state`／`error` 參數），之後與請求值**逐字元精確比對**；要換網址就是重新登記或改 D1。
+`scopes` 只能是上面三個（`raw:push`、`messages:push` 一律被拒）。
+
+**(f) 停用產品（緊急）**：D1 Console 執行 `UPDATE products SET disabled = 1 WHERE product_id = '<prd_…>';`
+立即生效：新的授權、換碼都被拒，既有連結金鑰回 `LINK_REVOKED`。恢復改回 `0`。
+
+**(g) 排錯**：`GET /bridge/v1/health` 回 503 `bridge_not_configured` → 缺 `BRIDGE_DB` 綁定或缺表（回到 (a)(b)）。
+稽核可在 Console 查：`SELECT at, action, result, bot_id, detail FROM audit_log WHERE action IN ('product_registered','link_authorized','link_revoked','key_rotated','code_exchange_failed') ORDER BY id DESC LIMIT 50;`
