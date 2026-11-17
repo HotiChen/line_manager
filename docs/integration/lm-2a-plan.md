@@ -1,6 +1,7 @@
 # LM-2A 設計：授權碼流程與「已連結的產品」
 
-狀態：**設計已確認；2A-1（後端）已實作，待部署與手動遷移**（2A-2 前端、2A-3 真機實測尚未開始）。
+狀態：**設計已確認；2A-1（後端）與 2A-2（前端）都已實作，待部署與手動遷移**（2A-3 真機實測尚未開始）。
+**真實 LIFF 登入是否保留網址參數，在沙箱無法驗證**：2A-2 已用 `sessionStorage` 備援（見第 13 節 2A-2），真機驗證留給 2A-3。
 已確認的決定：產品登記採選項 A（管理端點＋`BRIDGE_ADMIN_SECRET`）；重新授權＝撤銷舊連結、發新連結；
 連結 scope 預設全開 `link:manage`、`contacts:bind`、`messages:send`（受產品登記的 scope 上限約束），同意頁不細分。
 實作與設計的差異見第 13 節，部署後要做的事見第 14 節。範圍：讓外部產品（例如 Image Picker）經由「使用者同意」
@@ -179,7 +180,7 @@ CREATE INDEX idx_service_keys_link ON service_keys (link_id);
 | 步 | 內容 | 你要做的事 |
 |---|---|---|
 | 2A-1 | 後端：遷移 0002、`db.js` 擴充、產品登記、授權碼、換金鑰、連結管理、連結金鑰認證（**程式完成，待部署**） | 合併部署後，在兩個 D1 Console 貼 0002（第 14 節） |
-| 2A-2 | 前端：同意頁＋後台「已連結的產品」 | 合併部署即可 |
+| 2A-2 | 前端：同意頁＋後台「已連結的產品」（**程式完成，待部署**） | 合併部署即可 |
 | 2A-3 | 真機實測：用 curl 走完整流程 | 設 `BRIDGE_ENABLED=1`、`BRIDGE_ADMIN_SECRET`，登記一個測試產品 |
 
 兩個 PR 分開，2A-1 先。2A-1 部署後 Bridge 仍可保持關閉，所以先部署再遷移同樣安全
@@ -235,6 +236,27 @@ CREATE INDEX idx_service_keys_link ON service_keys (link_id);
   Bridge 不得 import `lib/mount.js`，所以 `links.js` 的 `mountPrefix` 複製了那幾行，並有測試釘住兩者一致。
 - **不在這一張**：`pages/link_authorize.html`、後台「已連結的產品」（2A-2）；`contacts/bind-tokens`、`/messages`（LM-3）。
   停用產品目前只能直接改 D1（`UPDATE products SET disabled = 1 WHERE product_id = '…'`）；沒有 API。
+
+### 2A-2（前端）實作對照
+
+檔案：`pages/link_authorize.html`、`js/link_authorize.js`、`helper/link_authorize_form.js`（純函式）、`pages/system_management.html`＋`js/system_management.js`（後台區塊）。
+測試：`tests/unit/test_link_authorize_form.mjs`（純函式）、`tests/unit/test_link_authorize_page.mjs`（靜態檢查）；`test_system_page.mjs` 的路徑白名單加入 `/bridge/v1/admin/links`。
+另以 Playwright 在真實 Chromium 驗證（腳本放在工作目錄 scratchpad，不進 repo）。
+
+- **LIFF 登入與參數（第 11 節風險）**：`liff.init` 之後才讀網址（LIFF 可能在這一步還原原始查詢字串）；網址三個參數都在就用網址並清掉備援，否則用 `sessionStorage` 還原並**立即清掉**；
+  都沒有就顯示錯誤並停止（不呼叫 API、不導向、也不呼叫 `liff.login`）。未登入時先把參數存進 `sessionStorage` 再 `liff.login()`。所有 storage 存取都有 try/catch，沒有 storage 時頁面仍可運作（登入後參數若遺失，要回產品重新開始）。
+  **「真實 LIFF 登入後網址是否保留參數」無法在沙箱驗證**（Playwright 用的是 stub：登入後把網址導回不帶查詢字串的版本，以此模擬最壞情況，備援可還原）。2A-3 真機要確認：登入回來時 `liff.init` 後的 `location.search` 是否完整；若 LIFF 的 endpoint URL 設定與同意頁路徑不一致，也要在這時檢查。
+- **防點擊劫持**：`<head>` 的行內 script 在任何內容渲染前就檢查 `window.top !== window.self` 並標記 `framed`（CSS 隱藏卡片）；`link_authorize.js` 的 `init()` 再檢查一次，被嵌入時移除卡片並直接返回（不呼叫 `liff`、不呼叫 API）。只顯示「請在瀏覽器直接開啟此頁面。」（設計稿第 11 節「是否另加 header」仍未做，見下方缺口。）
+- **其他隱私**：`<meta name="referrer" content="no-referrer">`、`noindex`；頁面不印任何 console（靜態測試釘住）；導向用 `location.replace`，返回鍵不會回到同意頁。
+- **導向驗證**（`validateRedirectTarget`）：`redirect_to`（同意）與 `cancel_redirect_to`（取消）導向前都要通過：能解析、協定 `https:`、無帳號密碼、無 fragment、不含空白／控制字元、`origin + pathname` 與網址上的原 `redirect_uri` 完全相同；任何一項不符就不導向並顯示錯誤（同意）／提示（取消）。
+  唯一會離開頁面的程式碼是 `navigate()`，靜態測試釘住只有一處 `location.replace`。
+- **畫面**：產品名稱與 bot 名稱一律 `textContent`；scope 轉中文，**不認識的 scope（含 `raw:push`）顯示「未知權限」、不顯示原字串，並停用「同意」**；scope 為空陣列也停用。
+  bot：1 個預選；多個用 `<select>`（預設「請選擇」，未選時同意停用，不替使用者挑）；0 個顯示「你沒有可授權的官方帳號（需為管理員）」且同意停用（仍可取消）。按下任一按鈕立即 disabled，approve 失敗才恢復。
+- **錯誤處理**：同意頁與後台都自己解析 `{error:{code}}`（`describeLinkError`），只依 code 與 HTTP status 對照中文，不顯示後端 message；`ErrorHandler` 只認 400/401/403/404/500，所以走 `rawResponse` + `showErrorToast:false`。
+- **後台**：`GET /bridge/v1/admin/links`、`DELETE /bridge/v1/admin/links/{link_id}` 以 `X-Bot-Id`（目前專案，取自 `/team/members`）指定 bot；撤銷前用 `showConfirm`（它會逸出標題與訊息）說明「撤銷後該產品立即無法再使用，需重新授權才能恢復」，成功後重新載入。
+  列表：使用中在前、各組新到舊。`loadLinks()` **不被 `await`**，且自己吞掉所有錯誤：連結 API 很慢或失敗，不會拖住全頁載入遮罩，也不影響系統列表。
+- **認證與本機開發**：認證仍是 `ApiClient` 自動帶的 LIFF `Authorization`（本機開發另帶 `X-User-Id`）；同意頁沒有「debug 模擬登入」捷徑（`invite.html` 有，這裡刻意不做：授權頁不該有繞過登入的路徑），本機測試請用 LIFF stub 或有效的 dev 設定。
+- **發現的缺口（未改後端）**：`/pages/link_authorize.html` 是 Worker 以靜態檔提供的，沒有 `X-Frame-Options: DENY`／`Content-Security-Policy: frame-ancestors 'none'`；目前只靠頁面內的 `top === self` 檢查（JS 被停用的瀏覽器理論上可被嵌入，但此時頁面也無法登入與送出）。建議之後在 Worker 對這個路徑補 header（後端範圍，本次未動）。
 
 ## 14. 操作手冊（部署後由人執行）
 

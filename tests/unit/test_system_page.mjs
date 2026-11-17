@@ -111,10 +111,13 @@ describe('id 一致性', () => {
 describe('呼叫的 API', () => {
     const js = stripComments(read(jsPath));
 
-    it('只打 /bridge/v1/systems 與 /team/members', () => {
+    it('只打 /bridge/v1/systems、/bridge/v1/admin/links（LM-2A 已連結的產品）與 /team/members', () => {
         const paths = [...js.matchAll(/'(\/[a-z0-9/_${}.-]+)'|`(\/[a-z0-9/_${}.-]+)`/gi)].map((m) => m[1] || m[2]);
         for (const p of paths) {
-            assert.ok(p.startsWith('/bridge/v1/systems') || p.startsWith('/team/members'), `意外的路徑 ${p}`);
+            assert.ok(
+                p.startsWith('/bridge/v1/systems') || p.startsWith('/bridge/v1/admin/links') || p.startsWith('/team/members'),
+                `意外的路徑 ${p}`
+            );
         }
     });
 
