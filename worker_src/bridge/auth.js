@@ -77,13 +77,23 @@ export async function authenticateBridge(request, env) {
  * @param {Function} handler
  * @param {string} requiredScope
  */
+// 過渡相容（LM-1C）：scope 由 messages:push 改名 raw:push。舊金鑰的 scopes 裡若還是舊名，
+// 檢查 raw:push 時視為擁有；principal.scopes 維持資料庫原樣。單向：不影響其他 scope。
+const LEGACY_SCOPE_FOR = { "raw:push": "messages:push" };
+
+function hasScope(scopes, required) {
+  if (scopes.includes(required)) return true;
+  const legacy = Object.hasOwn(LEGACY_SCOPE_FOR, required) ? LEGACY_SCOPE_FOR[required] : null;
+  return legacy !== null && scopes.includes(legacy);
+}
+
 export function withService(handler, requiredScope) {
   return async (request, env, ...args) => {
     const auth = await authenticateBridge(request, env);
     if (!auth.authenticated) {
       return jsonResponse({ success: false, error: auth.error }, auth.status);
     }
-    if (requiredScope && !auth.principal.scopes.includes(requiredScope)) {
+    if (requiredScope && !hasScope(auth.principal.scopes, requiredScope)) {
       return jsonResponse({ success: false, error: "Insufficient scope" }, 403);
     }
     return handler(request, env, auth.principal, ...args);

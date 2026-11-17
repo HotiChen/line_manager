@@ -60,7 +60,8 @@ function formatDate(ts) {
 }
 
 function scopeLabel(id) {
-  const found = SCOPES.find((s) => s.id === id);
+  // 過渡期：舊資料列可能還是舊名 messages:push，顯示成 raw:push
+  const found = SCOPES.find((s) => s.id === (id === 'messages:push' ? 'raw:push' : id));
   return found ? found.label : id;
 }
 

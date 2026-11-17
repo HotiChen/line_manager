@@ -58,7 +58,7 @@ P0 兩項不處理，Bridge 做出來也無法對「別的商家」使用。
 | **LM-0B** | P0-2：註冊時建立 owner／permissions＋修復 migration | 待辦 | 無，可與 0A 平行 |
 | **LM-1A** | `BRIDGE_ENABLED` flag（預設關，關閉時 `/bridge/*` 404 且後台不顯示入口）；搬到 `worker_src/bridge/`；`lm_service.js` 窄介面；ESLint 邊界規則；路徑改 `/bridge/v1` | ✅ 程式完成（待部署） | G0 |
 | **LM-1B** | `BRIDGE_DB`（D1）＋migration；D1 測試 helper；service key、系統、冪等、audit_log 移到 D1（products 註冊移到 LM-2A，隨使用它的程式一起建） | ✅ 程式完成（待部署；部署後需手動套用遷移，見 [`lm-1b-plan.md`](lm-1b-plan.md) 操作手冊） | LM-1A |
-| **LM-1C** | `brk_` 金鑰格式（前綴＋雜湊）；新錯誤格式；`raw:push` scope 改名（audit_log 寫入與系統註冊 race 修正已在 LM-1B 完成） | 待辦 | LM-1B |
+| **LM-1C** | `brk_` 金鑰格式（前綴＋雜湊）；新錯誤格式；`raw:push` scope 改名（audit_log 寫入與系統註冊 race 修正已在 LM-1B 完成） | ✅ 程式完成（待部署；取捨見下方完成紀錄） | LM-1B |
 | **LM-1D** | 契約測試：同一份 `bridge-v1.yaml` 驗證 LM 實作 | 待辦 | LM-1C |
 | **LM-2A** | 授權碼流程：`/link/authorize`、`/links/token`、`/links/{id}`（查詢、解除、換鑰）、同意頁、後台「已連結的產品」 | 待辦 | LM-1C |
 | **LM-3A** | 聯絡人綁定：`bind-tokens`、webhook 偵測綁定碼、狀態查詢（不回 userId） | 待辦 | LM-0A、LM-2A |
@@ -70,7 +70,18 @@ P0 兩項不處理，Bridge 做出來也無法對「別的商家」使用。
 - **部署後 Bridge 預設關閉**：必須在 Worker 設定 `BRIDGE_ENABLED=1`（Variable，型別 Text）才會啟用；`wrangler.jsonc` 刻意不設。
   關閉時所有 `/bridge/*` 回 404（不認證、不碰 KV），行為與部署前相同。
 - 後台側邊欄「系統整合」入口預設隱藏，只有 `/features` 回 `bridge:true`（即 `BRIDGE_ENABLED=1`）才顯示。
-- scope 名稱、錯誤格式、金鑰格式維持不變，留給 LM-1C。
+- scope 名稱、錯誤格式、金鑰格式維持不變，留給 LM-1C（已於 LM-1C 處理，見下）。
+
+**LM-1C 完成紀錄與取捨（2026-11-17）**：
+- **金鑰格式**：註冊與輪替改發 `brk_<6 位小寫 hex 前綴>_<32 bytes base64url 密鑰>`（`lib/crypto_util.js` 的 `generateBrokerKey`，CSPRNG）。仍只存 SHA-256；
+  **沒有新增 prefix 欄位、沒有新增遷移檔**（`migrations/` 未動）——前綴只是金鑰字串的一部分，供人眼辨識；若之後後台要顯示前綴，可由 LM-2A 的 links 表一併加欄位。`auth.js` 只比對雜湊、不看格式，已存在的舊 `sk_` 金鑰照常可用（有測試）。
+- **scope `messages:push` → `raw:push`**：`ALLOWED_SCOPES`、預設 scope、`/raw/*` 路由與後台選項都改名。相容規則：
+  (a) 註冊請求帶 `messages:push` 視為 `raw:push`，正規化（並去重）後才寫入 D1，不寫舊名；
+  (b) `withService` 檢查 `raw:push` 時，金鑰 scopes 裡的舊名 `messages:push` 等同擁有（單向，不影響其他 scope；`principal.scopes` 維持資料庫原樣）。
+  已存在 D1 的舊資料不遷移，等舊金鑰輪替／重新註冊後自然消失。稽核 detail 的 scopes 白名單 regex（`^[a-z]{1,32}:[a-z]{1,32}$`）本來就通過 `raw:push`，已加測試。
+- **新錯誤格式（D-7）只建 helper、未接線**：新增 `worker_src/bridge/errors.js` 的 `bridgeError(code, message, {status, retryable, headers})` 與 code→預設 status／retryable 對照表（code 限 `bridge-v1.yaml` Error enum，未知 code 丟錯）。
+  `/raw/*`、`/systems*` 維持舊格式 `{success:false,error:"..."}`，既有測試未放寬；helper 留給 LM-2A 以後的新端點使用。
+- 回應欄位名稱維持現有的 `apiKey`（camelCase），沒有改成 `api_key`。
 
 順序：`LM-0A／0B → G0 → LM-1A → 1B → 1C → 1D → 2A → 3A → 3B → 3E`。LM-0A／0B 與 G0 可同時進行，不必等待。
 

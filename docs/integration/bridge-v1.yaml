@@ -288,7 +288,8 @@ paths:
         需 `BRIDGE_ENABLED=1`）。行為見該實作：scope、per-system 限流、
         `X-Idempotency-Key`、額度對帳（回報 `remaining`）、封鎖回 409。
         只有 owner 在後台手動發放、且 scope 含 `raw:push` 的金鑰可用；連結流程發出的金鑰永遠不含此 scope。
-        搬遷時 scope 名稱由 `messages:push` 改為 `raw:push`，並提供過渡期相容。
+        scope 名稱已由 `messages:push` 改為 `raw:push`（LM-1C）；過渡期相容：註冊時舊名會正規化為 `raw:push`，舊金鑰裡的 `messages:push` 檢查時等同 `raw:push`。
+        此端點目前仍回舊格式 `{success:false,error}`（D-7），新錯誤格式見 `worker_src/bridge/errors.js`，由後續新端點採用。
       x-status: implemented
       x-scope: raw:push
       requestBody:
@@ -350,7 +351,7 @@ components:
       type: http
       scheme: bearer
       description: |
-        `Authorization: Bearer brk_<前綴>_<密鑰>`。資料庫只存 SHA-256 雜湊與前綴。
+        `Authorization: Bearer brk_<前綴>_<密鑰>`。資料庫只存整把金鑰的 SHA-256 雜湊；前綴（6 位小寫 hex）只是金鑰字串的一部分、供辨識用，LM-1C 未另存欄位。認證只比對雜湊，不檢查格式（舊 `sk_` 金鑰仍有效）。
         每個請求依序檢查：金鑰有效 → 連結為 active → scope 足夠 → 資源屬於這條連結。
     productSecret:
       type: http

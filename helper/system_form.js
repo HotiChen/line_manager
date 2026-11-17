@@ -14,7 +14,7 @@ const NAME_MAX = 100;
  * 畫面上標示「尚未開放」且不可勾選，避免發出一把「看起來有權限、實際沒用」的 key。
  */
 export const SCOPES = [
-  { id: 'messages:push', label: '推播訊息（push / multicast）', available: true },
+  { id: 'raw:push', label: '原樣推播（raw push / multicast）', available: true },
   { id: 'members:read', label: '讀取會員資料', available: false },
   { id: 'tags:write', label: '寫入會員標籤', available: false },
 ];
@@ -76,7 +76,7 @@ export function buildCurlExample(baseUrl, botId) {
   const base = String(baseUrl || '').replace(/\/+$/, '');
   return [
     `curl -X POST ${base}/bridge/v1/raw/push \\`,
-    '  -H "Authorization: Bearer <API_KEY>" \\',
+    '  -H "Authorization: Bearer brk_<PREFIX>_<SECRET>" \\',
     `  -H "X-Bot-Id: ${safeBotId(botId)}" \\`,
     '  -H "X-Idempotency-Key: <同一件事用同一個字串>" \\',
     '  -H "Content-Type: application/json" \\',

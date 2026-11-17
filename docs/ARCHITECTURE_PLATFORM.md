@@ -242,7 +242,7 @@ service_key_${sha256(key)} → {
 
 - **只存雜湊**，不存原文
 - 一把 key 綁一個 (botId, system)
-- scope 限制能呼叫哪些端點（`messages:push`、`members:read`、`tags:write`…）
+- scope 限制能呼叫哪些端點（`raw:push`、`members:read`、`tags:write`…）
 - 可撤銷，撤銷立即生效
 - 發 key 必須由「人」主體操作 —— key 不能用來發 key
 
@@ -325,7 +325,7 @@ quota_${botId}_${YYYYMM}                { pushed, free, plan, updatedAt }
 > **邊界**：`bridge/` 只能 import 兄弟檔、`lm_service.js`、`lib/{line_api,crypto_util,kv_schema,utils}.js`、`middleware/rate_limiter.js`（`BRIDGE_DB` 只在 `bridge/` 內被讀取）；
 > `bridge/` 以外只有 `worker_src/index.js` 能 import 它。由 `tests/unit/test_import_boundary.mjs` 與 `eslint.config.js` 的 `no-restricted-imports` 把關。
 >
-> 路徑對照：下文設計稿裡的 `/api/v1/...` 請讀作 `/bridge/v1/...`；`messages/push|multicast` 現在是 `raw/push|multicast`（scope 名稱仍為 `messages:push`，改名是後續工單）。
+> 路徑對照：下文設計稿裡的 `/api/v1/...` 請讀作 `/bridge/v1/...`；`messages/push|multicast` 現在是 `raw/push|multicast`（scope 已於 LM-1C 改名為 `raw:push`；金鑰格式為 `brk_<前綴>_<密鑰>`）。
 >
 > 與下面設計稿的差異：
 > - 系統限流 key 放在 `bot:${botId}:sys_rl:…`（不是 `rl_sys_…`），租戶刪除時才會一起清掉。
@@ -334,8 +334,9 @@ quota_${botId}_${YYYYMM}                { pushed, free, plan, updatedAt }
 > - 處理中的紀錄只存 2 分鐘，Worker 被回收時不會把鍵永遠鎖死；由 `X-Line-Retry-Key`
 >   （自冪等鍵衍生的 UUID）擋住這段時間內的重複投遞。
 > - 冪等已在 D1（LM-1B）：單一 `INSERT … ON CONFLICT` 原子搶佔，並行只有一個會送出。額度快取的扣減仍在 KV，是 best-effort，高併發下可能短暫多放幾則（下一次對帳校正）；嚴格額度需要 Durable Object。
-> - 目前 scope 只有 `messages:push`（push 與 multicast 共用）、`members:read`、`tags:write`；
->   後兩者尚無對應端點。
+> - 目前 scope 只有 `raw:push`（push 與 multicast 共用）、`members:read`、`tags:write`；後兩者尚無對應端點。
+>   過渡相容：註冊時舊名 `messages:push` 會正規化成 `raw:push`；舊金鑰 scopes 裡的 `messages:push` 檢查時等同 `raw:push`。
+> - 新錯誤格式 `{error:{code,message,retryable}}` 的 helper 已在 `bridge/errors.js`，尚未接線（`/raw/*`、`/systems*` 仍是 `{success:false,error}`）。
 > - 對「從未見過的 `U…` 會員」回 404；群組／聊天室 id 不查表（尚無群組紀錄）。
 > - 403 封鎖只標記 `member.inactiveAt`，尚未扇出 `member.unfollowed`（事件轉發未做）。
 >   也沒有在 follow 事件時清除 `inactiveAt` —— 做事件轉發時要一併處理。

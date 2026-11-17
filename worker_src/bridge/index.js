@@ -6,7 +6,7 @@
  *
  * 路由（前綴 /bridge/v1）：
  *   GET  /health                      公開（會對 BRIDGE_DB 做 SELECT 1，失敗回 503 bridge_not_configured）
- *   POST /raw/push, /raw/multicast    service key（scope messages:push）
+ *   POST /raw/push, /raw/multicast    service key（scope raw:push）
  *   /systems*                         人主體（LIFF）+ owner
  *   其他                              404
  *

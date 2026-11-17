@@ -5,7 +5,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { sha256Hex, randomToken, timingSafeEqual } from '../../worker_src/lib/crypto_util.js';
+import { sha256Hex, randomToken, generateBrokerKey, timingSafeEqual } from '../../worker_src/lib/crypto_util.js';
 
 describe('sha256Hex', () => {
     it('與 node:crypto 的結果一致', async () => {
@@ -65,5 +65,33 @@ describe('timingSafeEqual', () => {
 
     it('兩個空陣列為 true', () => {
         assert.equal(timingSafeEqual(new Uint8Array(), new Uint8Array()), true);
+    });
+});
+
+describe('generateBrokerKey', () => {
+    it('格式為 brk_<6 位小寫 hex>_<32 位以上 base64url 密鑰>', () => {
+        for (let i = 0; i < 50; i++) {
+            assert.match(generateBrokerKey(), /^brk_[0-9a-f]{6}_[A-Za-z0-9_-]{32,}$/);
+        }
+    });
+
+    it('密鑰段是 32 bytes（43 字元 base64url）', () => {
+        assert.match(generateBrokerKey(), /^brk_[0-9a-f]{6}_[A-Za-z0-9_-]{43}$/);
+    });
+
+    it('不含 ":"（KV key 以冒號分隔）', () => {
+        for (let i = 0; i < 50; i++) assert.ok(!generateBrokerKey().includes(':'));
+    });
+
+    it('每次都不同（前綴與密鑰皆隨機）', () => {
+        const keys = new Set();
+        const prefixes = new Set();
+        for (let i = 0; i < 300; i++) {
+            const k = generateBrokerKey();
+            keys.add(k);
+            prefixes.add(k.slice(4, 10));
+        }
+        assert.equal(keys.size, 300);
+        assert.ok(prefixes.size > 100);
     });
 });
