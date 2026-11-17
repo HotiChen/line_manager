@@ -219,3 +219,19 @@ Bridge 與 LM 的邊界：`bridge/binding.js` 只經 `lm_service` 的窄介面�
    應回 5 列（2 張 table、3 個 index）。
 3. 部署後 `BRIDGE_ENABLED=1` 才會啟用綁定；旗標關閉時 webhook 行為與以前完全相同。未套遷移就開旗標：發碼端點會回 503；webhook 側的綁定碼辨識會安靜失敗並退回既有流程（log 只有 D1 錯誤訊息）。
 4. 真機驗證（3A-2）：用真實 OA 確認 `bind_url` 是否能在手機上預填碼、`basicId` 有沒有回、完整綁定流程與 unfollow／follow。
+
+## 14. LM-3A-2 實測結果（2026-11-17，正式環境、真實官方帳號）
+
+以暫時測試頁（已移除；需要時可從 git 歷史 `pages/bridge_bind_test.html`、`js/bridge_bind_test.js` 找回）在手機完成。**以下為操作者回報，除註明外未逐項留證**：
+
+| 項目 | 結果 |
+|------|------|
+| LINE `/v2/bot/info` 回 `basicId`、預填連結 `line.me/R/oaMessage/…` 可用 | 通過（操作者回報預填連結出現並可用） |
+| 傳出綁定碼 → webhook 認出 → OA 回確認訊息 | 通過（操作者回報） |
+| 綁定後狀態 `bound` | 通過（操作者回報） |
+| 別人的 ref 查詢 → `unbound` | 通過（操作者回報） |
+| 解除綁定 204、之後 `unbound` | 通過（截圖確認：204，連續兩次查詢 `unbound`） |
+| 一般訊息與關鍵字回覆不受影響 | **未驗證** |
+| 封鎖 OA → `blocked`、解除封鎖 → 還原 `bound` | **未驗證**：操作者稱有照順序操作，但沒有留下該段結果；僅有單元測試。若日後發現封鎖後狀態仍是 `bound`，從 `handleUnfollowEvent`（`lib/event_handler.js`）與 `binding.markBlocked` 查起 |
+
+未在真實 D1 上驗證的：並行搶碼、每連結 1000 碼上限（Miniflare 測試已涵蓋）。LM-3E 的自動化 E2E 應補上。
