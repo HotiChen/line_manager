@@ -16,6 +16,9 @@ js/ helper/ pages/ css/ index.html    前端（正式部署版本，由 worker s
 env/config.js        前端環境設定（apiBase、LIFF ID、debug 旗標）
 tests/unit/          後端單元測試（node:test）
 tests/helpers/       測試工具（mock_kv.mjs：記憶體版 KV mock）
+                     mock_d1.mjs：Miniflare 真 D1，自動套用 migrations/*.sql
+worker_src/bridge/   Bridge（垂直產品整合，BRIDGE_ENABLED=1 才啟用）；設計見 docs/integration/
+migrations/          Bridge 的 D1 遷移，部署後由人在 D1 Console 手動套用
 docs/                文件；docs/archive/ 放過期報告
 wrangler.jsonc       Worker 設定（prod=pinti-line / dev=pinti-line-dev）
 ```
@@ -42,16 +45,16 @@ npm run deploy:check && npm run deploy
 - 認證一律走 `withAuth`，授權一律走 `withPermission`（見 `team.js` 的用法），新 handler 不可直接信任 body/query 中的 userId/ownerId。
 - HTTP 回應**不可**包含 `err.stack`。
 - 前端不可新增裸 `innerHTML` 賦值（用 `helper/security.js` 的 `setInnerHTML`）。
+- Bridge 邊界：只經 `worker_src/lm_service.js` 使用 LM；SQL 只寫在 `bridge/db.js`；LINE userId 不進任何回應、稽核或 log。測試（`test_import_boundary`、`test_bridge_db_boundary`）會擋。
 
 ## 已知狀態與陷阱
 
 - `line-admin/` 已於 2026-06 移除（曾是前端的發散複本）；如需查舊版，看 git 歷史。
-- dev 與 prod 已分離 KV namespace（2026-11-10）。**本地開發看不到正式資料**，測試需要的資料要自己寫進 dev namespace。`tests/unit/test_wrangler_config.mjs` 會擋住再次指回正式環境。
+- dev 與 prod 使用不同的 KV namespace。**本地開發看不到正式資料**，測試需要的資料要自己寫進 dev namespace。`tests/unit/test_wrangler_config.mjs` 會擋住再次指回正式環境。
 - ESLint 對前端 `js/`、`helper/` 還有大量遺留 errors/warnings；CI 只強制後端。前端清完一個目錄就把它加進 CI 的 lint 範圍。
 - 完整評估與路線圖：`docs/PROJECT_REVIEW_2026-06-11.md`；問題追蹤：`ISSUES.md`。
 
 ## 給 AI 的工作方式建議
 
 - 機械性批量修改（清 console、搬檔案）→ 用腳本或便宜模型；架構/安全改動 → 先進 plan mode。
-- 搜尋與盤點交給 subagent，主對話只保留結論。
 - 一個任務一個 session；範圍講清楚（檔案路徑 + 預期行為）。
