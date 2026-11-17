@@ -63,11 +63,11 @@ const SENSITIVE = { "Cache-Control": "no-store" };
 
 // ── 回應小工具 ──
 
-function json(data, status = 200) {
+export function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json", ...SENSITIVE } });
 }
 
-function noContent() {
+export function noContent() {
   return new Response(null, { status: 204, headers: SENSITIVE });
 }
 
@@ -76,12 +76,12 @@ const invalidKey = (message = "Invalid or revoked key") => bridgeError("INVALID_
 const notFound = (message = "Not found") => bridgeError("NOT_FOUND", message);
 const unavailable = () => bridgeError("INTERNAL", "bridge_not_configured", { status: 503 });
 
-function rateLimited(resetAt) {
+export function rateLimited(resetAt) {
   const retryAfter = Math.max(1, Math.ceil((resetAt - Date.now()) / 1000));
   return bridgeError("RATE_LIMITED", "Too many requests", { headers: { "Retry-After": String(retryAfter) } });
 }
 
-async function readJsonBody(request) {
+export async function readJsonBody(request) {
   let text;
   try {
     text = await request.text();
@@ -405,7 +405,7 @@ async function handleToken(request, env) {
 
 // ── 連結金鑰（只能操作自己這條連結）──
 
-function isoOrNull(ms) {
+export function isoOrNull(ms) {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 }
 

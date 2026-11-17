@@ -3,7 +3,8 @@
  *
  * 規則（與 eslint.config.js 的 no-restricted-imports 區塊一致，兩層防線）：
  *   (i)  `worker_src/bridge/` 以外的檔案不得 import `bridge/` 底下的任何東西，
- *        唯一例外是 composition root `worker_src/index.js`。
+ *        例外：composition root `worker_src/index.js`（任何 bridge 模組），以及 LM-3A 的 webhook 接縫
+ *        `worker_src/lib/event_handler.js`（只准 `bridge/binding.js`）。
  *   (ii) `worker_src/bridge/*.js` 只能 import：
  *          - 同目錄的兄弟檔（./x.js，bridge 目錄是扁平的）
  *          - ../lm_service.js
@@ -18,6 +19,11 @@ import path from 'node:path';
 
 export const BRIDGE_DIR = 'worker_src/bridge';
 export const COMPOSITION_ROOT = 'worker_src/index.js';
+
+/** LM 側檔案中，獲准 import 的 bridge 模組（LM-3A：webhook 事件處理單向呼叫 binding.js；eslint.config.js 有同一份清單） */
+export const LM_SIDE_BRIDGE_ALLOWED = {
+    'worker_src/lib/event_handler.js': ['worker_src/bridge/binding.js'],
+};
 
 /** Bridge 可以 import 的非兄弟檔（相對 repo 根目錄） */
 export const BRIDGE_ALLOWED_EXTERNAL = [
@@ -94,11 +100,13 @@ export function checkFile(relPath, source) {
         }
 
         if (resolved !== null && isUnderBridge(resolved) && relPath !== COMPOSITION_ROOT) {
+            const allowedForFile = LM_SIDE_BRIDGE_ALLOWED[relPath] || [];
+            if (allowedForFile.includes(resolved)) continue;
             violations.push({
                 file: relPath,
                 specifier,
                 rule: 'bridge-private',
-                message: `${relPath} 不得 import bridge/（只有 ${COMPOSITION_ROOT} 可以）`,
+                message: `${relPath} 不得 import bridge/（只有 ${COMPOSITION_ROOT} 與 LM_SIDE_BRIDGE_ALLOWED 列出的接縫可以）`,
             });
         }
     }

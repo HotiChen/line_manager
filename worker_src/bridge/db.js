@@ -403,6 +403,7 @@ const linkSystemName = (linkId) => `link:${linkId}`;
 /**
  * 建立連結並發第一把金鑰（同一個 batch）：
  * 先撤銷同 (product, bot) 既有 active 連結與其金鑰，再建新連結、發新金鑰。
+ * 被取代的連結名下的 contacts 與未用未過期的 bind_codes 在同一個 batch 內改掛到新連結（LM-3A）。
  * 任何一步失敗整批回滾，不留孤兒；唯一索引 uq_links_active 是最後一道防線。
  *
  * @returns {Promise<{revokedLinkIds: string[]}>} 被這次重新授權取代的舊連結
@@ -411,6 +412,22 @@ export async function createLinkWithKey(env, { linkId, productId, botId, scopes,
   return withDb(env, async (db) => {
     const results = await db.batch([
       db.prepare("SELECT link_id FROM links WHERE product_id = ?1 AND bot_id = ?2 AND status = 'active'").bind(productId, botId),
+      // LM-3A：重新授權（取代 active 連結）時，綁定與「未用且未過期」的綁定碼跟著搬到新連結。
+      // 放在撤銷之前，這樣「這次被取代的連結」就是此刻 status = 'active' 的那些，不會碰到更早被明確撤銷的連結
+      // （撤銷即切斷）。新連結剛建、沒有任何列，不會有主鍵衝突。
+      db
+        .prepare(
+          `UPDATE contacts SET link_id = ?3
+            WHERE link_id IN (SELECT link_id FROM links WHERE product_id = ?1 AND bot_id = ?2 AND status = 'active')`
+        )
+        .bind(productId, botId, linkId),
+      db
+        .prepare(
+          `UPDATE bind_codes SET link_id = ?3
+            WHERE used_at IS NULL AND expires_at > ?4
+              AND link_id IN (SELECT link_id FROM links WHERE product_id = ?1 AND bot_id = ?2 AND status = 'active')`
+        )
+        .bind(productId, botId, linkId, now),
       db
         .prepare(
           `UPDATE service_keys SET revoked_at = ?3
@@ -556,6 +573,188 @@ export async function getLinkKeyContext(env, keyHash) {
           : { linkId: row.l_link_id, productId: row.l_product_id, botId: row.l_bot_id, scopes: list(row.l_scopes), status: row.l_status },
       product: row.p_product_id === null || row.p_product_id === undefined ? null : { disabled: row.p_disabled === 1 },
     };
+  });
+}
+
+// ── 聯絡人綁定（LM-3A）──
+//
+// line_user_id 只存在 contacts 表，而且這一節沒有任何函式把它讀出來：HTTP 處理函式拿到的只有狀態與時間。
+// webhook 路徑（binding.js）自己手上就有 lineUserId，只會把它寫進來或當查詢條件。
+
+/** 每條連結同時有效（未用、未過期）的綁定碼上限 */
+export const MAX_LIVE_BIND_CODES_PER_LINK = 1000;
+/** 過期超過這麼久的綁定碼在下一次發碼時順手清掉（idx_bind_codes_expiry） */
+const BIND_CODE_PURGE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * 發一組綁定碼（只存雜湊），單一 batch：
+ *   1. INSERT … SELECT，條件是「這條連結其他 ref 的有效未用碼數量 < 上限」（上限不計同 ref 的舊碼，因為它們即將被取代）
+ *   2. 只有新碼確實寫入時，才刪除同 (連結, ref) 的其他未用碼 —— 被上限擋下時舊碼原封不動
+ *   3. 順手清掉早已過期的舊碼
+ * 並行請求可能讓數量短暫略超過上限（與 KV 限流器同級的已知限制），上限是防灌表的護欄，不是精確配額。
+ *
+ * @returns {Promise<{created: true} | {created: false, capped: true} | {created: false, conflict: true}>}
+ */
+export async function createBindCode(env, { codeHash, linkId, botId, ref, expiresAt, now = Date.now(), maxLive = MAX_LIVE_BIND_CODES_PER_LINK }) {
+  return withDb(env, async (db) => {
+    let results;
+    try {
+      results = await db.batch([
+        db
+          .prepare(
+            `INSERT INTO bind_codes (code_hash, link_id, bot_id, external_contact_ref, created_at, expires_at, used_at)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, NULL
+              WHERE (SELECT COUNT(*) FROM bind_codes
+                      WHERE link_id = ?2 AND used_at IS NULL AND expires_at > ?5 AND external_contact_ref <> ?4) < ?7`
+          )
+          .bind(codeHash, linkId, botId, ref, now, expiresAt, maxLive),
+        db
+          .prepare(
+            `DELETE FROM bind_codes
+              WHERE link_id = ?1 AND external_contact_ref = ?2 AND used_at IS NULL AND code_hash <> ?3
+                AND EXISTS (SELECT 1 FROM bind_codes WHERE code_hash = ?3)`
+          )
+          .bind(linkId, ref, codeHash),
+        db.prepare("DELETE FROM bind_codes WHERE expires_at < ?1").bind(now - BIND_CODE_PURGE_AFTER_MS),
+      ]);
+    } catch (err) {
+      if (/UNIQUE constraint failed/i.test(String(err && err.message))) return { created: false, conflict: true };
+      throw err;
+    }
+    return results[0].meta.changes === 1 ? { created: true } : { created: false, capped: true };
+  });
+}
+
+/**
+ * 消耗綁定碼：單一 UPDATE，條件是「未使用、未過期、屬於這個 bot、連結仍是 active」。
+ * meta.changes === 1 才算搶到，所以並行的兩次消耗只有一個會贏。
+ * 條件不符（不存在、過期、已用、別的 bot、連結已撤銷）一律回 null，呼叫端不得區分原因。
+ *
+ * @returns {Promise<null | {linkId: string, productId: string, ref: string}>}
+ */
+export async function consumeBindCode(env, { codeHash, botId, now = Date.now() }) {
+  return withDb(env, async (db) => {
+    const [updated, selected] = await db.batch([
+      db
+        .prepare(
+          `UPDATE bind_codes SET used_at = ?3
+            WHERE code_hash = ?1 AND bot_id = ?2 AND used_at IS NULL AND expires_at > ?3
+              AND EXISTS (SELECT 1 FROM links WHERE links.link_id = bind_codes.link_id AND links.status = 'active')`
+        )
+        .bind(codeHash, botId, now),
+      db
+        .prepare(
+          `SELECT b.link_id AS link_id, b.external_contact_ref AS ref, l.product_id AS product_id
+             FROM bind_codes b JOIN links l ON l.link_id = b.link_id WHERE b.code_hash = ?1`
+        )
+        .bind(codeHash),
+    ]);
+    if (updated.meta.changes !== 1) return null;
+    const row = selected.results[0];
+    return row ? { linkId: row.link_id, productId: row.product_id, ref: row.ref } : null;
+  });
+}
+
+/**
+ * 寫入（或覆蓋）綁定：同 (連結, ref) 已有列就換成新的 userId、狀態回到 bound、更新 bound_at。
+ * 同一個 userId 綁多個 ref 是允許的（不同主鍵列）。
+ */
+export async function upsertContactBinding(env, { linkId, ref, botId, lineUserId, now = Date.now() }) {
+  return withDb(env, async (db) => {
+    await db
+      .prepare(
+        `INSERT INTO contacts (link_id, external_contact_ref, bot_id, line_user_id, status, bound_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, 'bound', ?5, ?5)
+         ON CONFLICT (link_id, external_contact_ref) DO UPDATE SET
+           bot_id = excluded.bot_id,
+           line_user_id = excluded.line_user_id,
+           status = 'bound',
+           bound_at = excluded.bound_at,
+           updated_at = excluded.updated_at`
+      )
+      .bind(linkId, ref, botId, lineUserId, now)
+      .run();
+  });
+}
+
+/**
+ * 狀態推導需要的原料（單一查詢）：連結與產品狀態、這條連結下這個 ref 的綁定列、是否有有效未用碼。
+ * 只回狀態與時間，不回 line_user_id。連結不存在回 null。
+ *
+ * @returns {Promise<null | {
+ *   linkStatus: string, productDisabled: boolean,
+ *   contact: null | {status: string, boundAt: number},
+ *   hasPendingCode: boolean,
+ * }>}
+ */
+export async function getContactSnapshot(env, { linkId, ref, now = Date.now() }) {
+  return withDb(env, async (db) => {
+    const row = await db
+      .prepare(
+        `SELECT l.status AS link_status, p.disabled AS product_disabled,
+                c.status AS contact_status, c.bound_at AS bound_at,
+                EXISTS (SELECT 1 FROM bind_codes b
+                         WHERE b.link_id = ?1 AND b.external_contact_ref = ?2 AND b.used_at IS NULL AND b.expires_at > ?3) AS pending
+           FROM links l
+           LEFT JOIN products p ON p.product_id = l.product_id
+           LEFT JOIN contacts c ON c.link_id = l.link_id AND c.external_contact_ref = ?2
+          WHERE l.link_id = ?1`
+      )
+      .bind(linkId, ref, now)
+      .first();
+    if (!row) return null;
+    return {
+      linkStatus: row.link_status,
+      // 產品列不存在視同停用（與 authenticateLink 一致）
+      productDisabled: row.product_disabled === null || row.product_disabled === undefined ? true : row.product_disabled === 1,
+      contact: row.contact_status ? { status: row.contact_status, boundAt: row.bound_at } : null,
+      hasPendingCode: row.pending === 1,
+    };
+  });
+}
+
+/**
+ * 解除綁定：同一個 batch 刪除該 (連結, ref) 的綁定列與全部綁定碼。只動這條連結範圍內的列。
+ *
+ * @returns {Promise<{contactDeleted: boolean, codesDeleted: number}>}
+ */
+export async function deleteContact(env, { linkId, ref }) {
+  return withDb(env, async (db) => {
+    const results = await db.batch([
+      db.prepare("DELETE FROM contacts WHERE link_id = ?1 AND external_contact_ref = ?2").bind(linkId, ref),
+      db.prepare("DELETE FROM bind_codes WHERE link_id = ?1 AND external_contact_ref = ?2").bind(linkId, ref),
+    ]);
+    return { contactDeleted: results[0].meta.changes > 0, codesDeleted: results[1].meta.changes };
+  });
+}
+
+/**
+ * unfollow：把這個 bot 之下、這個 LINE 使用者的 bound 列標成 blocked。
+ *
+ * @returns {Promise<number>} 受影響的列數
+ */
+export async function markContactsBlockedByUser(env, { botId, lineUserId, now = Date.now() }) {
+  return withDb(env, async (db) => {
+    const res = await db
+      .prepare("UPDATE contacts SET status = 'blocked', updated_at = ?3 WHERE bot_id = ?1 AND line_user_id = ?2 AND status = 'bound'")
+      .bind(botId, lineUserId, now)
+      .run();
+    return res.meta.changes;
+  });
+}
+
+/**
+ * follow：只把「目前是 blocked」的列還原成 bound；不新建綁定。
+ *
+ * @returns {Promise<number>} 受影響的列數
+ */
+export async function restoreContactsByUser(env, { botId, lineUserId, now = Date.now() }) {
+  return withDb(env, async (db) => {
+    const res = await db
+      .prepare("UPDATE contacts SET status = 'bound', updated_at = ?3 WHERE bot_id = ?1 AND line_user_id = ?2 AND status = 'blocked'")
+      .bind(botId, lineUserId, now)
+      .run();
+    return res.meta.changes;
   });
 }
 

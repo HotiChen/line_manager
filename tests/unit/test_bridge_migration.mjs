@@ -10,7 +10,7 @@ import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTestD1, readMigrations, splitStatements } from '../helpers/mock_d1.mjs';
 
-const ALL_TABLES = ['audit_log', 'auth_codes', 'idempotency', 'links', 'products', 'service_keys', 'systems'];
+const ALL_TABLES = ['audit_log', 'auth_codes', 'bind_codes', 'contacts', 'idempotency', 'links', 'products', 'service_keys', 'systems'];
 
 let d1;
 before(async () => { d1 = await createTestD1(); });
@@ -23,14 +23,15 @@ async function names(type) {
 }
 
 describe('遷移檔', () => {
-    it('至少有 0001_bridge_init.sql 與 0002_bridge_links.sql，且檔名排序穩定', () => {
+    it('至少有 0001、0002、0003 遷移檔，且檔名排序穩定', () => {
         const files = readMigrations().map((m) => m.name);
         assert.ok(files.includes('0001_bridge_init.sql'));
         assert.ok(files.includes('0002_bridge_links.sql'));
+        assert.ok(files.includes('0003_bridge_contacts.sql'));
         assert.deepEqual(files, [...files].sort());
     });
 
-    it('建立計畫書的七張表（0001 的四張＋0002 的 products、links、auth_codes）', async () => {
+    it('建立計畫書的九張表（0001 的四張＋0002 的 products、links、auth_codes＋0003 的 bind_codes、contacts）', async () => {
         assert.deepEqual(await names('table'), ALL_TABLES);
     });
 
@@ -39,13 +40,14 @@ describe('遷移檔', () => {
         for (const i of [
             'idx_audit_log_bot_at', 'idx_idempotency_expiry', 'idx_service_keys_system',
             'uq_links_active', 'idx_links_bot', 'idx_auth_codes_expiry', 'idx_service_keys_link',
+            'idx_bind_codes_ref', 'idx_bind_codes_expiry', 'idx_contacts_user',
         ]) {
             assert.ok(idx.includes(i), `缺索引 ${i}`);
         }
     });
 
     it('沒有外鍵（刪系統時 batch 撤銷金鑰，撤銷紀錄保留）', async () => {
-        for (const t of ['systems', 'service_keys', 'idempotency', 'audit_log', 'products', 'links', 'auth_codes']) {
+        for (const t of ['systems', 'service_keys', 'idempotency', 'audit_log', 'products', 'links', 'auth_codes', 'bind_codes', 'contacts']) {
             const { results } = await d1.db.prepare(`PRAGMA foreign_key_list(${t})`).all();
             assert.equal(results.length, 0, t);
         }
@@ -142,6 +144,38 @@ describe('0002 約束', () => {
 
     it('products 必填欄位不可為 NULL', async () => {
         await assert.rejects(() => d1.db.prepare("INSERT INTO products (product_id) VALUES ('p')").run(), /NOT NULL/i);
+    });
+});
+
+describe('0003 遷移（LM-3A）', () => {
+    const file = () => readMigrations().find((m) => m.name === '0003_bridge_contacts.sql');
+
+    it('檔案內沒有 IF NOT EXISTS，重複套用 0003 的每一句都失敗且不影響既有資料', async () => {
+        assert.doesNotMatch(file().sql, /IF NOT EXISTS/i);
+        await d1.db.prepare("INSERT INTO contacts (link_id, external_contact_ref, bot_id, line_user_id, status, bound_at, updated_at) VALUES ('l','r','b','u','bound',1,1)").run();
+        for (const stmt of splitStatements(file().sql)) {
+            await assert.rejects(() => d1.db.prepare(stmt).run(), /already exists/i, stmt.slice(0, 40));
+        }
+        assert.equal((await d1.db.prepare('SELECT COUNT(*) AS n FROM contacts').first()).n, 1);
+    });
+
+    it('contacts：(link_id, external_contact_ref) 是複合主鍵；status 只收 bound / blocked；必填欄位 NOT NULL', async () => {
+        const ins = (link, ref, status = 'bound') => d1.db.prepare(
+            "INSERT INTO contacts (link_id, external_contact_ref, bot_id, line_user_id, status, bound_at, updated_at) VALUES (?1,?2,'b','u',?3,1,1)"
+        ).bind(link, ref, status).run();
+        await ins('l1', 'r1');
+        await assert.rejects(() => ins('l1', 'r1'), /UNIQUE constraint failed/i);
+        await ins('l2', 'r1'); // 不同連結同 ref：互不影響
+        await assert.rejects(() => ins('l3', 'r1', 'weird'), /CHECK constraint failed/i);
+        await assert.rejects(() => d1.db.prepare("INSERT INTO contacts (link_id) VALUES ('x')").run(), /NOT NULL/i);
+    });
+
+    it('bind_codes：code_hash 是主鍵；used_at 預設 NULL；必填欄位 NOT NULL', async () => {
+        const q = () => d1.db.prepare("INSERT INTO bind_codes (code_hash, link_id, bot_id, external_contact_ref, created_at, expires_at) VALUES ('h','l','b','r',1,2)").run();
+        await q();
+        await assert.rejects(q, /UNIQUE constraint failed/i);
+        assert.equal((await d1.db.prepare('SELECT used_at FROM bind_codes').first()).used_at, null);
+        await assert.rejects(() => d1.db.prepare("INSERT INTO bind_codes (code_hash) VALUES ('x')").run(), /NOT NULL/i);
     });
 });
 

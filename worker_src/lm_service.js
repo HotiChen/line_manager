@@ -193,3 +193,34 @@ export async function getBotDisplayName(env, botId) {
     return "LINE 官方帳號";
   }
 }
+
+// ── LM-3A：聯絡人綁定需要的 OA 資訊 ──
+
+const BOT_INFO_TIMEOUT_MS = 3000;
+
+/**
+ * 該官方帳號的 basic ID（形如 "@123abcde"），用來組「預填訊息」連結。
+ * 以 bot owner 的 access token 呼叫 LINE `GET /v2/bot/info`。
+ *
+ * @param {Object} env
+ * @param {string} botId
+ * @returns {Promise<string|null>} 任何失敗（沒有 token、LINE 回錯、逾時、沒有 basicId、格式怪異）都回 null，不丟錯
+ */
+export async function getBotBasicId(env, botId) {
+  try {
+    const token = await getBotAccessToken(env, botId);
+    if (!token) return null;
+    const res = await fetch("https://api.line.me/v2/bot/info", {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(BOT_INFO_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const info = await res.json();
+    const basicId = info && typeof info.basicId === "string" ? info.basicId.trim() : "";
+    return basicId === "" ? null : basicId;
+  } catch (err) {
+    // 只記 message：不記 token
+    console.error("[lm_service] getBotBasicId failed:", err && err.message);
+    return null;
+  }
+}

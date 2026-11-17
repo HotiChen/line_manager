@@ -1,6 +1,6 @@
 # LM-3A 設計：聯絡人綁定（綁定碼訊息）
 
-狀態：設計，尚未實作。前置：LM-2A（連結與連結金鑰）已上線並實測。
+狀態：3A-1（後端）已實作，實作與設計的差異見第 13 節；3A-2（真機實測）未做。前置：LM-2A（連結與連結金鑰）已上線並實測。
 決策依據：gap-analysis D-3（綁定走「客戶傳綁定碼給 OA」，不走 LINE Login）、`ARCHITECTURE_PLATFORM.md` 資料歸屬原則
 （LM 只存 LINE 側資料；產品只用不透明的 `external_contact_ref`，永遠拿不到 LINE userId）。
 
@@ -155,3 +155,67 @@ Bridge 與 LM 的邊界：`bridge/binding.js` 只經 `lm_service` 的窄介面�
 - 回應與 audit **不含** `line_user_id` 與碼（掃描斷言）。
 - webhook：旗標關閉時 `handleMessageEvent` 行為不變；綁定成功後不觸發關鍵字回覆；D1 失敗時退回既有流程。
 - 邊界：`test_bridge_db_boundary`（SQL 只在 `bridge/db.js`）、`test_import_boundary`。
+
+## 13. 實作與設計的對照（3A-1 實作時的決定）
+
+檔案：`migrations/0003_bridge_contacts.sql`（新）、`worker_src/bridge/{contacts,binding}.js`（新）、`db.js`／`routes.js`／`index.js`／`links.js`（擴充；`links.js` 只是把幾個小工具加上 `export`）、
+`worker_src/lm_service.js`（新增 `getBotBasicId`）、`worker_src/lib/event_handler.js`（webhook 接縫）。
+測試：`tests/unit/test_bridge_binding.mjs`（資料層與 webhook 側邏輯）、`test_bridge_contacts.mjs`（端點，經 `handleBridge`）、`test_event_handler_binding.mjs`（事件處理器）；
+`test_bridge_migration.mjs`、`test_lm_service.mjs`、`test_import_boundary.mjs`、`test_bridge_db_boundary.mjs` 同步更新；`tests/helpers/bridge_seed.mjs` 新增 `seedLink`、`countingDb`。
+
+### §9 八個問題的決定（採預設答案）
+
+1. 碼：`LM-` + 8 碼 Crockford base32（字母集 `0-9A-HJKMNP-TV-Z`，32 個字元所以取低 5 bit 無偏差）、7 天、單次使用。
+2. 不做 `Idempotency-Key`：同 (連結, ref) 再要碼 → 舊的未用碼**刪除**（不是標記已用），只留最新一組；`bridge-v1.yaml` 已移除該參數。
+3. 長得像但查無此碼 → 不回任何訊息，落到一般關鍵字流程。
+4. 同 (連結, ref) 從新的 LINE 使用者重綁 → 覆蓋（狀態回 `bound`、`bound_at` 更新）；同一個使用者可綁同連結的多個 ref。
+5. audit 不記 `external_contact_ref`、`line_user_id`、碼；`detail` 只有 `product_id`、`link_id`。`sanitizeDetail` 白名單沒有新增任何欄位（測試釘住）。
+6. 做 `DELETE /contacts/{ref}`。
+7. 不做 30 天自動清除。連結撤銷後 `contacts` 與 `bind_codes` 的列原封保留（狀態推導為 `disabled`），要清要手動：
+   `DELETE FROM contacts WHERE link_id = '…'; DELETE FROM bind_codes WHERE link_id = '…';`。過期超過 1 天的 `bind_codes` 會在每次發碼時順手清掉。
+8. 確認訊息：「已完成綁定，之後會在這裡通知你」（常數 `BIND_CONFIRM_TEXT`）。
+
+### 設計稿沒寫死、實作時決定的事
+
+- **DELETE 一律冪等**：不論原本有沒有綁定或待用碼都回 204（不回 404，避免洩漏 ref 是否存在過）。只有「實際刪到東西」才寫 `contact_unbound` audit。同時作廢該 ref 全部綁定碼。
+- **錯誤碼**：body 的 `external_contact_ref` 不合法 → 400 `INVALID_REQUEST`；路徑上的 ref 不合法或無法解碼 → 404 `NOT_FOUND`（認證通過後才判斷，與 `links.js` 的 `ownLink` 同一思路）；
+  不認得的路徑／方法 → 404 `NOT_FOUND`（認證之前，與 `links.js` 相同）。字面 ref `bind-tokens` 因此無法當作 ref 使用（`GET /contacts/bind-tokens` 是 404）。
+- **限流**：`POST bind-tokens` 每連結每分鐘 30 次（KV 限流器，fail-open 屬既有行為）；每連結有效未用碼上限 1000，達上限回 429 `RATE_LIMITED`。
+  上限檢查與寫入是同一個 `INSERT … SELECT … WHERE COUNT(*) < 上限`，且上限不計「同 ref 即將被取代的舊碼」，所以已有碼的 ref 在上限滿時仍可換新碼；被擋下時舊碼原封不動。並行請求可能讓數量短暫略超過 1000（護欄，不是精確配額）。
+- **消耗碼時多檢查連結仍是 active**：連結已撤銷時發出的碼視為無效（不建立綁定，也不燒掉碼）。
+- **消耗與寫入綁定是兩個 D1 呼叫**：先 `UPDATE … used_at`（搶碼，`meta.changes === 1`），再 upsert `contacts`。兩者之間若 D1 失敗，碼已被燒掉、沒有綁定，客戶會落到一般關鍵字流程；產品重要一組新碼即可（不做補償，避免多一條會重複綁定的路徑）。
+- **辨識**：用 `/^LM-[0-9A-HJKMNP-TV-Z]{8}$/i` 對 `trim()` 後的原文比對，再轉大寫雜湊。刻意不先 `toUpperCase()` 再比對：`ſ`（U+017F）大寫後會變 `S`，會讓非 ASCII 字元混進來。
+- **嘗試限流**：只有「長得像綁定碼」的訊息才計次；以 (`bot_id`, LINE userId) 每分鐘 10 次。一般訊息不碰 KV、不碰 D1。
+- **webhook 接縫**：`event_handler.js` 在記錄使用者訊息之前呼叫 `tryConsumeBindCode`，所以成功消耗的碼不會進既有的訊息 log。確認訊息用既有的 `replyWithRetry`，送不出去只記 log、不丟錯（綁定已完成）。
+  `unfollow`／`follow` 呼叫 `markBlocked`／`restoreFollow`（放在既有處理之前，因為既有處理可能丟錯）；兩者與 `tryConsumeBindCode` 都絕不丟錯、旗標關閉時零 D1／零 KV。
+- **import 邊界**：LM 側原本一律不得 import `bridge/`（只有 `index.js` 例外）。現在加了一個明列的單向接縫：`lib/event_handler.js` 只准 import `bridge/binding.js`
+  （`tests/helpers/import_boundary.mjs` 的 `LM_SIDE_BRIDGE_ALLOWED` 與 `eslint.config.js` 兩層防線同步，有測試證明其他 bridge 模組與其他 LM 檔案仍被擋）。
+- **audit actor**：`contact_bind_token_created`、`contact_unbound` 為 `service_key`／連結 id；`contact_bound` 來自 webhook，為 `system`／`webhook`，`bot_id` 為事件的 destination。
+- **`bind_url`**：`https://line.me/R/oaMessage/@<basicId 去掉 @ 後 encodeURIComponent>/?<encodeURIComponent(完整碼)>`。`basicId` 須符合 `^@?[A-Za-z0-9._-]{1,64}$`（沒有 `@` 就補上），否則回 `null`。
+  `getBotBasicId` 每次發碼都打一次 `GET /v2/bot/info`（3 秒逾時，任何失敗回 `null`，不丟錯、不記 token）；沒有快取（發碼已有限流）。
+- **`bridge/links.js` 小改**：`json`、`noContent`、`rateLimited`、`readJsonBody`、`isoOrNull` 加 `export` 給 `contacts.js` 共用，行為不變。
+
+### 重新授權時綁定跟著走
+
+規則：同一產品在同一 bot 重新授權（`links/token` 取代既有 active 連結）時，`createLinkWithKey` 在撤銷舊連結的**同一個 batch** 內，
+把被取代連結名下的 `contacts`，以及「未用且未過期」的 `bind_codes`，其 `link_id` 改成新連結（UPDATE）。
+- 只動「這次被取代的連結」：UPDATE 以 `status = 'active'` 篩選，並排在撤銷敘述**之前**（設計要求「撤銷之後」，但撤銷之後就分不出哪些是這次撤銷的，先做等價且更精確；同一個 batch，結果一致）。
+- 明確撤銷（連結金鑰 `DELETE /links/{id}`、後台撤銷）後再授權：舊連結已不是 active，**不遷移**（撤銷即切斷），新連結是 `unbound`，舊碼無效。
+- 已用或已過期的碼留在舊連結；其他產品、其他 bot 的連結不受影響；新連結剛建、沒有任何列，不會有主鍵衝突。
+- audit 沒有新增任何識別碼（遷移不寫 audit）。測試在 `test_bridge_contacts.mjs` 的「重新授權」一節。
+
+### 已知限制（要在 3A-2 或之後處理）
+
+- ~~綁定掛在 `link_id` 上，重新授權會讓綁定消失~~：**已處理**（見下方「重新授權」）。
+- **`bind_url` 的預填連結形式未在真實 OA 驗證**（見下）。
+- 嘗試限流與發碼限流都是 KV 固定窗，缺 KV 或 KV 出錯時 fail-open（既有行為）。
+
+### 操作手冊（部署後由人執行）
+
+1. **先套遷移，再開使用**：把 `migrations/0003_bridge_contacts.sql` 整份貼到 Cloudflare Dashboard → D1 → 該資料庫 → Console，**整份只貼一次**（不是 `IF NOT EXISTS`，重複套用會失敗）。
+   正式資料庫 `bridge-db` 與開發資料庫 `bridge-db-dev` 都要各套一次。
+2. 驗證：在 Console 執行
+   `SELECT type, name FROM sqlite_master WHERE name IN ('bind_codes','contacts','idx_bind_codes_ref','idx_bind_codes_expiry','idx_contacts_user') ORDER BY type, name;`
+   應回 5 列（2 張 table、3 個 index）。
+3. 部署後 `BRIDGE_ENABLED=1` 才會啟用綁定；旗標關閉時 webhook 行為與以前完全相同。未套遷移就開旗標：發碼端點會回 503；webhook 側的綁定碼辨識會安靜失敗並退回既有流程（log 只有 D1 錯誤訊息）。
+4. 真機驗證（3A-2）：用真實 OA 確認 `bind_url` 是否能在手機上預填碼、`basicId` 有沒有回、完整綁定流程與 unfollow／follow。

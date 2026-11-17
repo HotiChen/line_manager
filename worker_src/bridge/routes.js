@@ -6,6 +6,7 @@
  *                                      —— 發 key 只能由人操作，key 不能發 key
  *   其他 /bridge/v1/*                  系統主體（Bearer service key + X-Bot-Id）
  *
+ *   /bridge/v1/contacts/*              聯絡人綁定（LM-3A）：contacts.js，連結金鑰＋contacts:bind，不走 service key
  *   /bridge/v1/admin/*、/link/*、/links/*  連結流程（LM-2A）：links.js 依端點各自認證
  *                                      （營運密鑰、瀏覽器、LIFF 人主體、產品密鑰、連結金鑰），不走 service key
  *
@@ -18,6 +19,20 @@ export const HEALTH_PATH = "/bridge/v1/health";
 
 /** 連結流程的路徑根（精確到「段」，所以 /bridge/v1/linksX 不算） */
 const LINK_ROOTS = ["/bridge/v1/admin", "/bridge/v1/link", "/bridge/v1/links"];
+
+/** 聯絡人綁定的路徑根（LM-3A，由 contacts.js 處理；一律用連結金鑰認證） */
+const CONTACTS_ROOT = "/bridge/v1/contacts";
+
+/**
+ * 是否為聯絡人綁定路由（LM-3A，/bridge/v1/contacts 或其子路徑；連結金鑰＋contacts:bind，bridgeError 格式）。
+ *
+ * @param {string} pathname
+ * @returns {boolean}
+ */
+export function isContactsRoute(pathname) {
+  if (typeof pathname !== "string") return false;
+  return pathname === CONTACTS_ROOT || pathname.startsWith(`${CONTACTS_ROOT}/`);
+}
 
 /**
  * 是否為連結流程路由（LM-2A，由 links.js 處理；各端點自己決定認證方式）。
@@ -52,6 +67,7 @@ export function isBridgeServiceRoute(pathname) {
   if (!pathname.startsWith("/bridge/v1/")) return false;
   if (isSystemsRoute(pathname)) return false;
   if (isLinkRoute(pathname)) return false;
+  if (isContactsRoute(pathname)) return false;
   if (pathname === HEALTH_PATH) return false;
   return true;
 }
