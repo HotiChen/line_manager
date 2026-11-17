@@ -318,8 +318,8 @@ export const handleMulticast = guarded("multicast");
 
 export function route(request, env, pathname) {
   const target =
-    pathname === "/bridge/v1/raw/push" ? withService(handlePush, "messages:push")
-    : pathname === "/bridge/v1/raw/multicast" ? withService(handleMulticast, "messages:push")
+    pathname === "/bridge/v1/raw/push" ? withService(handlePush, "raw:push")
+    : pathname === "/bridge/v1/raw/multicast" ? withService(handleMulticast, "raw:push")
     : null;
 
   if (!target) return reply(404, { success: false, error: "Not Found" });

@@ -168,6 +168,13 @@ describe('push — 認證與輸入', () => {
         assert.equal(line.pushCalls.length, 0);
     });
 
+    it('新 scope raw:push 的金鑰可以 push；舊名 messages:push 的舊金鑰也仍可（過渡相容）', async () => {
+        await reseed({ scopes: ['raw:push'] });
+        assert.equal((await push({ to: MEMBER, messages: TEXT })).status, 200);
+        await reseed({ scopes: ['messages:push'] });
+        assert.equal((await push({ to: MEMBER, messages: TEXT })).status, 200);
+    });
+
     it('scope 不足 → 403', async () => {
         await reseed({ scopes: ['members:read'] });
         const res = await push({ to: MEMBER, messages: TEXT });

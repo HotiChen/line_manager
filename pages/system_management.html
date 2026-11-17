@@ -41,7 +41,7 @@
             <div class="card-body">
                 <pre class="mb-2 small" id="system-usage" style="white-space: pre-wrap; word-break: break-all;"></pre>
                 <div class="form-text">
-                    &lt;API_KEY&gt; 換成註冊時拿到的金鑰。
+                    <code>brk_&lt;PREFIX&gt;_&lt;SECRET&gt;</code> 換成註冊時拿到的金鑰（<code>brk_</code> 開頭）。
                     <code>X-Idempotency-Key</code> 建議每次都帶：網路逾時重試時，同一個字串不會讓客人收到兩則。
                 </div>
             </div>
@@ -103,7 +103,7 @@
                     請存在密碼管理員，不要貼到聊天或 Git。
                 </div>
 
-                <div class="small text-muted mb-1">系統：<code id="system-key-system"></code></div>
+                <div class="small text-muted mb-1">系統：<code id="system-key-system"></code>　格式：<code>brk_&lt;前綴&gt;_&lt;密鑰&gt;</code></div>
                 <div class="input-group">
                     <input type="text" class="form-control font-monospace" id="system-key-value" readonly
                         autocomplete="off" spellcheck="false">

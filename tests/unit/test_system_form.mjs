@@ -43,9 +43,9 @@ describe('validateSystemId', () => {
 });
 
 describe('SCOPES', () => {
-    it('messages:push 開放，其餘尚未有對應端點，標示為未開放', () => {
+    it('raw:push 開放，其餘尚未有對應端點，標示為未開放', () => {
         const byId = Object.fromEntries(SCOPES.map((s) => [s.id, s]));
-        assert.equal(byId['messages:push'].available, true);
+        assert.equal(byId['raw:push'].available, true);
         assert.equal(byId['members:read'].available, false);
         assert.equal(byId['tags:write'].available, false);
     });
@@ -60,25 +60,25 @@ describe('SCOPES', () => {
 
 describe('buildCreatePayload', () => {
     it('合法輸入 → ok，內容整理過', () => {
-        const r = buildCreatePayload({ system: '  ImgPicker ', name: '  Image Picker  ', scopes: ['messages:push'] });
+        const r = buildCreatePayload({ system: '  ImgPicker ', name: '  Image Picker  ', scopes: ['raw:push'] });
         assert.equal(r.ok, true);
-        assert.deepEqual(r.payload, { system: 'imgpicker', name: 'Image Picker', scopes: ['messages:push'] });
+        assert.deepEqual(r.payload, { system: 'imgpicker', name: 'Image Picker', scopes: ['raw:push'] });
     });
 
     it('代號不合法 → 不 ok，回報欄位', () => {
-        const r = buildCreatePayload({ system: 'a:b', name: 'X', scopes: ['messages:push'] });
+        const r = buildCreatePayload({ system: 'a:b', name: 'X', scopes: ['raw:push'] });
         assert.equal(r.ok, false);
         assert.equal(r.field, 'system');
     });
 
     it('名稱空白 → 不 ok', () => {
-        const r = buildCreatePayload({ system: 'abc', name: '   ', scopes: ['messages:push'] });
+        const r = buildCreatePayload({ system: 'abc', name: '   ', scopes: ['raw:push'] });
         assert.equal(r.ok, false);
         assert.equal(r.field, 'name');
     });
 
     it('名稱超過 100 字 → 不 ok', () => {
-        const r = buildCreatePayload({ system: 'abc', name: 'x'.repeat(101), scopes: ['messages:push'] });
+        const r = buildCreatePayload({ system: 'abc', name: 'x'.repeat(101), scopes: ['raw:push'] });
         assert.equal(r.ok, false);
         assert.equal(r.field, 'name');
     });
@@ -90,9 +90,9 @@ describe('buildCreatePayload', () => {
     });
 
     it('未知的 scope 不會被送出', () => {
-        const r = buildCreatePayload({ system: 'abc', name: 'X', scopes: ['messages:push', 'admin:everything'] });
+        const r = buildCreatePayload({ system: 'abc', name: 'X', scopes: ['raw:push', 'admin:everything'] });
         assert.equal(r.ok, true);
-        assert.deepEqual(r.payload.scopes, ['messages:push']);
+        assert.deepEqual(r.payload.scopes, ['raw:push']);
     });
 
     it('只有未知 scope → 不 ok', () => {
@@ -100,8 +100,8 @@ describe('buildCreatePayload', () => {
     });
 
     it('scopes 重複會去重', () => {
-        const r = buildCreatePayload({ system: 'abc', name: 'X', scopes: ['messages:push', 'messages:push'] });
-        assert.deepEqual(r.payload.scopes, ['messages:push']);
+        const r = buildCreatePayload({ system: 'abc', name: 'X', scopes: ['raw:push', 'raw:push'] });
+        assert.deepEqual(r.payload.scopes, ['raw:push']);
     });
 
     it('欄位缺漏（undefined）不會炸', () => {
@@ -110,22 +110,23 @@ describe('buildCreatePayload', () => {
     });
 
     it('不會帶 webhookUrl / events（這兩個功能尚未開放）', () => {
-        const r = buildCreatePayload({ system: 'abc', name: 'X', scopes: ['messages:push'], webhookUrl: 'https://x', events: ['a'] });
+        const r = buildCreatePayload({ system: 'abc', name: 'X', scopes: ['raw:push'], webhookUrl: 'https://x', events: ['a'] });
         assert.equal('webhookUrl' in r.payload, false);
         assert.equal('events' in r.payload, false);
     });
 });
 
 describe('buildCurlExample', () => {
-    it('帶入網址與 botId，金鑰是佔位符', () => {
+    it('帶入網址與 botId，金鑰是 brk_ 形式的佔位符', () => {
         const s = buildCurlExample('https://imhoti.tw/lm', 'Ubot123');
         assert.match(s, /https:\/\/imhoti\.tw\/lm\/bridge\/v1\/raw\/push/);
         assert.match(s, /X-Bot-Id: Ubot123/);
-        assert.match(s, /Bearer <API_KEY>/);
+        assert.match(s, /Bearer brk_<PREFIX>_<SECRET>/);
         assert.match(s, /X-Idempotency-Key/);
     });
 
-    it('絕不含真正的 key（sk_ 開頭）', () => {
+    it('絕不含真正的 key（brk_ 開頭）', () => {
+        assert.doesNotMatch(buildCurlExample('https://x', 'U1'), /brk_[0-9a-f]{6}_[A-Za-z0-9_-]{10,}/);
         assert.doesNotMatch(buildCurlExample('https://x', 'U1'), /sk_[A-Za-z0-9_-]{10,}/);
     });
 

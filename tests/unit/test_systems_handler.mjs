@@ -72,14 +72,44 @@ beforeEach(async () => {
 });
 
 describe('POST /systems', () => {
-    it('201，回傳 apiKey（sk_ 開頭），預設 scope 是 messages:push', async () => {
+    it('201，回傳 apiKey（brk_ 開頭），預設 scope 是 raw:push', async () => {
         const { res, body } = await create();
         assert.equal(res.status, 201);
         assert.equal(body.success, true);
-        assert.match(body.apiKey, /^sk_[A-Za-z0-9_-]{43}$/);
+        assert.match(body.apiKey, /^brk_[0-9a-f]{6}_[A-Za-z0-9_-]{43}$/);
         assert.equal(body.system, 'imgpicker');
-        assert.deepEqual(body.scopes, ['messages:push']);
+        assert.deepEqual(body.scopes, ['raw:push']);
         assert.equal(res.headers.get('Cache-Control'), 'no-store');
+    });
+
+    it('舊 scope 名 messages:push 在註冊時正規化成 raw:push，D1 不寫舊名', async () => {
+        const { res, body } = await create({ system: 's1', name: 'S', scopes: ['messages:push', 'members:read'] });
+        assert.equal(res.status, 201);
+        assert.deepEqual(body.scopes, ['raw:push', 'members:read']);
+        for (const table of ['systems', 'service_keys']) {
+            for (const row of await all(d1.db, `SELECT scopes FROM ${table}`)) {
+                assert.ok(!row.scopes.includes('messages:push'), `${table}: ${row.scopes}`);
+                assert.ok(row.scopes.includes('raw:push'), `${table}: ${row.scopes}`);
+            }
+        }
+        const log = await all(d1.db, "SELECT detail FROM audit_log WHERE action = 'system_created'");
+        assert.deepEqual(JSON.parse(log[0].detail), { scopes: ['raw:push', 'members:read'] });
+    });
+
+    it('messages:push 與 raw:push 同時帶 → 去重成一個 raw:push', async () => {
+        const { res, body } = await create({ system: 's1', name: 'S', scopes: ['messages:push', 'raw:push'] });
+        assert.equal(res.status, 201);
+        assert.deepEqual(body.scopes, ['raw:push']);
+    });
+
+    it('只帶 messages:push → 通過驗證並以 raw:push 運作（能過 raw/push 的 scope 檢查）', async () => {
+        const { body } = await create({ system: 's1', name: 'S', scopes: ['messages:push'] });
+        const auth = await authenticateBridge(bridgeReq(body.apiKey), env);
+        assert.deepEqual(auth.principal.scopes, ['raw:push']);
+    });
+
+    it('未知 scope 仍然 400', async () => {
+        assert.equal((await create({ system: 's2', name: 'S', scopes: ['admin:everything'] })).res.status, 400);
     });
 
     it('D1 裡找不到 key 原文（只存雜湊）；KV 也沒有', async () => {
@@ -115,9 +145,9 @@ describe('POST /systems', () => {
     });
 
     it('指定的 scopes 會生效', async () => {
-        const { res, body } = await create({ system: 's1', name: 'S', scopes: ['messages:push', 'members:read'] });
+        const { res, body } = await create({ system: 's1', name: 'S', scopes: ['raw:push', 'members:read'] });
         assert.equal(res.status, 201);
-        assert.deepEqual(body.scopes, ['messages:push', 'members:read']);
+        assert.deepEqual(body.scopes, ['raw:push', 'members:read']);
     });
 
     it('webhookUrl 與 events 會存起來', async () => {
@@ -257,7 +287,7 @@ describe('PATCH /systems/{system}', () => {
         const { body } = await create();
         await handleUpdateSystem(req({ scopes: ['members:read'] }, 'PATCH'), env, OWNER, BOT, 'owner', 'imgpicker');
         const auth = await authenticateBridge(bridgeReq(body.apiKey), env);
-        assert.deepEqual(auth.principal.scopes, ['messages:push']);
+        assert.deepEqual(auth.principal.scopes, ['raw:push']);
     });
 
     it('不存在的 system → 404', async () => {
@@ -285,7 +315,7 @@ describe('POST /systems/{system}/keys/rotate', () => {
         const res = await handleRotateKey(req({}, 'POST'), env, OWNER, BOT, 'owner', 'imgpicker');
         assert.equal(res.status, 200);
         const second = await res.json();
-        assert.match(second.apiKey, /^sk_/);
+        assert.match(second.apiKey, /^brk_[0-9a-f]{6}_[A-Za-z0-9_-]{43}$/);
         assert.notEqual(second.apiKey, first.apiKey);
 
         assert.equal((await authenticateBridge(bridgeReq(first.apiKey), env)).authenticated, false);
@@ -293,10 +323,10 @@ describe('POST /systems/{system}/keys/rotate', () => {
     });
 
     it('輪替後 scopes 保持不變', async () => {
-        await create({ system: 's1', name: 'S', scopes: ['messages:push', 'members:read'] });
+        await create({ system: 's1', name: 'S', scopes: ['raw:push', 'members:read'] });
         const second = await (await handleRotateKey(req({}), env, OWNER, BOT, 'owner', 's1')).json();
         const auth = await authenticateBridge(bridgeReq(second.apiKey), env);
-        assert.deepEqual(auth.principal.scopes, ['messages:push', 'members:read']);
+        assert.deepEqual(auth.principal.scopes, ['raw:push', 'members:read']);
     });
 
     it('不存在的 system → 404，沒有留下孤兒 key', async () => {
@@ -452,7 +482,7 @@ describe('稽核紀錄（audit_log）', () => {
     const rows = () => all(d1.db, 'SELECT * FROM audit_log ORDER BY id');
 
     it('註冊／修改／輪替／刪除各一筆，actor 是 LIFF userId', async () => {
-        await create({ system: 'imgpicker', name: 'Image Picker', scopes: ['messages:push', 'members:read'] });
+        await create({ system: 'imgpicker', name: 'Image Picker', scopes: ['raw:push', 'members:read'] });
         await handleUpdateSystem(req({ disabled: true, events: ['x'] }, 'PATCH'), env, OWNER, BOT, 'owner', 'imgpicker');
         await handleRotateKey(req({}), env, OWNER, BOT, 'owner', 'imgpicker');
         await handleDeleteSystem(req(undefined, 'DELETE'), env, OWNER, BOT, 'owner', 'imgpicker');
@@ -466,7 +496,7 @@ describe('稽核紀錄（audit_log）', () => {
             assert.equal(r.result, 'ok');
             assert.equal(typeof r.at, 'number');
         }
-        assert.deepEqual(JSON.parse(log[0].detail), { scopes: ['messages:push', 'members:read'] });
+        assert.deepEqual(JSON.parse(log[0].detail), { scopes: ['raw:push', 'members:read'] });
         assert.deepEqual(JSON.parse(log[1].detail), { fields: ['events', 'disabled'], disabled: true });
         assert.equal(log[2].detail, null);
     });
@@ -487,7 +517,7 @@ describe('稽核紀錄（audit_log）', () => {
             await d1.db.prepare('ALTER TABLE audit_log RENAME TO audit_log_x').run();
             const { res, body } = await create();
             assert.equal(res.status, 201);
-            assert.match(body.apiKey, /^sk_/);
+            assert.match(body.apiKey, /^brk_/);
             const rot = await handleRotateKey(req({}), env, OWNER, BOT, 'owner', 'imgpicker');
             assert.equal(rot.status, 200);
         } finally {

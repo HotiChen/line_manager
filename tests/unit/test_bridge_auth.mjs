@@ -197,6 +197,62 @@ describe('authenticateBridge', () => {
     });
 });
 
+describe('金鑰格式與 scope 相容（LM-1C）', () => {
+    const BRK = 'brk_ab12cd_' + 'A'.repeat(43);
+
+    it('brk_ 格式的金鑰可通過認證（只比對雜湊）', async () => {
+        await seedKey({ key: BRK, scopes: ['raw:push'] });
+        await seedSystem();
+        const r = await authenticateBridge(req({ key: BRK }), env);
+        assert.equal(r.authenticated, true);
+        assert.deepEqual(r.principal.scopes, ['raw:push']);
+    });
+
+    it('舊 sk_ 格式的金鑰仍可通過認證', async () => {
+        await seedKey({ key: 'sk_legacy_' + 'B'.repeat(43), scopes: ['messages:push'] });
+        await seedSystem();
+        const r = await authenticateBridge(req({ key: 'sk_legacy_' + 'B'.repeat(43) }), env);
+        assert.equal(r.authenticated, true);
+    });
+
+    it('withService(raw:push)：金鑰有 raw:push → 通過', async () => {
+        await seedKey({ key: BRK, scopes: ['raw:push'] });
+        await seedSystem();
+        const res = await withService(async () => new Response('ok'), 'raw:push')(req({ key: BRK }), env);
+        assert.equal(res.status, 200);
+    });
+
+    it('withService(raw:push)：舊金鑰只有 messages:push → 等同 raw:push，通過', async () => {
+        await seedKey({ scopes: ['messages:push'] });
+        await seedSystem();
+        const res = await withService(async () => new Response('ok'), 'raw:push')(req(), env);
+        assert.equal(res.status, 200);
+    });
+
+    it('withService(raw:push)：只有 members:read / tags:write → 403', async () => {
+        await seedKey({ scopes: ['members:read', 'tags:write'] });
+        await seedSystem();
+        let called = false;
+        const res = await withService(async () => { called = true; return new Response('ok'); }, 'raw:push')(req(), env);
+        assert.equal(res.status, 403);
+        assert.equal(called, false);
+    });
+
+    it('相容是單向的：要求其他 scope 時，messages:push 不會冒充（例如 members:read）', async () => {
+        await seedKey({ scopes: ['messages:push'] });
+        await seedSystem();
+        const res = await withService(async () => new Response('ok'), 'members:read')(req(), env);
+        assert.equal(res.status, 403);
+    });
+
+    it('raw:push 的金鑰不會因此獲得 members:read', async () => {
+        await seedKey({ scopes: ['raw:push'] });
+        await seedSystem();
+        const res = await withService(async () => new Response('ok'), 'members:read')(req(), env);
+        assert.equal(res.status, 403);
+    });
+});
+
 describe('withService', () => {
     it('scope 足夠 → 呼叫 handler，帶主體', async () => {
         await seedKey({ scopes: ['messages:push'] });

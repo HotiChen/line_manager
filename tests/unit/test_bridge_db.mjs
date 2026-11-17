@@ -393,6 +393,12 @@ describe('writeAudit', () => {
         assert.deepEqual(JSON.parse(row.detail), { scopes: ['messages:push'] });
     });
 
+    it('raw:push 通過 scopes 白名單（不會被當成不合法而丟掉）', async () => {
+        await bdb.writeAudit(env, { actorType: 'user', actorId: 'Uowner', botId: BOT, system: 's', action: 'system_created', result: 'ok', detail: { scopes: ['raw:push', 'members:read', 'tags:write'] } });
+        const row = (await all(d1.db, 'SELECT * FROM audit_log'))[0];
+        assert.deepEqual(JSON.parse(row.detail), { scopes: ['raw:push', 'members:read', 'tags:write'] });
+    });
+
     it('detail 只收白名單欄位：其他（訊息內文、金鑰、LINE userId）一律丟掉', async () => {
         await bdb.writeAudit(env, {
             actorType: 'service_key', actorId: 'imgpicker', botId: BOT, system: 'imgpicker', action: 'push', result: 'sent',

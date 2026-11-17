@@ -1,7 +1,7 @@
 /**
  * 系統註冊與 service key（橋接 API，人主體操作）
  *
- *   POST   /bridge/v1/systems                       註冊，回傳 apiKey（只回這一次）
+ *   POST   /bridge/v1/systems                       註冊，回傳 apiKey（`brk_<前綴>_<密鑰>`，只回這一次）
  *   GET    /bridge/v1/systems                       列出
  *   PATCH  /bridge/v1/systems/{system}              改 webhookUrl / events / disabled
  *   POST   /bridge/v1/systems/{system}/keys/rotate  輪替 key（舊 key 立即失效）
@@ -18,15 +18,17 @@
  */
 import { jsonResponse } from "../lib/utils.js";
 import { withPermission } from "../lm_service.js";
-import { sha256Hex, randomToken } from "../lib/crypto_util.js";
+import { sha256Hex, generateBrokerKey } from "../lib/crypto_util.js";
 import {
   BridgeDbError, bridgeUnavailable, createSystemWithKey, listSystems, getSystem, updateSystem,
   rotateKey, deleteSystem, writeAudit,
 } from "./db.js";
 
 const SYSTEM_NAME_RE = /^[a-z0-9][a-z0-9_-]{1,31}$/;
-const ALLOWED_SCOPES = ["messages:push", "members:read", "tags:write"];
-const DEFAULT_SCOPES = ["messages:push"];
+const ALLOWED_SCOPES = ["raw:push", "members:read", "tags:write"];
+const DEFAULT_SCOPES = ["raw:push"];
+// 過渡相容（LM-1C）：註冊請求若帶舊名 messages:push，視為 raw:push，正規化後才寫入 D1（不寫舊名）。
+const LEGACY_SCOPE_ALIASES = { "messages:push": "raw:push" };
 const MAX_EVENTS = 20;
 const MAX_URL_LENGTH = 2048;
 
@@ -138,10 +140,11 @@ export async function handleCreateSystem(request, env, userId, botId) {
     let scopes = DEFAULT_SCOPES;
     if (body.scopes !== undefined) {
       if (!Array.isArray(body.scopes) || body.scopes.length === 0) return bad("scopes must be a non-empty array");
-      if (!body.scopes.every((s) => ALLOWED_SCOPES.includes(s))) {
+      const normalized = body.scopes.map((s) => (typeof s === "string" && Object.hasOwn(LEGACY_SCOPE_ALIASES, s) ? LEGACY_SCOPE_ALIASES[s] : s));
+      if (!normalized.every((s) => ALLOWED_SCOPES.includes(s))) {
         return bad(`scopes must be among: ${ALLOWED_SCOPES.join(", ")}`);
       }
-      scopes = [...new Set(body.scopes)];
+      scopes = [...new Set(normalized)];
     }
 
     let events = [];
@@ -158,7 +161,7 @@ export async function handleCreateSystem(request, env, userId, botId) {
       webhookUrl = body.webhookUrl;
     }
 
-    const apiKey = randomToken("sk_");
+    const apiKey = generateBrokerKey();
     const created = await createSystemWithKey(env, {
       botId, system, name: name.trim(), scopes, events, webhookUrl, createdBy: userId, keyHash: await sha256Hex(apiKey),
     });
@@ -230,7 +233,7 @@ export async function handleRotateKey(request, env, userId, botId, role, system)
 
     // 一個 batch：撤銷舊 key、發新 key（scopes 沿用）、更新系統。全成功或全回滾，
     // 不會落入「兩把都有效」或「舊的已失效、新的沒存到」。
-    const apiKey = randomToken("sk_");
+    const apiKey = generateBrokerKey();
     if (!(await rotateKey(env, { botId, system, keyHash: await sha256Hex(apiKey) }))) return notFound();
     await audit(env, userId, botId, system, "key_rotated");
 
