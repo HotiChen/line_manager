@@ -37,6 +37,8 @@
 
 ### M-01 單一連結可耗盡整個官方帳號的 LINE 月額度；唯一的節流器非原子且 fail-open
 
+**處理狀態（2026-11-18）：已修（程式與測試完成，待部署並手動套用 migration 0004）。** D1 原子計數取代 KV 限流器、新增每連結每日預算與 `usage_high` 稽核；對照見 `lm-sec-plan.md` §6。「自動停用連結」未做（D3：先觀察）。
+
 - 位置：`worker_src/bridge/notify.js:39-40, 341-369`、`worker_src/middleware/rate_limiter.js:272-307`、`worker_src/bridge/quota.js:92-123`
 - 攻擊情境：產品（或持有連結金鑰的人）對自己名下的聯絡人持續送通知。限制只有每連結 60 則／分鐘、每（連結, ref）10 則／小時，沒有每連結或每月預算；額度檢查看的是整個 OA 的 LINE 剩餘量。產品只要有 ≥ 6 個已綁定 ref，就能穩定跑滿每分鐘 60 則；免費方案 200 則約 4 分鐘用完。額度是 OA 共用的：商家自己的群發、其他產品也一起被擋；付費方案則直接變成費用。
 - 證據：讀碼；`e4_drills.mjs` 的 E 項——100 個並行 `checkRateLimit`（limit 10）全部 allowed（100/100）；沒有 KV binding 時 100/100；KV 丟錯時 allowed=true。這是 get→put 的 read-modify-write，並行與跨節點都不成立；真實 KV 還有快取與最終一致性，更弱。
@@ -48,6 +50,8 @@
 - 要不要加測試：要。「並行 N 個送出，實際送出不得超過預算」「預算耗盡不打 LINE」。
 
 ### M-02 綁定碼只有約 40 bit，嘗試限流以 LINE userId 為鍵且可並行繞過
+
+**處理狀態（2026-11-18）：已修（程式與測試完成，待部署並手動套用 migration 0004）。** 12 碼／48 小時、D1 原子嘗試計數與每 bot 暫停、覆蓋預設拒絕（`allow_rebind`）；對照見 `lm-sec-plan.md` §6。
 
 - 位置：`worker_src/bridge/binding.js:23, 29, 32-37, 69`、`worker_src/bridge/db.js:599-627, 636-657`
 - 攻擊情境：攻擊者想把自己的 LINE 帳號綁到別人的 `external_contact_ref`（之後該客戶的通知會寄到攻擊者）。碼是 `LM-` + 8 碼 Crockford base32 = 2^40 ≈ 1.1×10^12，7 天有效，單次使用。猜測成功率 ≈ （有效未用碼數）/ 2^40，且命中的是 bot 內**任何**一組未用碼，不能指定目標。每連結最多 1000 組有效碼，但沒有每 bot 的上限，多連結會累加。限流是 `bindattempt.{botId}.{lineUserId}` 每分鐘 10 次：換 LINE 帳號就換桶；同一帳號並行送也繞得過（見 M-01 的並行實測）；KV 缺或錯時 fail-open。
@@ -61,6 +65,8 @@
 - 要不要加測試：要。「同一 bot 下每分鐘失敗嘗試超過門檻後，有效碼也暫時不可用」「覆蓋既有綁定需明示」。
 
 ### M-03 同意頁不顯示「授權碼會送到哪個網址」，規格也沒要求產品驗證 `state`（授權釣魚／帳號連結 CSRF）
+
+**處理狀態（2026-11-18）：已修（程式與測試完成）。** 同意頁顯示已驗證的回調主機名稱與授權效果，`bridge-v1.yaml` 加上 `state` 的 MUST 並由契約測試檢查；對照見 `lm-sec-plan.md` §6。
 
 - 位置：`pages/link_authorize.html:187-229`（只顯示產品名稱、OA 名稱、權限）、`worker_src/bridge/links.js:284-327`、`docs/integration/bridge-v1.yaml:93-103`
 - 攻擊情境：攻擊者是多租戶產品（例如 Image Picker）的一個普通租戶。他在自己的租戶頁面按「連結 LINE 官方帳號」，取得帶有他自己的 `state` 的授權網址，傳給受害商家的 OA owner。owner 看到熟悉的產品名稱與自己的 OA，按同意，授權碼導回產品 callback，附的是攻擊者的 `state`；產品若沒有把 `state` 綁定到發起者的 session，就會把受害者的 OA 連結掛到攻擊者的租戶上。結果：攻擊者租戶取得該 OA 的 `contacts:bind` 與 `messages:send`，可以發綁定碼、以商家的官方帳號名義對綁定者發通知、燒商家額度。

@@ -185,3 +185,8 @@ LM 不替換變數、不套用商家的關鍵字或會員資料。
 | 封鎖 OA 後發送 → 409 `RECIPIENT_BLOCKED`；解除封鎖後恢復 200 | **未回報**，視為未驗證（另見 lm-3a-plan §14 的封鎖與還原） |
 
 未在真實 D1 上驗證：並行重送、限流邊界；LM-3E 的自動化 E2E 應補上。
+
+> **更新（M-01，2026-11；見 `lm-sec-plan.md`）**：限流已由 KV 固定視窗改成 D1 原子計數（每連結 60 則／分鐘、每（連結, ref）10 則／小時，沿用），
+> 並**新增每連結每日 500 則的預算**（env `BRIDGE_LINK_DAILY_CAP`），用盡回 `QUOTA_EXCEEDED`（402），用到 80% 寫稽核 `usage_high`。
+> 計數鍵為 D1 `counters.scope_key`（`send:min:{link}`、`send:hour:{link}:{sha256(ref) 前 32 碼}`、`send:day:{link}`），不含 ref 明文；
+> 缺 migration 0004 時發送回 503（fail-closed）。上文提到的 KV key（`rl_notifyc.…`）與「缺 KV 時 fail-open」已不適用於發送路徑。

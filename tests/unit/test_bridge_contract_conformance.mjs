@@ -394,7 +394,7 @@ describe('POST /bridge/v1/contacts/bind-tokens', () => {
     it('201 綁定碼與連結（bind_url 為 line.me 預填連結、expires_at 是 date-time、Cache-Control: no-store）', async () => {
         const r = await bind(KEY_A);
         assert.equal(r.res.status, 201, r.text);
-        assert.match(r.body.bind_code, /^LM-[0-9A-HJKMNP-TV-Z]{8}$/);
+        assert.match(r.body.bind_code, /^LM-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/);
         assert.equal(r.body.bind_url, `https://line.me/R/oaMessage/@123abcde/?${r.body.bind_code}`);
         assert.ok(Date.parse(r.body.expires_at) > Date.now());
     });

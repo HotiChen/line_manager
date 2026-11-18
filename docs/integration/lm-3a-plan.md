@@ -235,3 +235,7 @@ Bridge 與 LM 的邊界：`bridge/binding.js` 只經 `lm_service` 的窄介面�
 | 封鎖 OA → `blocked`、解除封鎖 → 還原 `bound` | **未驗證**：操作者稱有照順序操作，但沒有留下該段結果；僅有單元測試。若日後發現封鎖後狀態仍是 `bound`，從 `handleUnfollowEvent`（`lib/event_handler.js`）與 `binding.markBlocked` 查起 |
 
 未在真實 D1 上驗證的：並行搶碼、每連結 1000 碼上限（Miniflare 測試已涵蓋）。LM-3E 的自動化 E2E 應補上。
+
+> **更新（M-02，2026-11；見 `lm-sec-plan.md`）**：本節寫的 `LM-` + 8 碼／7 天已改成 `LM-` + 12 碼（顯示 `LM-XXXX-XXXX-XXXX`，60 bit）／**48 小時**；
+> 舊 8 碼的碼在各自過期前仍可使用。嘗試限流改為 D1 原子計數（每 (bot, 使用者) 10 次／分鐘；每 bot 每分鐘 30 次「查無此碼」→ 暫停 5 分鐘）；
+> 已被綁定的 ref 預設不被覆蓋（`allow_rebind`）。下文的數字是 3A 當時的設計，僅供歷史對照。

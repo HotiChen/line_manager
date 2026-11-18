@@ -2,6 +2,7 @@
  * 聯絡人綁定端點（LM-3A）。設計見 docs/integration/lm-3a-plan.md。
  *
  *   POST   /bridge/v1/contacts/bind-tokens            連結金鑰（contacts:bind）  產生綁定碼 → 201 {bind_code, bind_url, expires_at}
+ *                                                       body：external_contact_ref；選填 allow_rebind（boolean，預設 false）
  *   GET    /bridge/v1/contacts/{external_contact_ref}  連結金鑰（contacts:bind）  → 200 {external_contact_ref, status, bound_at}
  *   DELETE /bridge/v1/contacts/{external_contact_ref}  連結金鑰（contacts:bind）  解除綁定 → 204
  *
@@ -12,6 +13,10 @@
  *   - audit：contact_bind_token_created、contact_unbound，detail 只有 product_id 與 link_id（不含 ref）
  *   - DELETE 是冪等的：不論原本有沒有綁定或待用碼都回 204（不洩漏「ref 是否存在過」）
  *   - 缺 BRIDGE_DB 或查詢失敗 → 503 INTERNAL bridge_not_configured（fail-closed）
+ *   - 綁定碼 `LM-XXXX-XXXX-XXXX`（12 碼 Crockford base32，60 bit），48 小時有效；資料庫存的是無連字號標準形的 SHA-256
+ *   - allow_rebind（M-02／D6）：預設 false —— 這個 ref 已被另一位 LINE 使用者綁定時，用此碼綁定會被拒絕（碼不被消耗）；
+ *     true 才允許覆蓋（原綁定者會收到「你的綁定已被更換」）。非 boolean → 400 INVALID_REQUEST
+ *   - 缺 0004 遷移 → 發碼的 INSERT 失敗 → 503 bridge_not_configured（fail-closed）
  *   - 路徑上的 ref 不合法（格式不符、無法解碼）→ 404 NOT_FOUND；body 的 ref 不合法 → 400 INVALID_REQUEST
  */
 import { getBotBasicId } from "../lm_service.js";
@@ -20,7 +25,7 @@ import { checkRateLimit } from "../middleware/rate_limiter.js";
 import { bridgeError } from "./errors.js";
 import { withLink } from "./auth.js";
 import { json, noContent, rateLimited, readJsonBody, isoOrNull } from "./links.js";
-import { generateBindCode, BIND_CODE_TTL_MS } from "./binding.js";
+import { generateBindCode, formatBindCode, BIND_CODE_TTL_MS } from "./binding.js";
 import { BridgeDbError, createBindCode, getContactSnapshot, deleteContact, writeAudit } from "./db.js";
 
 export const CONTACT_REF_RE = /^[A-Za-z0-9_-]{8,64}$/;
@@ -76,17 +81,22 @@ async function handleCreateBindToken(request, env, principal) {
     return invalidRequest("external_contact_ref must match ^[A-Za-z0-9_-]{8,64}$");
   }
 
+  if (body.allow_rebind !== undefined && typeof body.allow_rebind !== "boolean") {
+    return invalidRequest("allow_rebind must be a boolean");
+  }
+  const allowRebind = body.allow_rebind === true;
+
   const now = Date.now();
   const expiresAt = now + BIND_CODE_TTL_MS;
   let code = null;
   for (let attempt = 0; attempt < MAX_CODE_ATTEMPTS && code === null; attempt++) {
     const candidate = generateBindCode();
     const created = await createBindCode(env, {
-      codeHash: await sha256Hex(candidate), linkId: principal.linkId, botId: principal.botId, ref, expiresAt, now,
+      codeHash: await sha256Hex(candidate), linkId: principal.linkId, botId: principal.botId, ref, expiresAt, allowRebind, now,
     });
     if (created.capped) return bridgeError("RATE_LIMITED", "Too many pending bind codes for this link");
     if (created.created) code = candidate;
-    // conflict（雜湊撞到既有列，約 2^-40）：換一組再試
+    // conflict（雜湊撞到既有列，約 2^-60）：換一組再試
   }
   if (code === null) return bridgeError("INTERNAL", "Please retry");
 
@@ -95,7 +105,8 @@ async function handleCreateBindToken(request, env, principal) {
     detail: { product_id: principal.productId, link_id: principal.linkId },
   });
   const basicId = await getBotBasicId(env, principal.botId);
-  return json({ bind_code: code, bind_url: buildBindUrl(basicId, code), expires_at: isoOrNull(expiresAt) }, 201);
+  const display = formatBindCode(code);
+  return json({ bind_code: display, bind_url: buildBindUrl(basicId, display), expires_at: isoOrNull(expiresAt) }, 201);
 }
 
 async function handleGetContact(request, env, principal, ref) {

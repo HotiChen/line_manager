@@ -927,10 +927,11 @@ describe('額度', () => {
 describe('限流', () => {
     it('每連結每分鐘 60 則：第 61 個請求 → 429 RATE_LIMITED + Retry-After；別條連結不受影響', async () => {
         await withPinnedWindow(async () => {
-            // 用格式錯誤的請求（便宜）把額度吃完：限流在驗證之前計數
+            // M-01 改寫（KV 限流器 → D1 原子計數）：限流現在在「驗證之後」才扣，所以改用便宜的有效請求
+            // （每次一個沒綁定的 ref → 409 CONTACT_NOT_BOUND，不打 LINE）把每連結的分鐘額度吃完
             for (let i = 1; i <= 60; i++) {
-                const r = await send({ title: '' });
-                assert.equal(r.res.status, 400, `第 ${i} 個`);
+                const r = await send({ external_contact_ref: `customer-u${String(i).padStart(4, '0')}` });
+                assert.equal(r.res.status, 409, `第 ${i} 個`);
             }
             const r = await send();
             assert.equal(r.res.status, 429);
@@ -969,16 +970,18 @@ describe('限流', () => {
         });
     });
 
-    it('限流用的 KV key 不含 ref 明文', async () => {
+    it('限流計數鍵不含 ref 明文（改寫：原本檢查 KV key，現在檢查 D1 counters 的 scope_key）；Bridge 不再為發送寫 KV 限流鍵', async () => {
         await send();
-        const keys = [...kv._store.keys()];
-        assert.ok(keys.some((k) => k.startsWith('rl_notifyc.')));
+        const keys = (await all(d1.db, 'SELECT scope_key FROM counters')).map((r) => r.scope_key);
+        assert.ok(keys.some((k) => k.startsWith('send:hour:')));
         assert.ok(keys.every((k) => !k.includes(REF)), keys.join(','));
+        assert.ok([...kv._store.keys()].every((k) => !k.startsWith('rl_notify')));
     });
 
-    it('缺 KV 時限流 fail-open（既有行為）——但沒有 token 所以回 503，不是 429', async () => {
+    it('缺 KV 不再影響限流（限流已搬到 D1）：沒有 token 所以回 503，不是 429', async () => {
         const r = await send({}, { e: { ...env, KV_LINE_STORAGE: undefined } });
         assert.equal(r.res.status, 503);
+        assert.equal(await count(d1.db, 'counters', "scope_key LIKE 'send:min:%'"), 1);
     });
 });
 

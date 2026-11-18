@@ -168,6 +168,43 @@ export function validateRedirectTarget(target, originalRedirectUri) {
   return { ok: true, url: t.href };
 }
 
+// ── 同意頁：授權碼會送到哪裡（M-03）──
+
+/** 回調主機名稱的顯示上限（含省略號）。網域名稱本身最長 253 字元，這裡取用得到的長度 */
+export const MAX_HOST_DISPLAY = 80;
+/** OA 名稱的顯示上限（以 code point 計，含省略號） */
+export const MAX_OA_NAME_DISPLAY = 40;
+const OA_FALLBACK = '所選官方帳號';
+
+/**
+ * 同意頁要顯示的「已驗證回調主機名稱」。只回 URL.hostname（IDN 會是 punycode，原樣顯示、不轉回 Unicode，
+ * 因為 Unicode 形式正是同形字釣魚的素材）；不是 https、無法解析、含帳號密碼 → 空字串（頁面改顯示「無法辨識」）。
+ * 太長時保留「結尾」（真正決定網域歸屬的是最右邊），前面用 … 取代。結果只用 textContent 顯示，不做成連結。
+ *
+ * @param {unknown} redirectUri 網址上的 redirect_uri（preview 已由後端與產品登記值精確比對過）
+ * @param {number} [max]
+ * @returns {string}
+ */
+export function redirectHostLabel(redirectUri, max = MAX_HOST_DISPLAY) {
+  const u = parseUrl(redirectUri);
+  if (!u || u.protocol !== 'https:' || u.username || u.password || u.hostname === '') return '';
+  const host = u.hostname;
+  if (host.length <= max) return host;
+  return `…${host.slice(host.length - (max - 1))}`;
+}
+
+/** 截短 OA 名稱（以 code point 計，不會切在 surrogate pair 中間）；空值回 fallback */
+function shortOaName(name) {
+  if (typeof name !== 'string' || name.trim() === '') return OA_FALLBACK;
+  const chars = Array.from(name.trim());
+  return chars.length <= MAX_OA_NAME_DISPLAY ? chars.join('') : `${chars.slice(0, MAX_OA_NAME_DISPLAY - 1).join('')}…`;
+}
+
+/** 同意頁的一句話：授權的實際效果。OA 名稱是外部輸入，呼叫端只能用 textContent 顯示 */
+export function consentNotice(oaName) {
+  return `授權後，你的客戶可綁定並收到來自 ${shortOaName(oaName)} 的通知`;
+}
+
 // ── 後端回應 ──
 
 /**

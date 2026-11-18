@@ -16,7 +16,7 @@ import { seedLink, countingDb, all, count } from '../helpers/bridge_seed.mjs';
 import { sha256Hex } from '../../worker_src/lib/crypto_util.js';
 import * as bdb from '../../worker_src/bridge/db.js';
 import {
-    generateBindCode, normalizeBindCode, tryConsumeBindCode, markBlocked, restoreFollow,
+    generateBindCode, formatBindCode, normalizeBindCode, tryConsumeBindCode, markBlocked, restoreFollow,
     BIND_CODE_RE, BIND_CODE_TTL_MS, BIND_CONFIRM_TEXT,
 } from '../../worker_src/bridge/binding.js';
 
@@ -29,7 +29,7 @@ const USER = 'Uuser00000000000000000000000001';
 const USER2 = 'Uuser00000000000000000000000002';
 const REF = 'customer-0001';
 const REF2 = 'customer-0002';
-const ALPHABET_RE = /^LM-[0-9A-HJKMNP-TV-Z]{8}$/;
+const ALPHABET_RE = /^LM-[0-9A-HJKMNP-TV-Z]{12}$/;
 
 let d1;
 let env;
@@ -51,9 +51,9 @@ beforeEach(async () => {
 afterEach(() => { console.error = originalError; console.log = originalLog; console.warn = originalWarn; });
 
 /** 直接用 db 層發一組碼（回明文碼） */
-async function issue({ linkId = LNK, botId = BOT, ref = REF, now = Date.now(), ttl = BIND_CODE_TTL_MS } = {}) {
+async function issue({ linkId = LNK, botId = BOT, ref = REF, now = Date.now(), ttl = BIND_CODE_TTL_MS, allowRebind = false } = {}) {
     const code = generateBindCode();
-    const r = await bdb.createBindCode(env, { codeHash: await sha256Hex(code), linkId, botId, ref, expiresAt: now + ttl, now });
+    const r = await bdb.createBindCode(env, { codeHash: await sha256Hex(code), linkId, botId, ref, expiresAt: now + ttl, now, allowRebind });
     assert.deepEqual(r, { created: true });
     return code;
 }
@@ -63,14 +63,17 @@ const contactRows = () => all(d1.db, 'SELECT link_id, external_contact_ref AS re
 // ───────────────────────── 碼的格式與辨識 ─────────────────────────
 
 describe('generateBindCode', () => {
-    it('格式是 LM- + 8 碼 Crockford base32（不含 I、L、O、U）', () => {
+    it('M-02：格式是 LM- + 12 碼 Crockford base32（60 bit，不含 I、L、O、U）；顯示形式是 LM-XXXX-XXXX-XXXX', () => {
         for (let i = 0; i < 500; i++) {
             const c = generateBindCode();
             assert.match(c, ALPHABET_RE);
             assert.doesNotMatch(c.slice(3), /[ILOU]/);
+            assert.match(formatBindCode(c), /^LM-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/);
+            assert.equal(normalizeBindCode(formatBindCode(c)), c);
         }
-        assert.equal(BIND_CODE_RE.test('LM-ABCDEFGH'), true);
+        assert.equal(BIND_CODE_RE.test('LM-ABCDEFGHJKMN'), true);
         assert.equal(BIND_CODE_RE.test('LM-ABCDEFGI'), false); // I 不在字母集
+        assert.equal(formatBindCode('LM-ABCDEFGH'), 'LM-ABCDEFGH'); // 舊的 8 碼原樣
     });
 
     it('隨機：2000 組不重複，且 32 個字元都出現過、分布不偏', () => {
@@ -83,24 +86,42 @@ describe('generateBindCode', () => {
         }
         assert.equal(seen.size, 2000);
         assert.equal(freq.size, 32);
-        // 16000 個字元 / 32 ≈ 500；寬鬆範圍只擋「明顯偏斜」
-        for (const n of freq.values()) assert.ok(n > 380 && n < 620, String(n));
+        // 24000 個字元 / 32 ≈ 750；寬鬆範圍只擋「明顯偏斜」
+        for (const n of freq.values()) assert.ok(n > 600 && n < 900, String(n));
     });
 });
 
 describe('normalizeBindCode（辨識規則）', () => {
-    it('trim、不分大小寫 → 回大寫標準形', () => {
+    it('trim、不分大小寫 → 回大寫標準形（舊的 8 碼仍認得）', () => {
         assert.equal(normalizeBindCode('LM-ABCD2345'), 'LM-ABCD2345');
         assert.equal(normalizeBindCode('  lm-abcd2345 \n'), 'LM-ABCD2345');
         assert.equal(normalizeBindCode('Lm-AbCd2345'), 'LM-ABCD2345');
         assert.equal(normalizeBindCode('　LM-ABCD2345　'), 'LM-ABCD2345'); // 全形空白也會被 trim
     });
 
+    it('M-02：新碼有無連字號、大小寫、前後空白都回同一個標準形', () => {
+        for (const t of ['LM-ABCD-2345-WXYZ', 'LM-ABCD2345WXYZ', 'lm-abcd-2345-wxyz', '  Lm-AbCd-2345-WxYz\n', 'LM-ABCD-2345WXYZ', 'LM-ABCD2345-WXYZ', '　LM-ABCD2345WXYZ　']) {
+            assert.equal(normalizeBindCode(t), 'LM-ABCD2345WXYZ', JSON.stringify(t));
+        }
+    });
+
+    it('M-02：新碼的近似字串不誤觸（缺漏、多餘、非法字母、錯誤分組、夾雜文字）', () => {
+        for (const t of [
+            'LM-ABCD-2345-WXY', 'LM-ABCD-2345-WXYZ1', 'LM-ABCD-2345-WXYI', 'LM-ABCD-2345-WXYO', 'LM-ABCD-2345-WXYL', 'LM-ABCD-2345-WXYU',
+            'LM-ABC-D2345-WXYZ', 'LM-AB-CD-2345-WXYZ', 'LM--ABCD-2345-WXYZ', 'LM-ABCD--2345-WXYZ', 'LM-ABCD-2345-WXYZ-',
+            'LM-ABCD 2345 WXYZ', 'LM-ABCD_2345_WXYZ', 'LM-ABCD-2345', 'LM-ABCD-2345-', 'LM-ABCD2345WXYZ12', 'LM-ABCD2345WXY',
+            'LMABCD2345WXYZ', 'LM:ABCD-2345-WXYZ', '請綁定 LM-ABCD-2345-WXYZ', 'LM-ABCD-2345-WXYZ 謝謝', 'LM-ＡＢＣＤ-2345-WXYZ', 'LM-ſBCD-2345-WXYZ',
+            'LM-ABCD-2345-WXYZ\nLM-ABCD-2345-WXYZ',
+        ]) {
+            assert.equal(normalizeBindCode(t), null, JSON.stringify(t));
+        }
+    });
+
     it('近似字串一律不是綁定碼', () => {
         for (const t of [
             'LM-1234567', 'LM-123456789', 'hello LM-ABCD2345', 'LM-ABCD2345 hello', 'LM-ABCD2345\nLM-ABCD2345',
             'LM ABCD2345', 'LM_ABCD2345', 'LM-ABCD234I', 'LM-ABCD234L', 'LM-ABCD234O', 'LM-ABCD234U',
-            'LM-', '', '   ', 'ABCD2345', 'LMABCD2345', 'xLM-ABCD2345', 'LM-ABCD-2345', 'LM-ＡＢＣＤ２３４５',
+            'LM-', '', '   ', 'ABCD2345', 'LMABCD2345', 'xLM-ABCD2345', 'LM-ABCD-2345', 'LM-ＡＢＣＤ２３４５', // 舊碼不接受中間連字號
             'LM-ſBCD2345', // ſ（U+017F）大寫後會變 S：不可混進來
             '綁定 LM-ABCD2345', 'LM-ABCD2345。',
         ]) {
@@ -119,7 +140,7 @@ describe('tryConsumeBindCode：不像綁定碼 → 零 D1 查詢', () => {
         const kvGets = [];
         const kv = { get: async (k) => { kvGets.push(k); return null; }, put: async (k) => { kvGets.push(k); } };
         const e = { ...env, BRIDGE_DB: c.db, KV_LINE_STORAGE: kv };
-        for (const text of ['你好', 'LM-1234567', 'hello LM-ABCD2345', '', undefined, 42]) {
+        for (const text of ['你好', 'LM-1234567', 'hello LM-ABCD2345', 'LM-ABCD-2345-WXY', 'LM-ABCD-2345-WXYI', '', undefined, 42]) {
             assert.deepEqual(await tryConsumeBindCode(e, { botId: BOT, lineUserId: USER, text }), { handled: false });
         }
         assert.equal(c.counter.total, 0);
@@ -170,9 +191,10 @@ describe('tryConsumeBindCode：成功', () => {
     it('同一個 db 層函式並行消耗：meta.changes 只讓一個成功', async () => {
         const code = await issue();
         const h = await sha256Hex(code);
-        const rs = await Promise.all(Array.from({ length: 8 }, () => bdb.consumeBindCode(env, { codeHash: h, botId: BOT })));
+        const rs = await Promise.all(Array.from({ length: 8 }, (_, i) => bdb.consumeBindCode(env, { codeHash: h, botId: BOT, lineUserId: `Urace${String(i).padStart(28, '0')}` })));
         assert.equal(rs.filter(Boolean).length, 1);
-        assert.deepEqual(rs.find(Boolean), { linkId: LNK, productId: PRD, ref: REF });
+        assert.deepEqual(rs.find(Boolean), { rejected: false, linkId: LNK, productId: PRD, ref: REF, previousUserId: null });
+        assert.equal(await count(d1.db, 'contacts'), 1);
     });
 });
 
@@ -184,11 +206,11 @@ describe('tryConsumeBindCode：失敗一律 {handled:false}，沒有任何綁定
 
     it('過期的碼', async () => {
         const now = Date.now();
-        const code = await issue({ now: now - 8 * 24 * 3600 * 1000 }); // 8 天前發的，7 天 TTL 已過
+        const code = await issue({ now: now - 49 * 3600 * 1000 }); // 49 小時前發的，48 小時 TTL 已過
         assert.deepEqual(await tryConsumeBindCode(env, { botId: BOT, lineUserId: USER, text: code }), { handled: false });
         assert.equal(await count(d1.db, 'contacts'), 0);
         // 剛好在期限內仍有效
-        const ok = await issue({ ref: REF2, now: now - 6 * 24 * 3600 * 1000 });
+        const ok = await issue({ ref: REF2, now: now - 47 * 3600 * 1000 });
         assert.equal((await tryConsumeBindCode(env, { botId: BOT, lineUserId: USER, text: ok })).handled, true);
     });
 
@@ -249,12 +271,21 @@ describe('tryConsumeBindCode：失敗一律 {handled:false}，沒有任何綁定
 });
 
 describe('綁定策略', () => {
-    it('同 (連結, ref) 從新的 LINE 使用者重新綁定 → 覆蓋，狀態回到 bound', async () => {
+    // M-02／D6 刻意改寫：原本「新的 LINE 使用者直接覆蓋」改成「預設拒絕；發碼時 allow_rebind = true 才覆蓋」。
+    // 覆蓋的狀態轉換（blocked → bound）仍在這裡驗證，只是改用 allowRebind 發碼。
+    it('同 (連結, ref) 從新的 LINE 使用者重新綁定：發碼時 allowRebind = true → 覆蓋，狀態回到 bound', async () => {
         await tryConsumeBindCode(env, { botId: BOT, lineUserId: USER, text: await issue() });
         await markBlocked(env, { botId: BOT, lineUserId: USER });
         assert.equal((await contactRows())[0].status, 'blocked');
-        await tryConsumeBindCode(env, { botId: BOT, lineUserId: USER2, text: await issue() });
+        await tryConsumeBindCode(env, { botId: BOT, lineUserId: USER2, text: await issue({ allowRebind: true }) });
         assert.deepEqual(await contactRows(), [{ link_id: LNK, ref: REF, bot_id: BOT, line_user_id: USER2, status: 'bound' }]);
+    });
+
+    it('預設（allowRebind 未設）：另一位使用者想綁已被綁定的 ref → 不覆蓋', async () => {
+        await tryConsumeBindCode(env, { botId: BOT, lineUserId: USER, text: await issue() });
+        const r = await tryConsumeBindCode(env, { botId: BOT, lineUserId: USER2, text: await issue() });
+        assert.deepEqual(r, { handled: false });
+        assert.deepEqual(await contactRows(), [{ link_id: LNK, ref: REF, bot_id: BOT, line_user_id: USER, status: 'bound' }]);
     });
 
     it('同一個 LINE 使用者可以綁同連結的多個 ref', async () => {

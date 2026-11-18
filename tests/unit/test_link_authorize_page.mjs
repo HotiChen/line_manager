@@ -82,6 +82,28 @@ describe('同意頁：安全規則', () => {
   it('產品名稱只用 textContent 顯示', () => {
     assert.match(js, /byId\('product-name'\)\.textContent\s*=/);
   });
+  it('M-03：顯示回調主機名稱與授權效果；只用 textContent，不是連結（沒有 href／anchor／innerHTML）', () => {
+    assert.match(js, /byId\('redirect-host'\)\.textContent\s*=\s*redirectHostLabel\(/);
+    assert.match(js, /byId\('consent-notice'\)\.textContent\s*=\s*consentNotice\(/);
+    // HTML：兩個容器都不是 <a>，而且元素本身沒有 href
+    const host = html.match(/<(\w+)[^>]*\sid="redirect-host"[^>]*>/);
+    const notice = html.match(/<(\w+)[^>]*\sid="consent-notice"[^>]*>/);
+    assert.ok(host && notice);
+    for (const m of [host, notice]) {
+      assert.notEqual(m[1].toLowerCase(), 'a');
+      assert.doesNotMatch(m[0], /href\s*=/i);
+    }
+    // JS 不替它們設定 href／onclick／連結
+    assert.doesNotMatch(js, /redirect-host[^;]*\.(href|setAttribute)/);
+    assert.doesNotMatch(js, /createElement\('a'\)/);
+  });
+  it('M-03：選擇官方帳號時，授權效果那一句跟著更新（含初次渲染）', () => {
+    const change = js.slice(js.indexOf("byId('bot-select').addEventListener"));
+    assert.match(change.slice(0, 250), /renderNotice\(\)/);
+    const render = js.slice(js.indexOf('function renderConsent'), js.indexOf('// ── 動作 ──'));
+    assert.match(render, /renderNotice\(\)/);
+    assert.match(render, /redirectHostLabel\(view\.params/);
+  });
   it('導向前一定驗證，且導向用 location.replace', () => {
     const calls = js.match(/validateRedirectTarget\(/g) || [];
     assert.ok(calls.length >= 2, 'approve 與 cancel 都要驗證');

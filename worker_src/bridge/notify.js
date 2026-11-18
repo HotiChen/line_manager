@@ -13,7 +13,14 @@
  *   - action.url 必須是 https、443、非 IP、非 localhost，主機名稱等於或是產品登記 url_domains 的子網域
  *   - title／body／label 不可含 http:// 或 https://（否則可以把連結貼進內文繞過白名單）
  *   - 使用者文字只放進 Flex 的 text／label 欄位（LINE 不解析成標記），不放進任何其他欄位
- *   - 限流：每連結 60 則／分鐘、每（連結, ref）10 則／小時（KV 固定視窗，缺 KV 時 fail-open 是既有行為）
+ *   - 發送預算（M-01，D1 原子計數 bridge/db.js takeToken；固定視窗）：每連結 60 則／分鐘、每（連結, ref）10 則／小時
+ *     → 429 RATE_LIMITED + Retry-After（距視窗結束的秒數，至少 1）；每連結每日 500 則（env BRIDGE_LINK_DAILY_CAP，
+ *     正整數，否則預設）→ 402 QUOTA_EXCEEDED。被擋的請求不打 LINE、不搶佔冪等鍵。
+ *     日預算用到 80% 時寫一筆稽核 usage_high（每連結每日一次）。ref 只以 SHA-256 前 32 碼進計數鍵。
+ *     名額在「驗證通過之後、冪等之前」扣；被後面的限制擋下、冪等重送（回放／處理中／鍵重用）、
+ *     或 action.url 不在白名單的請求，會把名額還回去（網址不合只保留每分鐘那一格，仍受每連結頻率限制）；
+ *     其餘（聯絡人未綁定、LINE 失敗等）算一次嘗試，不還。
+ *     缺 0004 遷移（沒有 counters 表）→ 503 bridge_not_configured（fail-closed，不放行）
  *   - 冪等：D1 的 idempotency，system 欄放 `link:{link_id}`；只快取成功與確定性失敗，
  *     CONTACT_NOT_BOUND、RECIPIENT_BLOCKED、額度、暫時性錯誤一律釋放（之後可能綁定、解除封鎖），與 /raw 不同
  *   - audit（message_sent／message_blocked／message_failed）detail 只有 product_id、link_id、message_id、error_code、
@@ -23,7 +30,6 @@
 import { getBotAccessToken, markMemberInactive } from "../lm_service.js";
 import { sha256Hex } from "../lib/crypto_util.js";
 import { pushMessage, LineApiError } from "../lib/line_api.js";
-import { checkRateLimit } from "../middleware/rate_limiter.js";
 import { bridgeError, ERROR_DEFAULTS } from "./errors.js";
 import { withLink } from "./auth.js";
 import { json, rateLimited, isoOrNull } from "./links.js";
@@ -34,10 +40,15 @@ import { CONTACT_REF_RE } from "./contacts.js";
 import {
   BridgeDbError, getProduct, getContactForSend, markContactsBlockedByUser,
   claimIdempotency, completeIdempotency, releaseIdempotency, writeAudit,
+  takeToken, giveBackTokens, claimFlag,
 } from "./db.js";
 
 export const LINK_RATE_LIMIT = { limit: 60, windowSec: 60 };
 export const CONTACT_RATE_LIMIT = { limit: 10, windowSec: 3600 };
+export const DEFAULT_LINK_DAILY_CAP = 500;
+/** 日預算用到這個比例時寫一筆 usage_high 稽核 */
+export const USAGE_HIGH_RATIO = 0.8;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const MAX_BODY_CHARS = 20_000;
 const MAX_IDEM_KEY_LENGTH = 128;
@@ -64,6 +75,76 @@ const unavailable = () => bridgeError("INTERNAL", "bridge_not_configured", { sta
 const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 /** 以 code point 計長度（emoji 算 1 個字元，與 LINE 的計法一致） */
 const charLength = (s) => Array.from(s).length;
+
+// ── 發送預算 ──
+
+/** BRIDGE_LINK_DAILY_CAP：正整數（≤ 1e9）才採用，其餘（缺、空、0、負、小數、字母、科學記號）一律用預設 */
+export function dailyCapFor(env) {
+  const raw = env && env.BRIDGE_LINK_DAILY_CAP;
+  const text = typeof raw === "number" ? String(raw) : raw;
+  if (typeof text !== "string" || !/^[1-9][0-9]{0,8}$/.test(text.trim())) return DEFAULT_LINK_DAILY_CAP;
+  return Number(text.trim());
+}
+
+async function giveBackQuietly(env, tokens) {
+  try {
+    await giveBackTokens(env, tokens);
+  } catch (err) {
+    console.error("[Notify] budget refund failed:", err && err.message);
+  }
+}
+
+/**
+ * 依序扣 分鐘 → 小時 → 日 三個桶；任何一個擋下，就把前面已扣的還回去。
+ * 資料庫失敗（含缺 counters 表）→ BridgeDbError 往上丟（呼叫端 503，不放行）。
+ *
+ * @returns {Promise<{tokens: {key: string, window: number}[]} | {denied: Response}>}
+ */
+async function takeSendBudget(env, principal, ref) {
+  const { linkId } = principal;
+  const now = Date.now();
+  const refHash = (await sha256Hex(ref)).slice(0, 32);
+  const cap = dailyCapFor(env);
+  const plan = [
+    { key: `send:min:${linkId}`, windowMs: LINK_RATE_LIMIT.windowSec * 1000, cap: LINK_RATE_LIMIT.limit, daily: false },
+    { key: `send:hour:${linkId}:${refHash}`, windowMs: CONTACT_RATE_LIMIT.windowSec * 1000, cap: CONTACT_RATE_LIMIT.limit, daily: false },
+    { key: `send:day:${linkId}`, windowMs: DAY_MS, cap, daily: true },
+  ];
+  const tokens = []; // 順序固定：[分鐘, 小時, 日]
+  try {
+    for (const step of plan) {
+      const t = await takeToken(env, { key: step.key, windowMs: step.windowMs, cap: step.cap, now });
+      if (!t.allowed) {
+        await giveBackQuietly(env, tokens);
+        return {
+          denied: step.daily
+            ? bridgeError("QUOTA_EXCEEDED", "Daily message budget for this link is exhausted")
+            : rateLimited(t.resetAt),
+        };
+      }
+      tokens.push({ key: step.key, window: t.window });
+      if (step.daily && t.count === Math.ceil(step.cap * USAGE_HIGH_RATIO)) await noteUsageHigh(env, principal, t);
+    }
+  } catch (err) {
+    await giveBackQuietly(env, tokens);
+    throw err;
+  }
+  return { tokens };
+}
+
+/** 日預算達 80%：每連結每日一次稽核（旗標原子搶占）。稽核與旗標都不可讓發送失敗 */
+async function noteUsageHigh(env, principal, t) {
+  try {
+    if (await claimFlag(env, { key: `usage_high:${principal.linkId}:${t.window}`, untilAt: t.resetAt })) {
+      await writeAudit(env, {
+        actorType: "service_key", actorId: principal.linkId, botId: principal.botId, action: "usage_high", result: "ok",
+        detail: { product_id: principal.productId, link_id: principal.linkId },
+      });
+    }
+  } catch (err) {
+    console.error("[Notify] usage_high failed:", err && err.message);
+  }
+}
 
 // ── 驗證 ──
 
@@ -338,9 +419,6 @@ async function execute(env, principal, content, idemKey, messageId) {
 // ── 端點 ──
 
 async function handleSend(request, env, principal) {
-  const limited = await checkRateLimit(env, `notify.${principal.linkId}`, LINK_RATE_LIMIT);
-  if (!limited.allowed) return rateLimited(limited.resetAt);
-
   const idemKey = request.headers.get("Idempotency-Key");
   if (idemKey === null || idemKey === "" || idemKey.length > MAX_IDEM_KEY_LENGTH) {
     return invalidRequest(`Idempotency-Key header is required (1-${MAX_IDEM_KEY_LENGTH} characters)`);
@@ -353,20 +431,21 @@ async function handleSend(request, env, principal) {
   if (parsed.error) return invalidRequest(parsed.error);
   const content = parsed.value;
 
+  // 發送預算：驗證通過之後、冪等之前。被擋的請求不打 LINE
+  const budget = await takeSendBudget(env, principal, content.ref);
+  if (budget.denied) return budget.denied;
+
   if (content.action) {
     const product = await getProduct(env, principal.productId);
     const checked = checkActionUrl(content.action.url, product && product.urlDomains);
     if (!checked.ok) {
+      // 什麼都沒送：把每聯絡人（小時）與日預算還回去；每分鐘那一格留著，所以亂打網址仍受每連結頻率限制
+      await giveBackQuietly(env, budget.tokens.slice(1));
       await auditSend(env, principal, { code: "INVALID_URL_DOMAIN", status: 422 });
       return bridgeError("INVALID_URL_DOMAIN", "action.url must be an https URL on a domain registered for this product");
     }
     content.action = { label: content.action.label, url: checked.url };
   }
-
-  // 每聯絡人頻率（以連結 + ref 計）。ref 只以雜湊進 KV key
-  const contactBucket = `notifyc.${principal.linkId}.${(await sha256Hex(content.ref)).slice(0, 32)}`;
-  const contactLimited = await checkRateLimit(env, contactBucket, CONTACT_RATE_LIMIT);
-  if (!contactLimited.allowed) return rateLimited(contactLimited.resetAt);
 
   const { botId, linkId } = principal;
   const system = `link:${linkId}`;
@@ -378,6 +457,8 @@ async function handleSend(request, env, principal) {
 
   const claim = await claimIdempotency(env, { botId, system, keyHash, fingerprint });
   if (!claim.won) {
+    // 重送（回放、處理中、鍵重用）不吃預算
+    await giveBackQuietly(env, budget.tokens);
     const existing = claim.existing;
     if (existing.fingerprint !== fingerprint) {
       return bridgeError("IDEMPOTENCY_KEY_REUSE", "Idempotency-Key was already used with a different request");
