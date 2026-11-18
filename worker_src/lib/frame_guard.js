@@ -4,14 +4,36 @@
  * X-Frame-Options 與 CSP frame-ancestors。只動這一頁，其他頁面（含 LIFF 頁面）行為不變。
  */
 
-/** 需要禁止被嵌入的靜態頁（已去掉掛載前綴後的路徑，精確比對） */
+/** 需要禁止被嵌入的靜態頁（已去掉掛載前綴後的路徑，正規化後精確比對） */
 const PROTECTED_PATHS = new Set(["/pages/link_authorize.html"]);
+
+/**
+ * 把路徑正規化成靜態資源查找實際會用的形狀：百分比解碼、合併重複斜線、解開 `.` 與 `..` 段、不分大小寫。
+ * 解不開的百分比序列回 null（那種路徑查不到任何資源，也就沒有東西需要保護）。
+ */
+function normalizePath(pathname) {
+  let decoded;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    return null;
+  }
+  const out = [];
+  for (const seg of decoded.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") out.pop();
+    else out.push(seg.toLowerCase());
+  }
+  return `/${out.join("/")}`;
+}
 
 const FRAME_ANCESTORS = "frame-ancestors 'none'";
 
 /** @param {unknown} pathname */
 export function isFrameProtectedPath(pathname) {
-  return typeof pathname === "string" && PROTECTED_PATHS.has(pathname);
+  if (typeof pathname !== "string") return false;
+  const normalized = normalizePath(pathname);
+  return normalized !== null && PROTECTED_PATHS.has(normalized);
 }
 
 /**
