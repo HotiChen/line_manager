@@ -10,7 +10,7 @@ import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTestD1, readMigrations, splitStatements } from '../helpers/mock_d1.mjs';
 
-const ALL_TABLES = ['audit_log', 'auth_codes', 'bind_codes', 'contacts', 'idempotency', 'links', 'products', 'service_keys', 'systems'];
+const ALL_TABLES = ['audit_log', 'auth_codes', 'bind_codes', 'contacts', 'counters', 'flags', 'idempotency', 'links', 'products', 'service_keys', 'systems'];
 
 let d1;
 before(async () => { d1 = await createTestD1(); });
@@ -23,15 +23,16 @@ async function names(type) {
 }
 
 describe('遷移檔', () => {
-    it('至少有 0001、0002、0003 遷移檔，且檔名排序穩定', () => {
+    it('至少有 0001、0002、0003、0004 遷移檔，且檔名排序穩定', () => {
         const files = readMigrations().map((m) => m.name);
         assert.ok(files.includes('0001_bridge_init.sql'));
         assert.ok(files.includes('0002_bridge_links.sql'));
         assert.ok(files.includes('0003_bridge_contacts.sql'));
+        assert.ok(files.includes('0004_bridge_counters.sql'));
         assert.deepEqual(files, [...files].sort());
     });
 
-    it('建立計畫書的九張表（0001 的四張＋0002 的 products、links、auth_codes＋0003 的 bind_codes、contacts）', async () => {
+    it('建立計畫書的十一張表（0001 的四張＋0002 的 products、links、auth_codes＋0003 的 bind_codes、contacts＋0004 的 counters、flags）', async () => {
         assert.deepEqual(await names('table'), ALL_TABLES);
     });
 
@@ -40,14 +41,14 @@ describe('遷移檔', () => {
         for (const i of [
             'idx_audit_log_bot_at', 'idx_idempotency_expiry', 'idx_service_keys_system',
             'uq_links_active', 'idx_links_bot', 'idx_auth_codes_expiry', 'idx_service_keys_link',
-            'idx_bind_codes_ref', 'idx_bind_codes_expiry', 'idx_contacts_user',
+            'idx_bind_codes_ref', 'idx_bind_codes_expiry', 'idx_contacts_user', 'idx_counters_window',
         ]) {
             assert.ok(idx.includes(i), `缺索引 ${i}`);
         }
     });
 
     it('沒有外鍵（刪系統時 batch 撤銷金鑰，撤銷紀錄保留）', async () => {
-        for (const t of ['systems', 'service_keys', 'idempotency', 'audit_log', 'products', 'links', 'auth_codes', 'bind_codes', 'contacts']) {
+        for (const t of ['systems', 'service_keys', 'idempotency', 'audit_log', 'products', 'links', 'auth_codes', 'bind_codes', 'contacts', 'counters', 'flags']) {
             const { results } = await d1.db.prepare(`PRAGMA foreign_key_list(${t})`).all();
             assert.equal(results.length, 0, t);
         }
@@ -176,6 +177,60 @@ describe('0003 遷移（LM-3A）', () => {
         await assert.rejects(q, /UNIQUE constraint failed/i);
         assert.equal((await d1.db.prepare('SELECT used_at FROM bind_codes').first()).used_at, null);
         await assert.rejects(() => d1.db.prepare("INSERT INTO bind_codes (code_hash) VALUES ('x')").run(), /NOT NULL/i);
+    });
+});
+
+describe('0004 遷移（M-01／M-02）', () => {
+    const file = () => readMigrations().find((m) => m.name === '0004_bridge_counters.sql');
+
+    it('檔案內沒有 IF NOT EXISTS，重複套用 0004 的每一句都失敗且不影響既有資料', async () => {
+        assert.doesNotMatch(file().sql, /IF NOT EXISTS/i);
+        await d1.db.prepare("INSERT INTO counters (scope_key, window, n) VALUES ('k', 60000, 3)").run();
+        await d1.db.prepare("INSERT INTO flags (flag_key, until_at) VALUES ('f', 9)").run();
+        await d1.db.prepare("INSERT INTO bind_codes (code_hash, link_id, bot_id, external_contact_ref, created_at, expires_at, allow_rebind) VALUES ('h','l','b','r',1,2,1)").run();
+        const stmts = splitStatements(file().sql);
+        assert.equal(stmts.length, 4);
+        for (const stmt of stmts) {
+            await assert.rejects(() => d1.db.prepare(stmt).run(), /already exists|duplicate column/i, stmt.slice(0, 40));
+        }
+        assert.equal((await d1.db.prepare('SELECT n FROM counters').first()).n, 3);
+        assert.equal((await d1.db.prepare('SELECT allow_rebind AS a FROM bind_codes').first()).a, 1);
+    });
+
+    it('counters：(scope_key, window) 是複合主鍵；n、window 不可為 NULL', async () => {
+        const ins = (k, w) => d1.db.prepare('INSERT INTO counters (scope_key, window, n) VALUES (?1, ?2, 1)').bind(k, w).run();
+        await ins('a', 1);
+        await assert.rejects(() => ins('a', 1), /UNIQUE constraint failed/i);
+        await ins('a', 2);
+        await ins('b', 1);
+        await assert.rejects(() => d1.db.prepare("INSERT INTO counters (scope_key) VALUES ('x')").run(), /NOT NULL/i);
+    });
+
+    it('flags：flag_key 是主鍵；until_at NOT NULL', async () => {
+        await d1.db.prepare("INSERT INTO flags (flag_key, until_at) VALUES ('f', 1)").run();
+        await assert.rejects(() => d1.db.prepare("INSERT INTO flags (flag_key, until_at) VALUES ('f', 2)").run(), /UNIQUE constraint failed/i);
+        await assert.rejects(() => d1.db.prepare("INSERT INTO flags (flag_key) VALUES ('g')").run(), /NOT NULL/i);
+    });
+
+    it('bind_codes.allow_rebind：NOT NULL、預設 0（既有的碼視為不許覆蓋）', async () => {
+        await d1.db.prepare("INSERT INTO bind_codes (code_hash, link_id, bot_id, external_contact_ref, created_at, expires_at) VALUES ('h','l','b','r',1,2)").run();
+        assert.equal((await d1.db.prepare('SELECT allow_rebind AS a FROM bind_codes').first()).a, 0);
+        const { results } = await d1.db.prepare('PRAGMA table_info(bind_codes)').all();
+        const col = results.find((c) => c.name === 'allow_rebind');
+        assert.equal(col.notnull, 1);
+    });
+
+    it('測試工具的 upTo：只套用到 0003 的資料庫沒有 counters、flags、allow_rebind', async () => {
+        const old = await createTestD1({ upTo: '0003' });
+        try {
+            const { results } = await old.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name").all();
+            const have = results.map((r) => r.name);
+            assert.ok(!have.includes('counters') && !have.includes('flags'));
+            const cols = (await old.db.prepare('PRAGMA table_info(bind_codes)').all()).results.map((c) => c.name);
+            assert.ok(!cols.includes('allow_rebind'));
+        } finally {
+            await old.dispose();
+        }
     });
 });
 

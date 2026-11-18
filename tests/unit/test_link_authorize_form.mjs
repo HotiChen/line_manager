@@ -7,6 +7,7 @@ import {
   describeScopes, scopeShortLabel, UNKNOWN_SCOPE_TEXT,
   readAuthParams, saveAuthParams, restoreAuthParams, clearAuthParams, resolveAuthParams, AUTH_STORAGE_KEY,
   validateRedirectTarget, parsePreview, buildApprovePayload, describeLinkError, normalizeLinks, formatIsoTime,
+  redirectHostLabel, consentNotice, MAX_HOST_DISPLAY, MAX_OA_NAME_DISPLAY,
 } from '../../helper/link_authorize_form.js';
 
 function memStorage(initial = {}) {
@@ -301,5 +302,69 @@ describe('normalizeLinks / formatIsoTime', () => {
     assert.equal(formatIsoTime(null), '—');
     assert.equal(formatIsoTime('nope'), '—');
     assert.equal(formatIsoTime(123), '—');
+  });
+});
+
+describe('M-03：同意頁顯示回調主機與授權效果', () => {
+  it('redirectHostLabel：只回主機名稱（沒有 scheme、path、query、埠號、帳密）', () => {
+    assert.equal(redirectHostLabel('https://app.example.com/cb?x=1#f'), 'app.example.com');
+    assert.equal(redirectHostLabel('https://App.Example.COM:443/cb'), 'app.example.com');
+    assert.equal(redirectHostLabel('https://app.example.com:8443/cb'), 'app.example.com'); // 埠不顯示（hostname 不含埠）
+    assert.equal(redirectHostLabel('https://a.b.c.example.co.jp./cb'), 'a.b.c.example.co.jp.');
+  });
+
+  it('IDN／同形字：顯示 URL.hostname 的 punycode 形式（不轉回 Unicode，讓同形字一眼可辨）', () => {
+    const host = redirectHostLabel('https://аpple.example/cb'); // 第一個字是西里爾字母 а
+    assert.match(host, /^xn--/);
+    assert.equal(host, new URL('https://аpple.example/cb').hostname);
+    assert.equal(redirectHostLabel('https://例え.jp/cb'), new URL('https://例え.jp/cb').hostname);
+    assert.match(redirectHostLabel('https://例え.jp/cb'), /^xn--/);
+  });
+
+  it('不是 https、無法解析、含帳號密碼、含空白或控制字元、非字串 → 空字串', () => {
+    for (const v of [
+      'http://app.example.com/cb', 'javascript:alert(1)', '//app.example.com/cb', '/cb', 'app.example.com', '', null, undefined, 42, {},
+      'https://user:pw@app.example.com/cb', 'https://user@app.example.com/cb', ' https://app.example.com/cb', 'https://app.example.com/\ncb', 'https://',
+    ]) {
+      assert.equal(redirectHostLabel(v), '', JSON.stringify(v));
+    }
+  });
+
+  it('很長的主機名稱：總長不超過上限，保留「結尾」（真正決定網域歸屬的部分），前面用 … 取代', () => {
+    const host = `${'a'.repeat(60)}.${'b'.repeat(60)}.evil-bank.example`;
+    const out = redirectHostLabel(`https://${host}/cb`);
+    assert.equal(Array.from(out).length, MAX_HOST_DISPLAY);
+    assert.ok(out.startsWith('…'));
+    assert.ok(out.endsWith('.evil-bank.example'));
+    assert.ok(host.endsWith(out.slice(1)));
+    // 剛好等於上限時不截短
+    const exact = `${'c'.repeat(MAX_HOST_DISPLAY - 8)}.example`;
+    assert.equal(redirectHostLabel(`https://${exact}/cb`), exact);
+    // 自訂上限
+    assert.equal(redirectHostLabel('https://abcdefghij.example.com/cb', 10), '…ample.com'); // 自訂上限：9 個結尾字元 + …
+  });
+
+  it('URL 解析器拒絕的主機（含 <、空白）→ 空字串；其餘特殊字元原樣交給 textContent（不會被當成標記）', () => {
+    for (const v of ['https://exa<mple.com/cb', 'https://exa mple.com/cb', 'https://exa>mple.com/cb']) {
+      assert.equal(redirectHostLabel(v), '', v);
+    }
+    assert.equal(typeof redirectHostLabel('https://exa"mple.com/cb'), 'string');
+  });
+
+  it('consentNotice：授權後，你的客戶可綁定並收到來自 {OA 名} 的通知', () => {
+    assert.equal(consentNotice('我的小店'), '授權後，你的客戶可綁定並收到來自 我的小店 的通知');
+    assert.equal(consentNotice('  Shop  '), '授權後，你的客戶可綁定並收到來自 Shop 的通知');
+  });
+
+  it('consentNotice：沒有名稱（未選、空白、非字串）時用「所選官方帳號」；超長名稱以 code point 截短，不切壞 emoji', () => {
+    for (const v of ['', '   ', undefined, null, 5]) assert.equal(consentNotice(v), '授權後，你的客戶可綁定並收到來自 所選官方帳號 的通知');
+    const long = '店'.repeat(100);
+    const out = consentNotice(long).replace('授權後，你的客戶可綁定並收到來自 ', '').replace(' 的通知', '');
+    assert.equal(Array.from(out).length, MAX_OA_NAME_DISPLAY);
+    assert.ok(out.endsWith('…'));
+    const emoji = '😀'.repeat(60);
+    const o2 = consentNotice(emoji).replace('授權後，你的客戶可綁定並收到來自 ', '').replace(' 的通知', '');
+    assert.equal(Array.from(o2).length, MAX_OA_NAME_DISPLAY);
+    assert.doesNotMatch(o2, /[\ud800-\udbff](?![\udc00-\udfff])/); // 沒有被切斷的 surrogate
   });
 });

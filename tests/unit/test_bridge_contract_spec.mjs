@@ -14,7 +14,7 @@ import {
 import { ERROR_DEFAULTS, ERROR_CODES } from '../../worker_src/bridge/errors.js';
 import { LINK_SCOPES, FORBIDDEN_LINK_SCOPES } from '../../worker_src/bridge/scopes.js';
 import { CONTACT_REF_RE } from '../../worker_src/bridge/contacts.js';
-import { generateBindCode } from '../../worker_src/bridge/binding.js';
+import { generateBindCode, formatBindCode, normalizeBindCode, BIND_CODE_TTL_MS } from '../../worker_src/bridge/binding.js';
 import { validateNotification } from '../../worker_src/bridge/notify.js';
 import { handleBridge } from '../../worker_src/bridge/index.js';
 
@@ -120,11 +120,44 @@ describe('規格與程式常數一致', () => {
         assert.equal(schemas.Notification.properties.external_contact_ref.$ref, '#/components/schemas/ContactRef');
     });
 
-    it('綁定碼範例與實作產生的格式相符（LM- + 8 碼 Crockford base32）', () => {
-        const example = deref(spec, spec.paths['/bridge/v1/contacts/bind-tokens'].post.responses['201']).content['application/json'].schema.properties.bind_code.example;
-        const re = /^LM-[0-9A-HJKMNP-TV-Z]{8}$/;
-        assert.match(example, re);
-        for (let i = 0; i < 20; i++) assert.match(generateBindCode(), re);
+    it('綁定碼範例與實作產生的格式相符（LM- + 12 碼 Crockford base32，顯示成 LM-XXXX-XXXX-XXXX）', () => {
+        const prop = deref(spec, spec.paths['/bridge/v1/contacts/bind-tokens'].post.responses['201']).content['application/json'].schema.properties.bind_code;
+        const re = new RegExp(prop.pattern);
+        assert.match(prop.example, re);
+        assert.equal(normalizeBindCode(prop.example), prop.example.replace(/-/g, '').replace(/^LM/, 'LM-'));
+        for (let i = 0; i < 20; i++) assert.match(formatBindCode(generateBindCode()), re);
+        assert.equal(re.test('LM-B7K2QX9M'), false); // 舊的 8 碼不再是 bind_code 回應的形狀
+    });
+
+    it('M-02：bind-tokens 請求有選填的 boolean allow_rebind（預設 false），文字說明 48 小時與預設拒絕', () => {
+        const op = spec.paths['/bridge/v1/contacts/bind-tokens'].post;
+        const schema = op.requestBody.content['application/json'].schema;
+        assert.deepEqual(schema.required, ['external_contact_ref']);
+        assert.equal(schema.properties.allow_rebind.type, 'boolean');
+        assert.equal(schema.properties.allow_rebind.default, false);
+        assert.match(op.description, /48 小時/);
+        assert.match(op.description, /預設拒絕/);
+        assert.equal(BIND_CODE_TTL_MS, 48 * 60 * 60 * 1000);
+    });
+
+    it('M-03：/link/authorize 的說明有「MUST」要求產品驗證 state（不可預測、綁定 session、回調時驗證），並說明同意頁顯示回調主機', () => {
+        const get = spec.paths['/bridge/v1/link/authorize'].get;
+        assert.match(get.description, /\*\*MUST（產品端）\*\*/);
+        assert.match(get.description, /`state` 必須是不可預測/);
+        assert.match(get.description, /session/);
+        assert.match(get.description, /回調時驗證/);
+        assert.match(get.description, /主機名稱/);
+        const stateParam = get.parameters.find((p) => p.name === 'state');
+        assert.equal(stateParam.required, true);
+    });
+
+    it('M-01：POST /messages 的說明寫明每日預算與 usage_high、402 可能是每日預算', () => {
+        const op = spec.paths['/bridge/v1/messages'].post;
+        assert.match(op.description, /每連結每日 500 則/);
+        assert.match(op.description, /usage_high/);
+        assert.match(op.description, /重送不吃預算/);
+        assert.ok(op.responses['402']);
+        assert.match(deref(spec, op.responses['402']).description, /發送預算/);
     });
 
     describe('Notification 與 notify.js 的驗證一致（以行為斷言，上限常數不輸出）', () => {

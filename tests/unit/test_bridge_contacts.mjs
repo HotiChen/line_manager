@@ -16,7 +16,7 @@ import { sha256Hex } from '../../worker_src/lib/crypto_util.js';
 import { handleBridge } from '../../worker_src/bridge/index.js';
 import { isContactsRoute, isLinkRoute, isBridgeServiceRoute, isSystemsRoute } from '../../worker_src/bridge/routes.js';
 import { buildBindUrl, deriveContactStatus, CONTACT_REF_RE } from '../../worker_src/bridge/contacts.js';
-import { tryConsumeBindCode, markBlocked, BIND_CODE_TTL_MS } from '../../worker_src/bridge/binding.js';
+import { tryConsumeBindCode, markBlocked, normalizeBindCode, BIND_CODE_TTL_MS } from '../../worker_src/bridge/binding.js';
 import { ERROR_CODES } from '../../worker_src/bridge/errors.js';
 
 const ORIGIN = 'https://worker.example.com';
@@ -191,13 +191,14 @@ describe('認證與 scope', () => {
 // ───────────────────────── POST bind-tokens ─────────────────────────
 
 describe('POST /contacts/bind-tokens', () => {
-    it('201 {bind_code, bind_url, expires_at}；碼格式正確、7 天後過期、bind_url 帶完整碼', async () => {
+    it('201 {bind_code, bind_url, expires_at}；碼格式正確（LM-XXXX-XXXX-XXXX）、48 小時後過期、bind_url 帶完整碼', async () => {
         const before = Date.now();
         const r = await issue();
         assert.equal(r.res.status, 201);
         assert.equal(r.res.headers.get('Cache-Control'), 'no-store');
         assert.deepEqual(Object.keys(r.body).sort(), ['bind_code', 'bind_url', 'expires_at']);
-        assert.match(r.body.bind_code, /^LM-[0-9A-HJKMNP-TV-Z]{8}$/);
+        assert.match(r.body.bind_code, /^LM-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/);
+        assert.equal(BIND_CODE_TTL_MS, 48 * 60 * 60 * 1000);
         assert.equal(r.body.bind_url, `${BIND_URL_BASE}@123abcde/?${r.body.bind_code}`);
         const exp = Date.parse(r.body.expires_at);
         assert.equal(new Date(exp).toISOString(), r.body.expires_at);
@@ -208,12 +209,14 @@ describe('POST /contacts/bind-tokens', () => {
         const r = await issue();
         const rows = await all(d1.db, 'SELECT * FROM bind_codes');
         assert.equal(rows.length, 1);
-        assert.equal(rows[0].code_hash, await sha256Hex(r.body.bind_code));
+        assert.equal(rows[0].code_hash, await sha256Hex(normalizeBindCode(r.body.bind_code))); // 存的是無連字號標準形的雜湊
+        assert.equal(rows[0].allow_rebind, 0);
         assert.equal(rows[0].link_id, LNK_A);
         assert.equal(rows[0].bot_id, BOT);
         assert.equal(rows[0].external_contact_ref, REF);
         assert.equal(rows[0].used_at, null);
         assert.ok(!JSON.stringify(rows).includes(r.body.bind_code));
+        assert.ok(!JSON.stringify(rows).includes(normalizeBindCode(r.body.bind_code)));
     });
 
     it('用該 bot owner 的 token 取 basic ID', async () => {

@@ -202,6 +202,12 @@
                     </div>
                 </div>
 
+                <!-- 授權碼會送到哪個網站（M-03）：只顯示主機名稱，純文字、不是連結 -->
+                <div class="panel mb-3">
+                    <div class="small muted mb-1">授權完成後會回到這個網站</div>
+                    <div id="redirect-host" class="fw-semibold product-name" translate="no"></div>
+                </div>
+
                 <!-- 權限說明 -->
                 <div class="panel mb-3">
                     <div class="small muted mb-2">同意後，這個產品可以：</div>
@@ -210,6 +216,8 @@
                         這個授權要求包含無法辨識的權限，為了安全已停用「同意」。請回到產品重新開始，或聯絡產品提供者。
                     </div>
                 </div>
+
+                <p class="small mb-2" id="consent-notice"></p>
 
                 <p class="small muted mb-3">
                     <i class="bi bi-shield-lock me-1"></i>

@@ -578,7 +578,7 @@ export async function getLinkKeyContext(env, keyHash) {
 
 // ── 聯絡人綁定（LM-3A）──
 //
-// line_user_id 只存在 contacts 表。這一節只有一個函式把它讀出來：getContactForSend（LM-3B，只給 notify.js 送出訊息用，
+// line_user_id 只存在 contacts 表。這一節只有兩處把它讀出來：consumeBindCode 的「原綁定者」子查詢（M-02，僅供 binding.js 通知換綁）與 getContactForSend（LM-3B，只給 notify.js 送出訊息用，
 // 回傳值只在 handler 內存活，不進回應、audit、log；test_bridge_db_boundary 釘住「只有這一句 SELECT 讀它」）。
 // 其餘 HTTP 處理函式拿到的只有狀態與時間。webhook 路徑（binding.js）自己手上就有 lineUserId，只會把它寫進來或當查詢條件。
 
@@ -593,22 +593,24 @@ const BIND_CODE_PURGE_AFTER_MS = 24 * 60 * 60 * 1000;
  *   2. 只有新碼確實寫入時，才刪除同 (連結, ref) 的其他未用碼 —— 被上限擋下時舊碼原封不動
  *   3. 順手清掉早已過期的舊碼
  * 並行請求可能讓數量短暫略超過上限（與 KV 限流器同級的已知限制），上限是防灌表的護欄，不是精確配額。
+ * allowRebind（M-02／D6）：此碼被「不同的 LINE 使用者」消耗時，是否允許覆蓋既有綁定（預設 false）。
+ * 缺 0004 遷移（沒有 allow_rebind 欄位）→ 查詢失敗 → BridgeDbError（fail-closed）。
  *
  * @returns {Promise<{created: true} | {created: false, capped: true} | {created: false, conflict: true}>}
  */
-export async function createBindCode(env, { codeHash, linkId, botId, ref, expiresAt, now = Date.now(), maxLive = MAX_LIVE_BIND_CODES_PER_LINK }) {
+export async function createBindCode(env, { codeHash, linkId, botId, ref, expiresAt, allowRebind = false, now = Date.now(), maxLive = MAX_LIVE_BIND_CODES_PER_LINK }) {
   return withDb(env, async (db) => {
     let results;
     try {
       results = await db.batch([
         db
           .prepare(
-            `INSERT INTO bind_codes (code_hash, link_id, bot_id, external_contact_ref, created_at, expires_at, used_at)
-             SELECT ?1, ?2, ?3, ?4, ?5, ?6, NULL
+            `INSERT INTO bind_codes (code_hash, link_id, bot_id, external_contact_ref, created_at, expires_at, used_at, allow_rebind)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, NULL, ?8
               WHERE (SELECT COUNT(*) FROM bind_codes
                       WHERE link_id = ?2 AND used_at IS NULL AND expires_at > ?5 AND external_contact_ref <> ?4) < ?7`
           )
-          .bind(codeHash, linkId, botId, ref, now, expiresAt, maxLive),
+          .bind(codeHash, linkId, botId, ref, now, expiresAt, maxLive, allowRebind === true ? 1 : 0),
         db
           .prepare(
             `DELETE FROM bind_codes
@@ -627,32 +629,70 @@ export async function createBindCode(env, { codeHash, linkId, botId, ref, expire
 }
 
 /**
- * 消耗綁定碼：單一 UPDATE，條件是「未使用、未過期、屬於這個 bot、連結仍是 active」。
- * meta.changes === 1 才算搶到，所以並行的兩次消耗只有一個會贏。
+ * 消耗綁定碼並寫入綁定（M-02／D6）。單一 batch（一個交易）：
+ *   1. UPDATE used_at：條件是「未使用、未過期、屬於這個 bot、連結仍是 active」，**而且**
+ *      （碼的 allow_rebind = 1，或這個 (連結, ref) 目前沒有被「別的 LINE 使用者」綁定）。
+ *      條件寫在同一句 UPDATE 裡，所以「被拒絕」時碼不會被燒掉，並行也不會有檢查與消耗之間的空檔。
+ *   2. SELECT 這組碼的資訊與（寫入前的）原綁定者 —— 用來分辨「查無此碼」與「碼有效但被擋下」，並在覆蓋時通知原綁定者。
+ *   3. INSERT … ON CONFLICT DO UPDATE 寫入綁定，條件是 changes() = 1（也就是第 1 步真的搶到）。
+ *      不用「used_at = now」判斷：兩個人在同一毫秒送同一組碼時，輸家也會看到 used_at = now。
+ * 同一個 LINE 使用者重綁自己：條件成立（沒有「別人」）→ 視為成功（冪等）。
+ * 既有綁定是 blocked 也算「被別人綁定」（要覆蓋就得 allow_rebind）。
  * 條件不符（不存在、過期、已用、別的 bot、連結已撤銷）一律回 null，呼叫端不得區分原因。
  *
- * @returns {Promise<null | {linkId: string, productId: string, ref: string}>}
+ * previousUserId 是原綁定者的 LINE userId（只有「覆蓋了別人」時才有），僅供 binding.js 推播「綁定已被更換」，
+ * 不得放進回應、audit、log。這個函式與 getContactForSend 是 db.js 僅有的兩處讀出 line_user_id（boundary 測試把關）。
+ *
+ * @returns {Promise<null
+ *   | {rejected: true, linkId: string, productId: string}
+ *   | {rejected: false, linkId: string, productId: string, ref: string, previousUserId: string|null}>}
  */
-export async function consumeBindCode(env, { codeHash, botId, now = Date.now() }) {
+export async function consumeBindCode(env, { codeHash, botId, lineUserId, now = Date.now() }) {
   return withDb(env, async (db) => {
     const [updated, selected] = await db.batch([
       db
         .prepare(
           `UPDATE bind_codes SET used_at = ?3
             WHERE code_hash = ?1 AND bot_id = ?2 AND used_at IS NULL AND expires_at > ?3
-              AND EXISTS (SELECT 1 FROM links WHERE links.link_id = bind_codes.link_id AND links.status = 'active')`
+              AND EXISTS (SELECT 1 FROM links WHERE links.link_id = bind_codes.link_id AND links.status = 'active')
+              AND (allow_rebind = 1 OR NOT EXISTS (
+                    SELECT 1 FROM contacts c
+                     WHERE c.link_id = bind_codes.link_id AND c.external_contact_ref = bind_codes.external_contact_ref
+                       AND c.line_user_id <> ?4))`
         )
-        .bind(codeHash, botId, now),
+        .bind(codeHash, botId, now, lineUserId),
       db
         .prepare(
-          `SELECT b.link_id AS link_id, b.external_contact_ref AS ref, l.product_id AS product_id
+          `SELECT b.link_id AS link_id, b.external_contact_ref AS ref, b.bot_id AS bot_id, b.used_at AS used_at,
+                  b.expires_at AS expires_at, l.status AS link_status, l.product_id AS product_id,
+                  (SELECT c.line_user_id FROM contacts c
+                    WHERE c.link_id = b.link_id AND c.external_contact_ref = b.external_contact_ref) AS prev_user
              FROM bind_codes b JOIN links l ON l.link_id = b.link_id WHERE b.code_hash = ?1`
         )
         .bind(codeHash),
+      db
+        .prepare(
+          `INSERT INTO contacts (link_id, external_contact_ref, bot_id, line_user_id, status, bound_at, updated_at)
+           SELECT b.link_id, b.external_contact_ref, ?2, ?3, 'bound', ?4, ?4 FROM bind_codes b
+            WHERE b.code_hash = ?1 AND changes() = 1
+           ON CONFLICT (link_id, external_contact_ref) DO UPDATE SET
+             bot_id = excluded.bot_id,
+             line_user_id = excluded.line_user_id,
+             status = 'bound',
+             bound_at = excluded.bound_at,
+             updated_at = excluded.updated_at`
+        )
+        .bind(codeHash, botId, lineUserId, now),
     ]);
-    if (updated.meta.changes !== 1) return null;
     const row = selected.results[0];
-    return row ? { linkId: row.link_id, productId: row.product_id, ref: row.ref } : null;
+    if (!row) return null;
+    if (updated.meta.changes !== 1) {
+      // UPDATE 的其他條件都成立卻沒改到列 → 只剩「別人已綁定、且此碼不許覆蓋」
+      const stillValid = row.used_at === null && row.expires_at > now && row.bot_id === botId && row.link_status === "active";
+      return stillValid ? { rejected: true, linkId: row.link_id, productId: row.product_id } : null;
+    }
+    const previousUserId = row.prev_user && row.prev_user !== lineUserId ? row.prev_user : null;
+    return { rejected: false, linkId: row.link_id, productId: row.product_id, ref: row.ref, previousUserId };
   });
 }
 
@@ -772,6 +812,114 @@ export async function restoreContactsByUser(env, { botId, lineUserId, now = Date
       .bind(botId, lineUserId, now)
       .run();
     return res.meta.changes;
+  });
+}
+
+// ── 原子計數與旗標（M-01／M-02，migration 0004）──
+//
+// 缺 counters／flags 表（只套用到 0003）→ 查詢失敗 → BridgeDbError，呼叫端 fail-closed（不放行）。
+// scope_key 裡的 ref／LINE userId 由呼叫端先雜湊；這裡不看也不存明文。
+
+/** 計數列保留多久（視窗起點早於這個時間的列在機率性清理時刪除） */
+export const COUNTER_RETENTION_MS = 2 * 24 * 60 * 60 * 1000;
+const FLAG_RETENTION_MS = 24 * 60 * 60 * 1000;
+const PURGE_PROBABILITY = 0.02;
+
+/**
+ * 原子地從固定視窗的桶子拿一個名額：單句 UPSERT，`… DO UPDATE SET n = n + 1 WHERE n < cap`，
+ * 有回傳列才算放行（並行的呼叫者不會超過 cap）。cap < 1 一律不放行。
+ *
+ * @param {Object} env
+ * @param {{key: string, windowMs: number, cap: number, now?: number, purge?: boolean}} p
+ *   purge：true／false 強制（測試用）；省略則約 2% 機率順手清理舊視窗（盡力而為，失敗只記 log）
+ * @returns {Promise<{allowed: boolean, count: number, window: number, resetAt: number}>}
+ *   count = 放行時是取用後的數字；不放行時是 cap
+ */
+export async function takeToken(env, { key, windowMs, cap, now = Date.now(), purge }) {
+  if (typeof key !== "string" || key === "" || !Number.isSafeInteger(windowMs) || windowMs < 1 || !Number.isSafeInteger(cap)) {
+    throw new BridgeDbError("invalid counter arguments");
+  }
+  const window = Math.floor(now / windowMs) * windowMs;
+  const resetAt = window + windowMs;
+  return withDb(env, async (db) => {
+    let row = null;
+    if (cap >= 1) {
+      row = await db
+        .prepare(
+          `INSERT INTO counters (scope_key, window, n) VALUES (?1, ?2, 1)
+           ON CONFLICT (scope_key, window) DO UPDATE SET n = n + 1 WHERE n < ?3
+           RETURNING n`
+        )
+        .bind(key, window, cap)
+        .first();
+    }
+    if (purge === true || (purge === undefined && Math.random() < PURGE_PROBABILITY)) {
+      try {
+        await db.batch([
+          db.prepare("DELETE FROM counters WHERE window < ?1").bind(now - COUNTER_RETENTION_MS),
+          db.prepare("DELETE FROM flags WHERE until_at < ?1").bind(now - FLAG_RETENTION_MS),
+        ]);
+      } catch (err) {
+        console.error("[BridgeDb] counter purge failed:", err && err.message);
+      }
+    }
+    return row ? { allowed: true, count: row.n, window, resetAt } : { allowed: false, count: cap, window, resetAt };
+  });
+}
+
+/**
+ * 把先前 takeToken 拿到的名額還回去（被後面的限制擋下、或只是重送的請求，不該吃掉預算）。
+ * 只會把 n 減 1 且不低於 0；盡力而為由呼叫端包 try/catch。
+ *
+ * @param {Object} env
+ * @param {{key: string, window: number}[]} tokens
+ */
+export async function giveBackTokens(env, tokens) {
+  if (!Array.isArray(tokens) || tokens.length === 0) return;
+  return withDb(env, async (db) => {
+    await db.batch(
+      tokens.map(({ key, window }) =>
+        db.prepare("UPDATE counters SET n = n - 1 WHERE scope_key = ?1 AND window = ?2 AND n > 0").bind(key, window)
+      )
+    );
+  });
+}
+
+/** 旗標是否仍有效（until_at > now） */
+export async function getFlag(env, { key, now = Date.now() }) {
+  return withDb(env, async (db) => {
+    const row = await db.prepare("SELECT 1 AS on_ FROM flags WHERE flag_key = ?1 AND until_at > ?2").bind(key, now).first();
+    return Boolean(row);
+  });
+}
+
+/** 設定（或延長）旗標：until_at 只會往後 */
+export async function setFlag(env, { key, untilAt }) {
+  return withDb(env, async (db) => {
+    await db
+      .prepare(
+        `INSERT INTO flags (flag_key, until_at) VALUES (?1, ?2)
+         ON CONFLICT (flag_key) DO UPDATE SET until_at = max(flags.until_at, excluded.until_at)`
+      )
+      .bind(key, untilAt)
+      .run();
+  });
+}
+
+/**
+ * 「只做一次」的旗標：沒有或已過期才設定並回 true；已有效回 false。原子（單句 UPSERT）。
+ * 用在每連結每日一次、每 bot 每小時一次的稽核。
+ */
+export async function claimFlag(env, { key, untilAt, now = Date.now() }) {
+  return withDb(env, async (db) => {
+    const res = await db
+      .prepare(
+        `INSERT INTO flags (flag_key, until_at) VALUES (?1, ?2)
+         ON CONFLICT (flag_key) DO UPDATE SET until_at = excluded.until_at WHERE flags.until_at <= ?3`
+      )
+      .bind(key, untilAt, now)
+      .run();
+    return res.meta.changes > 0;
   });
 }
 

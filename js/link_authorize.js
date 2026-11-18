@@ -6,7 +6,7 @@
  *
  * 安全規則（不可退步）：
  *   - 被嵌進 iframe 時什麼都不渲染（防點擊劫持）
- *   - product_id / state / redirect_uri / code 一律不進 console、不進 DOM（產品名稱以 textContent 顯示）
+ *   - product_id / state / code 一律不進 console、不進 DOM；redirect_uri 只有「主機名稱」會顯示（純文字 textContent，不是連結，M-03）；產品名稱以 textContent 顯示
  *   - 導向前一律經 validateRedirectTarget：只允許 https、同 origin、同 path，無帳號密碼
  *   - 不使用 innerHTML：所有動態內容用 createElement / textContent
  *   - 不認識的 scope 不顯示原字串，且同意按鈕停用
@@ -22,6 +22,8 @@ import {
   parsePreview,
   buildApprovePayload,
   describeLinkError,
+  redirectHostLabel,
+  consentNotice,
 } from '../helper/link_authorize_form.js';
 
 const byId = (id) => document.getElementById(id);
@@ -155,12 +157,21 @@ function renderBots(bots) {
   select.classList.remove('d-none');
 }
 
+/** 「授權後，你的客戶可綁定並收到來自 {OA 名} 的通知」：隨所選的官方帳號更新（外部輸入，只用 textContent） */
+function renderNotice() {
+  const bots = view.preview ? view.preview.bots : [];
+  const bot = bots.find((b) => b.botId === view.botId);
+  byId('consent-notice').textContent = consentNotice(bot ? bot.displayName : '');
+}
+
 function renderConsent(preview) {
   byId('product-name').textContent = preview.productName; // 外部輸入：只用 textContent
+  byId('redirect-host').textContent = redirectHostLabel(view.params && view.params.redirect_uri) || '（無法辨識）'; // 只顯示主機名稱，不做成連結
   const desc = describeScopes(preview.scopes);
   view.canApprove = desc.canApprove;
   renderScopes(desc);
   renderBots(preview.bots);
+  renderNotice();
   showActionError('');
   refreshButtons();
   show('state-consent');
@@ -268,6 +279,7 @@ function init() {
   byId('btn-cancel').addEventListener('click', onCancel);
   byId('bot-select').addEventListener('change', (e) => {
     view.botId = e.target.value;
+    renderNotice();
     refreshButtons();
   });
   // 從產品按「上一頁」回來時，頁面可能是從 bfcache 還原、按鈕卡在停用：重新載入最單純

@@ -76,15 +76,33 @@ describe('db.js 的 SQL 只用 bound parameter', () => {
 });
 
 describe('LM-3A：LINE userId 不外流', () => {
-    it('db.js 只有 getContactForSend 這一句 SELECT 讀出 line_user_id（LM-3B 送訊息用；其餘只寫入、或當 WHERE 條件）', () => {
+    it('db.js 只有兩句 SELECT 讀出 line_user_id：getContactForSend（LM-3B 送訊息用）與 consumeBindCode 的「原綁定者」子查詢（M-02 覆蓋通知用）；其餘只寫入、或當 WHERE 條件', () => {
         const src = readFileSync(join(SRC, 'bridge', 'db.js'), 'utf8');
         const statements = [...src.matchAll(/\.prepare\(\s*(`[^`]*`|"[^"\n]*")/g)].map((m) => m[1]);
         assert.ok(statements.length > 20);
         const readers = statements.filter((x) => /^[`"]\s*SELECT/i.test(x) && /line_user_id/.test(x));
-        assert.deepEqual(readers, ['"SELECT status, line_user_id FROM contacts WHERE link_id = ?1 AND external_contact_ref = ?2 AND bot_id = ?3"']);
-        // 而且這句一定在 getContactForSend 之內，並且同時以連結與 bot 限定範圍
+        assert.equal(readers.length, 2, readers.join('\n'));
+        const send = '"SELECT status, line_user_id FROM contacts WHERE link_id = ?1 AND external_contact_ref = ?2 AND bot_id = ?3"';
+        assert.ok(readers.includes(send));
+        // getContactForSend 的那句在函式之內
         const fn = src.slice(src.indexOf('export async function getContactForSend'), src.indexOf('export async function deleteContact'));
-        assert.ok(fn.includes(readers[0]));
+        assert.ok(fn.includes(send));
+        // 另一句只能在 consumeBindCode 之內，而且只讀「同一個 (連結, ref)」的那一列
+        const other = readers.find((x) => x !== send);
+        const consumeFn = src.slice(src.indexOf('export async function consumeBindCode'), src.indexOf('export async function upsertContactBinding'));
+        assert.ok(consumeFn.includes(other));
+        assert.match(other, /WHERE c\.link_id = b\.link_id AND c\.external_contact_ref = b\.external_contact_ref\)/);
+        // 其餘函式（計數、旗標、稽核）沒有碰 line_user_id
+        const counters = src.slice(src.indexOf('export async function takeToken'), src.indexOf('// ── 冪等 ──'));
+        assert.doesNotMatch(counters, /line_user/);
+    });
+
+    it('consumeBindCode（會回傳 previousUserId）只有 binding.js 在用', () => {
+        for (const f of walk(SRC)) {
+            if (f.endsWith('/bridge/db.js') || f.endsWith('/bridge/binding.js')) continue;
+            assert.doesNotMatch(code(f), /consumeBindCode|previousUserId/, relative(ROOT, f));
+        }
+        assert.match(code(join(SRC, 'bridge', 'binding.js')), /consumeBindCode/);
     });
 
     it('getContactForSend 只有 notify.js 在用（其他 bridge 檔案與 LM 核心都不用）', () => {

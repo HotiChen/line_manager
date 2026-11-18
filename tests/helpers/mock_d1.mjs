@@ -19,10 +19,14 @@ import { dirname, join } from 'node:path';
 
 const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'migrations');
 
-/** @returns {{name: string, sql: string}[]} 依檔名排序 */
-export function readMigrations() {
+/**
+ * @param {string} [upTo] 只讀到這個前綴（含）為止，例如 '0003'：模擬「還沒套用後續遷移」的資料庫
+ * @returns {{name: string, sql: string}[]} 依檔名排序
+ */
+export function readMigrations(upTo) {
     return readdirSync(MIGRATIONS_DIR)
         .filter((f) => f.endsWith('.sql'))
+        .filter((f) => upTo === undefined || f.slice(0, upTo.length) <= upTo)
         .sort()
         .map((name) => ({ name, sql: readFileSync(join(MIGRATIONS_DIR, name), 'utf8') }));
 }
@@ -39,8 +43,8 @@ export function splitStatements(sql) {
 }
 
 /** 對一個 D1 套用全部遷移檔 */
-export async function applyMigrations(db) {
-    for (const { sql } of readMigrations()) {
+export async function applyMigrations(db, upTo) {
+    for (const { sql } of readMigrations(upTo)) {
         for (const stmt of splitStatements(sql)) {
             await db.prepare(stmt).run();
         }
@@ -90,6 +94,7 @@ function wrapDb(db) {
 }
 
 /**
+ * @param {{upTo?: string}} [opts] upTo：只套用到這個遷移前綴（含），用來測「缺最新遷移」的情況
  * @returns {Promise<{
  *   db: object,
  *   reset: () => Promise<void>,
@@ -97,18 +102,18 @@ function wrapDb(db) {
  *   dispose: () => Promise<void>,
  * }>}
  */
-export async function createTestD1() {
+export async function createTestD1({ upTo } = {}) {
     const mf = new Miniflare({
         modules: true,
         script: 'export default { fetch() { return new Response("ok") } }',
         d1Databases: { BRIDGE_DB: 'test-bridge-db' },
     });
     const db = wrapDb(await mf.getD1Database('BRIDGE_DB'));
-    await applyMigrations(db);
+    await applyMigrations(db, upTo);
 
     return {
         db,
-        applyMigrations: () => applyMigrations(db),
+        applyMigrations: () => applyMigrations(db, upTo),
 
         /** 清空每個使用者資料表，並重設 AUTOINCREMENT 計數 */
         async reset() {

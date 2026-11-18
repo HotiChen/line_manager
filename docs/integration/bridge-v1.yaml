@@ -21,7 +21,7 @@ info:
     - 聯絡人綁定用「綁定碼訊息」：客戶把綁定碼傳給 OA，由 webhook 取得該 OA 所屬 Provider 的 userId，
       不依賴 LINE Login。
 
-    實作狀態以 `x-status` 標示：`implemented`（程式已完成於 `/bridge/v1`；LM-2A 的端點待部署並手動套用遷移 0002、LM-3A 的端點待手動套用遷移 0003）、`partial`、`planned`。
+    實作狀態以 `x-status` 標示：`implemented`（程式已完成於 `/bridge/v1`；LM-2A 的端點待部署並手動套用遷移 0002、LM-3A 的端點待手動套用遷移 0003；M-01／M-02 的發送預算與綁定防護待手動套用遷移 0004，未套用時發送與發碼回 503）、`partial`、`planned`。
 
     LM-1A 已完成：`/raw/push`、`/raw/multicast` 由原本的 `/api/v1/messages/push|multicast` 搬到
     `/bridge/v1/raw/*`（舊路徑已移除），Bridge 在 `BRIDGE_ENABLED=1` 時才啟用，關閉時整個 `/bridge/*` 回 404。
@@ -86,6 +86,11 @@ paths:
         產品把使用者導向這裡。LM 確認此人對該 OA 具備 owner 權限、讓他選擇 Bot、顯示授權範圍並請他同意，
         然後產生一次性授權碼（5 分鐘、單次使用）導回 `redirect_uri`。
         `redirect_uri` 必須與產品註冊的值精確比對。
+        同意頁會顯示已驗證的 `redirect_uri` 主機名稱與「授權後，你的客戶可綁定並收到來自 {OA 名} 的通知」，讓使用者知道授權碼會送到哪裡。
+
+        **MUST（產品端）**：`state` 必須是不可預測的隨機值、綁定到發起授權的使用者 session，並在回調時驗證與該 session 相符
+        （不符或缺少一律拒絕這次回調）。LM 只會原樣回傳 `state`，不會替產品驗證；
+        沒有驗證 `state` 的產品，會被攻擊者把「攻擊者自己的授權碼」塞進受害者的回調（授權釣魚／帳號連結 CSRF）。
       security: []
       x-status: implemented
       parameters:
@@ -214,7 +219,15 @@ paths:
       description: |
         呼叫端提供自己的不透明代號 `external_contact_ref`（不得含姓名、電話、Email）。
         LM 回傳一組綁定碼與給客戶看的連結：客戶開啟後會帶著預填好的訊息進入與 OA 的聊天室，
-        傳出後由 webhook 取得 userId 並完成綁定。綁定碼 7 天有效、單次使用。
+        傳出後由 webhook 取得 userId 並完成綁定。綁定碼 48 小時有效、單次使用。
+        碼是 `LM-` + 12 碼 Crockford base32（60 bit），顯示成 `LM-XXXX-XXXX-XXXX`；客戶輸入時有無連字號、大小寫都可以。
+        （舊格式 8 碼、7 天有效的碼在過渡期內仍可使用，直到它們各自過期。）
+
+        **覆蓋既有綁定**：同一條連結下，這個 `external_contact_ref` 已被另一位 LINE 使用者綁定時，預設拒絕：
+        用此碼傳訊息的人**不會**綁定、碼**不會**被消耗、OA 保持沉默（稽核 `bind_rejected`）。
+        `allow_rebind: true`（產品明確要求換綁，例如客戶換了 LINE 帳號）才會覆蓋，並對原綁定者推送「你的綁定已被更換」。
+        同一位 LINE 使用者重綁自己視為成功。綁定碼的猜測受到每 bot、每使用者的嘗試上限保護；
+        某個 OA 短時間出現大量錯碼時，該 OA 會暫停辨識綁定碼 5 分鐘（不影響已綁定者的通知與一般訊息）。
 
         不吃 `Idempotency-Key`（碼只存雜湊，無法重送同一組）：同一條連結對同一個 `external_contact_ref` 再要一次，
         舊的未用碼立即作廢，只回傳並保留最新一組。每條連結同時有效的未用碼上限 1000，超過回 `RATE_LIMITED`；
@@ -230,6 +243,10 @@ paths:
               required: [external_contact_ref]
               properties:
                 external_contact_ref: { $ref: '#/components/schemas/ContactRef' }
+                allow_rebind:
+                  type: boolean
+                  default: false
+                  description: 此碼是否允許覆蓋「已被另一位 LINE 使用者綁定」的 ref。預設 false（拒絕且不消耗碼）。非 boolean → INVALID_REQUEST。
       responses:
         '201':
           description: 綁定碼已產生
@@ -241,7 +258,11 @@ paths:
                 type: object
                 required: [bind_code, bind_url, expires_at]
                 properties:
-                  bind_code: { type: string, example: LM-B7K2QX9M, description: '`LM-` + 8 碼 Crockford base32；只在建立當下回傳一次' }
+                  bind_code:
+                    type: string
+                    example: LM-B7K2-QX9M-4HTN
+                    pattern: '^LM-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$'
+                    description: '`LM-` + 12 碼 Crockford base32，以連字號分成三組顯示；只在建立當下回傳一次'
                   bind_url:
                     type: string
                     format: uri
@@ -327,8 +348,11 @@ paths:
         同一連結內同一把 `Idempotency-Key` 重送，回傳第一次的結果並帶 `X-Idempotency-Replayed: true`，不會再發一次。
         只快取成功與確定性失敗；`CONTACT_NOT_BOUND`、`RECIPIENT_BLOCKED`、`QUOTA_EXCEEDED`、`RATE_LIMITED`、`INTERNAL`
         都不快取（客戶之後可能完成綁定或解除封鎖，同一把鍵重試會重新判斷）。這與 `/raw/*` 不同。
-        限流：每連結每分鐘 60 則；每（連結, 聯絡人）每小時 10 則；超過回 `RATE_LIMITED` 並帶 `Retry-After`。
-        每則訊息消耗 LINE 額度 1；額度用盡回 `QUOTA_EXCEEDED`。
+        發送預算（D1 原子計數，並行請求也不會超過）：每連結每分鐘 60 則；每（連結, 聯絡人）每小時 10 則；
+        超過回 `RATE_LIMITED` 並帶 `Retry-After`（距視窗結束的秒數，至少 1）。
+        另有每連結每日 500 則的預算（營運可調）：用完回 `QUOTA_EXCEEDED`（402，當日不可重試），不會打 LINE；用到 80% 時 LM 會寫稽核 `usage_high`。
+        同一把 `Idempotency-Key` 的重送不吃預算。驗證不通過（400）與 `action.url` 不在白名單（422）的請求不扣每聯絡人與每日預算（但後者仍算每連結每分鐘頻率）；其餘每次嘗試各算一次。
+        每則訊息消耗 LINE 額度 1；OA 當月額度用盡同樣回 `QUOTA_EXCEEDED`。
         LINE 回 403（客戶封鎖）→ `RECIPIENT_BLOCKED`，並把該客戶的聯絡人標成 blocked（解除封鎖後由 follow 事件還原）。
         LINE 逾時／5xx／網路錯誤 → 502 `INTERNAL`（`retryable: true`）；bot 沒有可用的 token → 503 `INTERNAL`。
       x-status: implemented
@@ -641,7 +665,7 @@ components:
       description: INVALID_URL_DOMAIN 或訊息內容不符受限格式
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
     QuotaExceeded:
-      description: 該 OA 當月推播額度用完（QUOTA_EXCEEDED，當月不可重試）
+      description: 該 OA 當月推播額度用完，或此連結今日的發送預算用完（QUOTA_EXCEEDED，不可立即重試）
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
     RateLimited:
       description: RATE_LIMITED，依 `Retry-After` 重試
