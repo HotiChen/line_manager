@@ -17,6 +17,7 @@ import * as MigrationHandler from "./migration/migrate.js";
 import { openBotStore } from "./lib/bot_store.js";
 import { normalizeMount, stripMount } from "./lib/mount.js";
 import { getMessageStats } from "./lib/message_stats.js";
+import { withFrameProtection } from "./lib/frame_guard.js";
 
 
 import * as tokenHandlers from "./handler/token.js";
@@ -94,9 +95,12 @@ export default {
 
     if (!isApiRequest) {
       try {
-        return await getAssetFromKV(
-          { request: assetRequest, waitUntil: ctx.waitUntil.bind(ctx) },
-          { ASSET_NAMESPACE: env.__STATIC_CONTENT, ASSET_MANIFEST: assetManifest }
+        return withFrameProtection(
+          await getAssetFromKV(
+            { request: assetRequest, waitUntil: ctx.waitUntil.bind(ctx) },
+            { ASSET_NAMESPACE: env.__STATIC_CONTENT, ASSET_MANIFEST: assetManifest }
+          ),
+          pathname
         );
       } catch (e) {
         // 如果找不到靜態資源，且不是 API，則回傳 index.html (SPA routing)
