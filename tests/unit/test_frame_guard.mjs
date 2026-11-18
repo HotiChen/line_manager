@@ -19,6 +19,16 @@ describe('isFrameProtectedPath', () => {
         }
     });
 
+    it('URL 變體（百分比編碼、重複斜線、點段）也算同一頁（審查 L-01）', () => {
+        for (const p of ['/pages/%6Cink_authorize.html', '/pages/link%5Fauthorize.html', '//pages/link_authorize.html', '/pages//link_authorize.html', '/pages/./link_authorize.html', '/pages/x/../link_authorize.html', '/pages/%2e/link_authorize.html', '/PAGES/link_authorize.html']) {
+            assert.equal(isFrameProtectedPath(p), true, p);
+        }
+    });
+
+    it('無法解碼的百分比序列：不丟錯，視為不受保護', () => {
+        assert.equal(isFrameProtectedPath('/pages/%E0%A4%A.html'), false);
+    });
+
     it('非字串 → false', () => {
         assert.equal(isFrameProtectedPath(undefined), false);
         assert.equal(isFrameProtectedPath(null), false);
