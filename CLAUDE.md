@@ -17,6 +17,7 @@ env/config.js        前端環境設定（apiBase、LIFF ID、debug 旗標）
 tests/unit/          後端單元測試（node:test）
 tests/helpers/       測試工具（mock_kv.mjs：記憶體版 KV mock）
                      mock_d1.mjs：Miniflare 真 D1，自動套用 migrations/*.sql
+                     dom_env.mjs：jsdom + 真 DOMPurify（前端 DOM 層測試，見 test_flow_designer_dom.mjs）
 worker_src/bridge/   Bridge（垂直產品整合，BRIDGE_ENABLED=1 才啟用）；設計見 docs/integration/
 migrations/          Bridge 的 D1 遷移，部署後由人在 D1 Console 手動套用
 docs/                文件；docs/archive/ 放過期報告

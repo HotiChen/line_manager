@@ -8,6 +8,7 @@ import {
 import { getUserId } from '../helper/state.js';
 import { toast } from '../helper/toast.js';
 import { ApiClient as api } from '../helper/api.client.js';
+import { escapeHTML as escapeAttr } from '../helper/security.js';
 
 /**
  * 流程設計器資料載入器
@@ -421,7 +422,7 @@ export class FlowDataLoader {
                 <div class="alert alert-warning">
                     <i class="${config.icon}"></i>
                     尚無可用的${config.title}
-                    <button class="btn btn-sm btn-primary mt-2" onclick="dataLoader.reloadData('${type}')">
+                    <button class="btn btn-sm btn-primary mt-2" data-action="reload-data" data-resource-type="${escapeAttr(type)}">
                         <i class="bi bi-arrow-clockwise"></i> 重新載入
                     </button>
                 </div>
@@ -450,7 +451,7 @@ export class FlowDataLoader {
 
         html += `
             </select>
-            <button class="btn btn-sm btn-outline-secondary w-100" onclick="dataLoader.reloadData('${type}')">
+            <button class="btn btn-sm btn-outline-secondary w-100" data-action="reload-data" data-resource-type="${escapeAttr(type)}">
                 <i class="bi bi-arrow-clockwise"></i> 重新載入
             </button>
         `;

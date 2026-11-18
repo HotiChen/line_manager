@@ -117,6 +117,12 @@ export const BotKeys = {
     flowList: (botId) => botKey(botId, 'flow_list'),
     flow: (botId, flowId) => botKey(botId, 'flow', flowId),
     flowVersion: (botId, flowId, version) => botKey(botId, 'flow_version', flowId, String(version)),
+    /**
+     * 「這個人的舊 flow_<userId>_* 資料已經 copy-forward 進這個 bot」的標記。
+     * 有標記之後就不再讀舊 key —— 否則使用者刪掉的流程會從舊 key 復活。
+     * 見 handler/flow.js 的 importLegacyFlows。
+     */
+    flowLegacyImported: (botId, userId) => botKey(botId, 'flow_legacy_imported', userId),
 
     // ── 橋接 API（垂直後端以「系統」身分呼叫）──
     // 系統、service key、冪等紀錄、稽核紀錄在 D1（BRIDGE_DB，見 migrations/）；KV 只留下面兩種高頻、可容忍近似值的資料。
@@ -137,6 +143,11 @@ export const UserKeys = {
     bots: (userId) => userKey(userId, 'bots'),
     profile: (userId) => userKey(userId, 'profile'),
     rateLimit: (userId, windowIndex) => userKey(userId, 'rl', String(windowIndex)),
+    /**
+     * 舊的 flow_<userId>_default_* 沒有 bot 維度（botId 恆為 "default"），
+     * 值是第一個把它 copy-forward 進去的 botId —— 一份舊資料只歸屬一個 bot。
+     */
+    flowLegacyClaim: (userId) => userKey(userId, 'flow_legacy_claim'),
 };
 
 export const InviteKeys = {

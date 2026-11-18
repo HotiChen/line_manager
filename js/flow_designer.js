@@ -8,7 +8,8 @@ import { showLoader, hideLoader } from './shared/loader.js';
 import { dataLoader } from './flow_designer_data_loader.js';
 import FlowNodeAdapter from './flow_node_adapter.js';
 import { ApiClient as api } from '../helper/api.client.js';
-import { setInnerHTML } from '../helper/security.js';
+import { setInnerHTML, escapeHTML as escapeAttr } from '../helper/security.js';
+import { bindActionDelegation, createActionTables } from './flow_designer_actions.js';
 
 function escapeHtml(str) {
     if (typeof str !== 'string') return str;
@@ -210,6 +211,11 @@ export class FlowDesigner {
         this.boundUpdateConnectionDrag = this.updateConnectionDrag.bind(this);
         this.boundEndConnectionDrag = this.endConnectionDrag.bind(this);
 
+        // 事件委派：template 經過 setInnerHTML（DOMPurify）後 inline handler 會被移除，
+        // 一律用 data-action + 容器上的委派 listener（見 flow_designer_actions.js）
+        this.actionTables = createActionTables(this, dataLoader);
+        this.actionRoots = new WeakSet();
+
         this.init();
     }
 
@@ -280,6 +286,8 @@ export class FlowDesigner {
         content.style.position = 'relative';  // 讓 absolute 的選擇框相對於此定位
         this.container.appendChild(content);
         this.canvasContent = content;
+        // capture：要在節點自己的 click / mousedown listener 之前攔截（行為同原本目標元素上的 inline handler）
+        bindActionDelegation(content, this.actionTables.canvas, { capture: true });
 
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         svg.id = 'connections-layer';
@@ -1021,7 +1029,7 @@ export class FlowDesigner {
     }
 
     /**
-     * 渲染節點（簡化版，實際使用 React Flow）
+     * 渲染節點
      */
     renderNode(node) {
         const nodeElement = document.createElement('div');
@@ -1076,10 +1084,10 @@ export class FlowDesigner {
                     <span style="font-weight: bold;">${node.data.label || node.data.name || node.config.label}</span>
                 </div>
                 <div class="node-zoom-controls" style="display: flex; gap: 4px;">
-                    <button onclick="flowDesigner.zoomNode('${node.id}', 0.1); event.stopPropagation();" 
+                    <button data-action="zoom-node" data-node-id="${escapeAttr(node.id)}" data-delta="0.1" 
                             style="width: 20px; height: 20px; border: none; background: #ecf0f1; border-radius: 3px; cursor: pointer; font-size: 12px; line-height: 1;"
                             title="放大">+</button>
-                    <button onclick="flowDesigner.zoomNode('${node.id}', -0.1); event.stopPropagation();" 
+                    <button data-action="zoom-node" data-node-id="${escapeAttr(node.id)}" data-delta="-0.1" 
                             style="width: 20px; height: 20px; border: none; background: #ecf0f1; border-radius: 3px; cursor: pointer; font-size: 12px; line-height: 1;"
                             title="縮小">-</button>
                 </div>
@@ -1090,11 +1098,11 @@ export class FlowDesigner {
         if (node.type === NodeTypes.RICHMENU && node.data.imageUrl) {
             const imageContainerId = `richmenu-img-${node.id}`;
             innerHTML += `
-                <div style="margin-bottom: 8px; position: relative;" id="${imageContainerId}">
-                    <img src="${node.data.imageUrl}" 
+                <div style="margin-bottom: 8px; position: relative;" id="${escapeAttr(imageContainerId)}">
+                    <img src="${escapeAttr(node.data.imageUrl)}" 
                          style="width: 100%; height: auto; border-radius: 4px; border: 1px solid #ddd; display: block;"
-                         alt="${node.data.name}"
-                         onload="flowDesigner.drawRichmenuButtons('${node.id}', '${imageContainerId}')">
+                         alt="${escapeAttr(node.data.name)}"
+                         data-action="draw-richmenu-buttons" data-node-id="${escapeAttr(node.id)}" data-container-id="${escapeAttr(imageContainerId)}">
                 </div>
                 <div style="font-size: 11px; color: #666; margin-bottom: 4px;">
                     <strong>${node.data.name}</strong>
@@ -1119,9 +1127,9 @@ export class FlowDesigner {
             // 添加輸出點
             innerHTML += `
                 <div class="node-output-point"
-                     data-node-id="${node.id}"
+                     data-node-id="${escapeAttr(node.id)}"
                      data-output="default"
-                     onmousedown="event.stopPropagation(); flowDesigner.startConnectionDrag('${node.id}', 'output', event, 'default');"
+                     data-action="start-connection-drag"
                      style="position: absolute; right: -8px; top: 50%; transform: translateY(-50%);
                             width: 16px; height: 16px; background: ${node.config.color};
                             border: 2px solid white; border-radius: 50%; cursor: crosshair;
@@ -1135,12 +1143,12 @@ export class FlowDesigner {
             const imageContainerId = `imagemap-img-${node.id}`;
 
             innerHTML += `
-                <div style="margin-bottom: 8px; position: relative;" id="${imageContainerId}">
-                    <img src="${imagemapImageUrl}" 
+                <div style="margin-bottom: 8px; position: relative;" id="${escapeAttr(imageContainerId)}">
+                    <img src="${escapeAttr(imagemapImageUrl)}" 
                          style="width: 100%; height: auto; border-radius: 4px; border: 1px solid #ddd; display: block; max-width: 280px;"
-                         alt="${node.data.altText || node.data.title || 'Imagemap'}"
-                         onload="flowDesigner.drawImagemapAreas('${node.id}', '${imageContainerId}')"
-                         onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                         alt="${escapeAttr(node.data.altText || node.data.title || 'Imagemap')}"
+                         data-action="draw-imagemap-areas" data-node-id="${escapeAttr(node.id)}" data-container-id="${escapeAttr(imageContainerId)}"
+                         data-error-action="hide-broken-image">
                     <div style="display: none; padding: 20px; background: #f8f9fa; border-radius: 4px; text-align: center; color: #6c757d;">
                         <i class="bi bi-image" style="font-size: 24px;"></i>
                         <div style="font-size: 11px; margin-top: 8px;">圖片載入失敗</div>
@@ -1159,9 +1167,9 @@ export class FlowDesigner {
             // 添加輸出點
             innerHTML += `
                 <div class="node-output-point"
-                     data-node-id="${node.id}"
+                     data-node-id="${escapeAttr(node.id)}"
                      data-output="default"
-                     onmousedown="event.stopPropagation(); flowDesigner.startConnectionDrag('${node.id}', 'output', event, 'default');"
+                     data-action="start-connection-drag"
                      style="position: absolute; right: -8px; top: 50%; transform: translateY(-50%);
                             width: 16px; height: 16px; background: ${node.config.color};
                             border: 2px solid white; border-radius: 50%; cursor: crosshair;
@@ -1181,9 +1189,9 @@ export class FlowDesigner {
             if (node.type !== NodeTypes.END) {
                 innerHTML += `
                     <div class="node-output-point"
-                         data-node-id="${node.id}"
+                         data-node-id="${escapeAttr(node.id)}"
                          data-output="default"
-                         onmousedown="event.stopPropagation(); flowDesigner.startConnectionDrag('${node.id}', 'output', event, 'default');"
+                         data-action="start-connection-drag"
                          style="position: absolute; right: -8px; top: 50%; transform: translateY(-50%);
                                 width: 16px; height: 16px; background: ${node.config.color};
                                 border: 2px solid white; border-radius: 50%; cursor: crosshair;
@@ -2055,13 +2063,14 @@ export class FlowDesigner {
                 <i class="bi bi-search" style="color:#666;"></i>
                 <input type="text" id="flow-search-input" placeholder="搜尋節點名稱、類型…"
                     style="flex:1; border:none; outline:none; font-size:15px;">
-                <button onclick="flowDesigner.hideSearch()"
+                <button data-action="hide-search"
                     style="border:none; background:none; cursor:pointer; color:#aaa; font-size:16px;">✕</button>
             </div>
             <div id="flow-search-results" style="max-height:280px; overflow-y:auto;"></div>
         `; // safe: static search panel skeleton, no user input
         document.body.appendChild(panel);
         this.searchPanel = panel;
+        bindActionDelegation(panel, this.actionTables.search);
 
         const input = panel.querySelector('#flow-search-input');
         input.focus();
@@ -2331,6 +2340,8 @@ export class FlowDesigner {
         // 移除舊的 canvas（如果存在）
         const oldCanvas = container.querySelector('canvas');
         if (oldCanvas) oldCanvas.remove();
+        // 圖片 load 事件重複觸發時，不重複疊加輸出點
+        container.querySelectorAll('.richmenu-connection-point').forEach(el => el.remove());
 
         // 創建 canvas
         const canvas = document.createElement('canvas');
@@ -2471,6 +2482,8 @@ export class FlowDesigner {
         // 移除舊的 canvas（如果存在）
         const oldCanvas = container.querySelector('canvas');
         if (oldCanvas) oldCanvas.remove();
+        // 圖片 load 事件重複觸發時，不重複疊加輸出點
+        container.querySelectorAll('.imagemap-connection-point').forEach(el => el.remove());
 
         // 創建 canvas
         const canvas = document.createElement('canvas');
@@ -2786,12 +2799,16 @@ export class FlowDesigner {
         const properties = document.getElementById('node-properties');
 
         sidebar.classList.add('show');
+        if (!this.actionRoots.has(properties)) {
+            this.actionRoots.add(properties);
+            bindActionDelegation(properties, this.actionTables.panel);
+        }
         setInnerHTML(properties, `
                 <h6><i class="bi ${node.config.icon}"></i> ${node.config.label}</h6>
             <p class="text-muted small">${node.config.description}</p>
             <hr>
             ${this.renderNodeProperties(node)}
-            <button class="btn btn-sm btn-danger w-100 mt-3" onclick="flowDesigner.deleteNode('${nodeId}')">
+            <button class="btn btn-sm btn-danger w-100 mt-3" data-action="delete-node" data-node-id="${escapeAttr(nodeId)}">
                 <i class="bi bi-trash"></i> 刪除節點
             </button>
         `);
@@ -2853,7 +2870,7 @@ export class FlowDesigner {
             
             ${!shouldDisableSelector ? `
                 <button class="btn btn-sm btn-primary w-100 mt-2" 
-                        onclick="flowDesigner.selectRichmenu('${node.id}')">
+                        data-action="select-richmenu" data-node-id="${escapeAttr(node.id)}">
                     <i class="bi bi-arrow-right-circle"></i> 載入 Richmenu
                 </button>
             ` : ''}
@@ -2861,7 +2878,7 @@ export class FlowDesigner {
             ${node.data.buttons.length > 0 ? `
                 <div class="mt-3">
                     <button class="btn btn-sm btn-success w-100" 
-                            onclick="flowDesigner.expandRichmenuButtons(flowDesigner.nodes.find(n => n.id === '${node.id}'))">
+                            data-action="expand-richmenu-buttons" data-node-id="${escapeAttr(node.id)}">
                         <i class="bi bi-diagram-3"></i> 展開所有按鈕
                     </button>
                 </div>
@@ -2887,14 +2904,14 @@ export class FlowDesigner {
             ${dataLoader.renderResourceSelector('flex', node.data.flexId)}
             
             <button class="btn btn-sm btn-primary w-100 mt-2" 
-                    onclick="flowDesigner.selectFlex('${node.id}')">
+                    data-action="select-flex" data-node-id="${escapeAttr(node.id)}">
                 <i class="bi bi-arrow-right-circle"></i> 載入 Flex Message
             </button>
             
             ${node.data.buttons && node.data.buttons.length > 0 ? `
                 <div class="mt-3">
                     <button class="btn btn-sm btn-success w-100" 
-                            onclick="flowDesigner.expandFlexButtons(flowDesigner.nodes.find(n => n.id === '${node.id}'))">
+                            data-action="expand-flex-buttons" data-node-id="${escapeAttr(node.id)}">
                         <i class="bi bi-diagram-3"></i> 自動展開所有按鈕
                     </button>
                 </div>
@@ -2926,7 +2943,7 @@ export class FlowDesigner {
             
             ${!shouldDisableSelector ? `
                 <button class="btn btn-sm btn-primary w-100 mt-2" 
-                        onclick="flowDesigner.selectImagemap('${node.id}')">
+                        data-action="select-imagemap" data-node-id="${escapeAttr(node.id)}">
                     <i class="bi bi-arrow-right-circle"></i> 載入 Imagemap
                 </button>
             ` : ''}
@@ -2934,7 +2951,7 @@ export class FlowDesigner {
             ${node.data.actions && node.data.actions.length > 0 ? `
                 <div class="mt-3">
                     <button class="btn btn-sm btn-success w-100" 
-                            onclick="flowDesigner.expandImagemapButtons(flowDesigner.nodes.find(n => n.id === '${node.id}'))">
+                            data-action="expand-imagemap-buttons" data-node-id="${escapeAttr(node.id)}">
                         <i class="bi bi-diagram-3"></i> 展開所有區域
                     </button>
                 </div>
@@ -2960,7 +2977,7 @@ export class FlowDesigner {
             <div class="mb-3">
                 <label class="form-label">訊息內容</label>
                 <textarea class="form-control" rows="4" id="text-content-${node.id}"
-                          oninput="flowDesigner.updateNodeText('${node.id}', this.value)">${node.data.text || ''}</textarea>
+                          data-action="update-node-text" data-node-id="${escapeAttr(node.id)}">${node.data.text || ''}</textarea>
                 <div class="form-text">最多 2000 字</div>
             </div>
         `;
@@ -2975,19 +2992,19 @@ export class FlowDesigner {
             <div class="message-item mb-2 p-2 border rounded" data-index="${index}">
                 <div class="d-flex justify-content-between align-items-center mb-1">
                     <span class="badge bg-primary">${index + 1}</span>
-                    <button class="btn btn-sm btn-danger" onclick="flowDesigner.removeSequenceMessage('${node.id}', ${index})">
+                    <button class="btn btn-sm btn-danger" data-action="remove-sequence-message" data-node-id="${escapeAttr(node.id)}" data-index="${index}">
                         <i class="bi bi-trash"></i>
                     </button>
                 </div>
                 <div class="mb-1">
-                    <select class="form-select form-select-sm" onchange="flowDesigner.updateMessageType('${node.id}', ${index}, this.value)">
+                    <select class="form-select form-select-sm" data-action="update-message-type" data-node-id="${escapeAttr(node.id)}" data-index="${index}">
                         <option value="text" ${msg.type === 'text' ? 'selected' : ''}>文字訊息</option>
                         <option value="image" ${msg.type === 'image' ? 'selected' : ''}>圖片訊息 (暫未支援)</option>
                     </select>
                 </div>
                 ${msg.type === 'text' ? `
                     <textarea class="form-control form-control-sm" rows="2" 
-                              onchange="flowDesigner.updateMessageContent('${node.id}', ${index}, this.value)">${msg.text || ''}</textarea>
+                              data-action="update-message-content" data-node-id="${escapeAttr(node.id)}" data-index="${index}">${msg.text || ''}</textarea>
                 ` : ''}
             </div>
         `).join('');
@@ -2997,7 +3014,7 @@ export class FlowDesigner {
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <label class="form-label mb-0">訊息列表 (${messages.length}/5)</label>
                     <button class="btn btn-sm btn-success" 
-                            onclick="flowDesigner.addSequenceMessage('${node.id}')"
+                            data-action="add-sequence-message" data-node-id="${escapeAttr(node.id)}"
                             ${messages.length >= 5 ? 'disabled' : ''}>
                         <i class="bi bi-plus-circle"></i> 新增
                     </button>
@@ -3010,7 +3027,7 @@ export class FlowDesigner {
                 <label class="form-label">訊息間延遲（毫秒）</label>
                 <input type="number" class="form-control" min="0" max="5000" step="100"
                        value="${node.data.delay || 0}"
-                       onchange="flowDesigner.updateSequenceDelay('${node.id}', this.value)">
+                       data-action="update-sequence-delay" data-node-id="${escapeAttr(node.id)}">
                 <div class="form-text">0-5000 毫秒</div>
             </div>
         `;
@@ -3023,7 +3040,7 @@ export class FlowDesigner {
         return `
             <div class="mb-3">
                 ${dataLoader.renderResourceSelector('keyword', node.data.keyword)}
-                <button class="btn btn-primary w-100 mt-2" onclick="flowDesigner.selectKeyword('${node.id}')">
+                <button class="btn btn-primary w-100 mt-2" data-action="select-keyword" data-node-id="${escapeAttr(node.id)}">
                     <i class="bi bi-download"></i> 載入 Keyword
                 </button>
             </div>
@@ -3031,13 +3048,13 @@ export class FlowDesigner {
                 <label class="form-label">關鍵字</label>
                 <input type="text" class="form-control" value="${node.data.keyword || ''}"
                        id="keyword-${node.id}"
-                       onchange="flowDesigner.updateNodeKeyword('${node.id}', this.value)" readonly>
+                       data-action="update-node-keyword" data-node-id="${escapeAttr(node.id)}" readonly>
                 <small class="text-muted">從上方選擇關鍵字後載入</small>
             </div>
             <div class="mb-3">
                 <label class="form-label">比對方式</label>
                 <select class="form-select" id="match-type-${node.id}"
-                        onchange="flowDesigner.updateNodeMatchType('${node.id}', this.value)" disabled>
+                        data-action="update-node-match-type" data-node-id="${escapeAttr(node.id)}" disabled>
                     <option value="exact" ${node.data.matchType === 'exact' ? 'selected' : ''}>完全符合</option>
                     <option value="contains" ${node.data.matchType === 'contains' ? 'selected' : ''}>包含</option>
                     <option value="regex" ${node.data.matchType === 'regex' ? 'selected' : ''}>正則表達式</option>
@@ -3057,7 +3074,7 @@ export class FlowDesigner {
                 <input type="number" class="form-control" min="1" max="300"
                        value="${node.data.seconds}"
                        id="delay-${node.id}"
-                       onchange="flowDesigner.updateNodeDelay('${node.id}', this.value)">
+                       data-action="update-node-delay" data-node-id="${escapeAttr(node.id)}">
                 <div class="form-text">1-300 秒</div>
             </div>
         `;
@@ -3071,7 +3088,7 @@ export class FlowDesigner {
             <div class="mb-3">
                 <label class="form-label">操作類型</label>
                 <select class="form-select" id="tag-operation-${node.id}"
-                        onchange="flowDesigner.updateNodeTagOperation('${node.id}', this.value)">
+                        data-action="update-node-tag-operation" data-node-id="${escapeAttr(node.id)}">
                     <option value="add" ${node.data.operation === 'add' ? 'selected' : ''}>新增標籤</option>
                     <option value="remove" ${node.data.operation === 'remove' ? 'selected' : ''}>移除標籤</option>
                 </select>
@@ -3082,7 +3099,7 @@ export class FlowDesigner {
                        placeholder="輸入標籤，用逗號分隔"
                        value="${(node.data.tags || []).join(', ')}"
                        id="tags-${node.id}"
-                       onchange="flowDesigner.updateNodeTags('${node.id}', this.value)">
+                       data-action="update-node-tags" data-node-id="${escapeAttr(node.id)}">
             </div>
         `;
     }

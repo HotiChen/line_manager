@@ -19,9 +19,11 @@
     "@cloudflare/workers-types": "^4.20240529.0",
     "@eslint/js": "^10.0.1",
     "ajv": "^8.20.0",
+    "dompurify": "3.0.6",
     "eslint": "^10.0.1",
     "eslint-plugin-jsdoc": "^62.7.0",
     "globals": "^17.3.0",
+    "jsdom": "26.1.0",
     "typescript": "^5.4.5",
     "wrangler": "^3.57.2",
     "yaml": "^2.9.1"

@@ -10,9 +10,6 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
 
-    <!-- React Flow CSS -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reactflow@11.10.1/dist/style.css">
-
     <!-- Flex2HTML CSS -->
     <link rel="stylesheet" href="../css/flex2html.css">
     <link rel="stylesheet" href="../css/flex-reusable.css">
@@ -69,20 +66,6 @@
             height: 5000px;
             min-width: 100%;
             min-height: 100%;
-        }
-
-        .react-flow__node {
-            background: white;
-            border: 2px solid #3498db;
-            border-radius: 8px;
-            padding: 10px;
-            min-width: 180px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }
-
-        .react-flow__node.selected {
-            border-color: #e74c3c;
-            box-shadow: 0 0 0 2px rgba(231, 76, 60, 0.2);
         }
 
         /* ✅ 多選節點樣式 */
@@ -259,20 +242,6 @@
             border-radius: 4px;
             text-align: left;
             font-size: 12px;
-        }
-
-        .react-flow__handle {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-        }
-
-        .react-flow__handle-left {
-            left: -5px;
-        }
-
-        .react-flow__handle-right {
-            right: -5px;
         }
 
         /* Flex Message 顯示修復 */
@@ -497,10 +466,43 @@
         #flow-canvas.palette-drag-over {
             box-shadow: inset 0 0 0 3px rgba(52, 152, 219, 0.5);
         }
+
+        /* 草圖模式提示：靜態文字，不攔截操作；深色模式下維持足夠對比 */
+        .draft-mode-notice {
+            position: fixed;
+            top: 66px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1400;
+            max-width: calc(100vw - 32px);
+            padding: 4px 12px;
+            border: 1px solid #ffe69c;
+            border-radius: 999px;
+            background: #fff3cd;
+            color: #664d03;
+            font-size: 12px;
+            line-height: 1.5;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+            pointer-events: none;
+            user-select: none;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .draft-mode-notice {
+                border-color: #997404;
+                background: #3d3000;
+                color: #ffe69c;
+            }
+        }
     </style>
 </head>
 
 <body>
+    <div id="draft-mode-notice" class="draft-mode-notice" role="note">
+        <i class="bi bi-pencil-square" aria-hidden="true"></i>
+        草圖模式（目前儲存的流程不會被執行）
+    </div>
+
     <div id="container">
         <!-- 工具列 -->
         <div id="toolbar">
@@ -727,11 +729,6 @@
             };
         }
     </script>
-
-    <!-- React & React Flow (CDN) -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/reactflow@11.10.1/dist/umd/index.js"></script>
 
     <!-- Bootstrap -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>

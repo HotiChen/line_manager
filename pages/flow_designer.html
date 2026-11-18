@@ -2,6 +2,11 @@
 <div class="container-fluid h-100" style="height: calc(100vh - 80px);">
     <div class="row h-100">
         <div class="col-12 h-100">
+            <div id="draft-mode-notice" class="draft-mode-notice" role="note">
+                <i class="bi bi-pencil-square" aria-hidden="true"></i>
+                草圖模式（目前儲存的流程不會被執行）
+            </div>
+
             <!-- Flow Designer 畫布容器 -->
             <div id="flow-canvas-wrapper" style="height: 100%; position: relative; background: #f5f5f5;">
                 <!-- 工具列 -->
@@ -101,22 +106,36 @@
 
 <!-- 載入必要的 CSS -->
 <style>
+    /* 草圖模式提示：靜態文字，不攔截操作；深色模式下維持足夠對比 */
+    .draft-mode-notice {
+        position: fixed;
+        top: 66px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 1400;
+        max-width: calc(100vw - 32px);
+        padding: 4px 12px;
+        border: 1px solid #ffe69c;
+        border-radius: 999px;
+        background: #fff3cd;
+        color: #664d03;
+        font-size: 12px;
+        line-height: 1.5;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+        pointer-events: none;
+        user-select: none;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        .draft-mode-notice {
+            border-color: #997404;
+            background: #3d3000;
+            color: #ffe69c;
+        }
+    }
+
     #flow-canvas.panning {
         cursor: grabbing;
-    }
-
-    .react-flow__node {
-        background: white;
-        border: 2px solid #3498db;
-        border-radius: 8px;
-        padding: 10px;
-        min-width: 180px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    }
-
-    .react-flow__node.selected {
-        border-color: #e74c3c;
-        box-shadow: 0 0 0 2px rgba(231, 76, 60, 0.2);
     }
 
     .node-richmenu {
