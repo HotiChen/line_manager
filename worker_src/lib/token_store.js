@@ -18,6 +18,14 @@
  *   getAccessTokenForDestination webhook 用 destination 反查（1 處）
  *   saveAccessToken              寫入，一律加密
  *
+ * 後來又加了兩個，因為「當前選定專案」本身就是 bug 的來源（見下方
+ * getAccessTokenForStore 的註解）：
+ *
+ *   getAccessTokenForStore       以一個 BotStore 已確定的 botId 為準
+ *   getAccessTokenForCurrentBot  沒有 store 時自己解析一次 botId
+ *
+ * 新程式一律用這兩個；getCurrentAccessToken 留著給它們當退路。
+ *
  * 資料結構（維持不變，只有 token 欄位的內容從明文變密文）：
  *
  *   access_tokens_${userId} = { [project]: { token, destination, displayName } }
@@ -25,6 +33,7 @@
  */
 import { V1Keys } from './kv_schema.js';
 import { decryptToken, encryptToken } from './token_crypto.js';
+import { resolveBotId } from './bot_context.js';
 
 /**
  * 從一筆 project 資料裡取出 token 欄位。
@@ -95,6 +104,79 @@ export async function getAccessTokenForDestination(env, userId, destination) {
         return { token: await decryptToken(env, stored), projectName };
     }
     return { token: null, projectName: null };
+}
+
+/**
+ * 一個 bot（destination）的 token，查不到就是 null。
+ */
+async function tokenForBot(env, userId, botId) {
+    const { token } = await getAccessTokenForDestination(env, userId, botId);
+    return token;
+}
+
+/** key 組件的最低要求，跟 bot_context / bot_store 一致 */
+function usableId(value) {
+    return typeof value === 'string' && value !== '';
+}
+
+/**
+ * 一個 BotStore 所屬 bot 的 access token（已解密）。
+ *
+ * ## 為什麼不能用 getCurrentAccessToken
+ *
+ * 資料與 token 的「是哪個官方帳號」來自兩條不同的路：
+ *
+ *   資料（bot_store）  botId —— webhook 是事件的 destination，後台是使用者選的 bot
+ *   token             current_token_${userId} —— 使用者在後台選的「專案名稱」
+ *
+ * 正常情況兩者一致，所以平常看不出來。錯開的時候也不會報錯，只是把
+ * 請求送到別的官方帳號去：
+ *
+ *   - 推播：名單是 A 帳號的會員，token 是 B 帳號的 → LINE 回 400
+ *     Invalid user id，而後台畫面上一切正常。
+ *   - webhook：A 帳號有人加好友，store 的 botId 正確是 A，但 token 讀的是
+ *     owner 此刻在後台選的 B → 圖文選單掛到錯的帳號上去。
+ *
+ * 所以 token 跟著資料走，以 store 的 botId 為準。
+ *
+ * ## 兩種回 null 的情況，意思不一樣
+ *
+ *   botId 算不出來  → 退回 current_token。那是舊資料的常態（access_tokens
+ *                     的值是字串、沒有 destination），不是錯開，退回去才不退步。
+ *   botId 有、但那個 bot 沒登記 token → null，不退回 current_token。
+ *     這時退回去等於把上面那個 bug 原封不動放回來：呼叫端寧可收到
+ *     「沒有 token」這個誠實的錯誤，也不要安靜地操作到別人的帳號。
+ *     補救方式是在後台把那個帳號的 access token 重新存一次。
+ *
+ * @param {{env: Object, userId: string|null, botId: string|null}} store
+ * @returns {Promise<string|null>}
+ */
+export async function getAccessTokenForStore(store) {
+    if (!store || !store.env || !usableId(store.userId)) return null;
+    const { env, userId, botId } = store;
+    if (!usableId(botId)) return getCurrentAccessToken(env, userId);
+    return tokenForBot(env, userId, botId);
+}
+
+/**
+ * 這個使用者「當下選定的 bot」的 access token（已解密）。
+ *
+ * 給手上沒有 BotStore 的呼叫端用 —— 它自己解析一次 botId，語意與
+ * getAccessTokenForStore 相同（包含 fail-closed 的部分）。
+ *
+ * 已經有 store 的地方請用 getAccessTokenForStore：webhook 路徑的 botId 是
+ * 事件的 destination，重新解析一次會得到「owner 現在選的 bot」，也就是
+ * 這兩個函式要避免的那個錯。
+ *
+ * @param {Object} env
+ * @param {string} userId
+ * @returns {Promise<string|null>}
+ */
+export async function getAccessTokenForCurrentBot(env, userId) {
+    if (!env || !env.KV_LINE_STORAGE || !usableId(userId)) return null;
+    const botId = await resolveBotId(env, userId);
+    if (!botId) return getCurrentAccessToken(env, userId);
+    return tokenForBot(env, userId, botId);
 }
 
 /**

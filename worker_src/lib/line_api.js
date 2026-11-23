@@ -1,14 +1,14 @@
-import { getCurrentAccessToken } from "./token_store.js";
-
 /**
- * 當前專案的 access token。
+ * token 的取得一律走 lib/token_store.js。
  *
- * 實作在 lib/token_store.js —— 讀寫一律走那裡，因為 token 現在是加密存放，
- * 解密邏輯不可散落（見該檔案開頭的說明）。
+ * 這裡原本有一個 `getAccessToken(env, userId)` 轉呼 getCurrentAccessToken，
+ * 名字看起來像「取 token」，實際上取的是「使用者在後台選的那個專案」的
+ * token —— 跟資料所屬的 bot 無關。兩者錯開時不會報錯，只是把請求送到別的
+ * 官方帳號去（見 token_store.js 的 getAccessTokenForStore）。
+ *
+ * 名字沒有說出這個陷阱，所以把它移掉而不是留著：手上有 store 的用
+ * getAccessTokenForStore，沒有的用 getAccessTokenForCurrentBot。
  */
-export async function getAccessToken(env, userId) {
-    return getCurrentAccessToken(env, userId);
-}
 
 /**
  * LINE API 回了非 2xx。

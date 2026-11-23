@@ -1,5 +1,5 @@
 import { jsonResponse, getCorsHeaders } from "../lib/utils.js";
-import { getAccessTokenForProject, getCurrentAccessToken } from "../lib/token_store.js";
+import { getAccessTokenForProject, getAccessTokenForCurrentBot } from "../lib/token_store.js";
 
 // LINE 的硬上限。超過這些值 LINE 會回 400，與其浪費一次往返不如先擋。
 const CHAT_BAR_TEXT_MAX = 14;
@@ -305,9 +305,13 @@ export async function handleBatchSetAlias(request, env, userId) {
 /**
  * getActiveToken
  * 取得當前用戶啟用的 Token (封裝重複邏輯)
+ *
+ * 以「使用者當下選定的 bot」為準，而不是 current_token 指的專案 ——
+ * 兩者錯開時會把圖文選單建到另一個官方帳號去，而且不會報錯。
+ * 詳見 token_store.js 的 getAccessTokenForStore。
  */
 async function getActiveToken(env, userId) {
-  return getCurrentAccessToken(env, userId);
+  return getAccessTokenForCurrentBot(env, userId);
 }
 
 /**

@@ -8,7 +8,7 @@
 import { jsonResponse } from '../lib/utils.js';
 import { getTierConfig, updateTierConfig, setMemberTier, getTierStatistics, applyTierRichMenu } from '../lib/tier_system.js';
 import * as logger from '../utils/logger.js';
-import { getCurrentAccessToken } from '../lib/token_store.js';
+import { getAccessTokenForStore } from '../lib/token_store.js';
 import { openBotStore } from '../lib/bot_store.js';
 
 /**
@@ -74,7 +74,7 @@ export async function handleSetMemberTier(request, env, userId) {
             const config = await getTierConfig(store);
             if (config.benefits?.richMenu?.enabled) {
                 try {
-                    const accessToken = await getCurrentAccessToken(env, userId);
+                    const accessToken = await getAccessTokenForStore(store);
 
                     if (accessToken) {
                         // 不需要 await，在背景執行即可

@@ -2,7 +2,7 @@
  * Segmented Rich Menu Logic
  * 負責根據會員標籤自動切換圖文選單
  */
-import { getAccessToken } from "./line_api.js";
+import { getAccessTokenForStore } from "./token_store.js";
 import * as logger from "../utils/logger.js";
 import { linkRichMenuToUser, unlinkRichMenuFromUser } from "./line_client.js";
 
@@ -36,8 +36,11 @@ export async function syncMemberRichMenu(store, memberId) {
             }
         }
 
-        // 4. 取得 Access Token（token 的存放仍以 owner 為 key）
-        const token = await getAccessToken(store.env, store.userId);
+        // 4. 取得 Access Token —— 必須是 store 所屬那個 bot 的。
+        // 這裡走的是 webhook 路徑：store.botId 是事件的 destination，而
+        // owner 此刻在後台可能選著另一個帳號。用「當前選定」的 token 會把
+        // 選單掛到錯的官方帳號上去。
+        const token = await getAccessTokenForStore(store);
         if (!token) {
             logger.error('SEGMENTED_RM', '找不到 Access Token');
             return;

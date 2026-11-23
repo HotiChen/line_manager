@@ -1,5 +1,6 @@
 import { jsonResponse } from "../lib/utils.js";
-import { getAccessToken, pushMessage } from "../lib/line_api.js";
+import { pushMessage } from "../lib/line_api.js";
+import { getAccessTokenForStore } from "../lib/token_store.js";
 import { incrementMessageCount } from "../lib/message_stats.js";
 import { openBotStore } from "../lib/bot_store.js";
 
@@ -11,12 +12,15 @@ export async function handleSendPushMessage(request, env, userId) {
             return jsonResponse({ success: false, error: "Missing 'to' or 'messages' (array)" }, 400);
         }
 
-        const token = await getAccessToken(env, userId);
+        // store 先開：token 要跟著資料所屬的 bot 走，不是跟著 current_token。
+        // 兩者錯開時推播會送到別的官方帳號，LINE 回 400 Invalid user id，
+        // 而收件人名單（同一個 store）看起來完全正常。
+        const store = await openBotStore(env, userId);
+
+        const token = await getAccessTokenForStore(store);
         if (!token) {
             return jsonResponse({ success: false, error: "No active LINE token found" }, 401);
         }
-
-        const store = await openBotStore(env, userId);
 
         // 🔹 變數替換邏輯 (Variable Replacement)
         // 取得會員資料

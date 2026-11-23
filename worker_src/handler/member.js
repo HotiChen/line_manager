@@ -3,7 +3,7 @@ import { jsonResponse } from "../lib/utils.js";
 import { addTagsToEntity, removeTagsFromEntity } from "../lib/tag_system.js";
 import { syncMemberRichMenu } from "../lib/segmented_richmenu_logic.js";
 import { applyTierRichMenu, getTierConfig } from "../lib/tier_system.js";
-import { getCurrentAccessToken } from "../lib/token_store.js";
+import { getAccessTokenForStore } from "../lib/token_store.js";
 import { openBotStore } from "../lib/bot_store.js";
 import { withPermission } from "../middleware/permission.js";
 import { handleSeedDemoMembers, handleClearDemoMembers } from "./member_demo.js";
@@ -119,7 +119,7 @@ async function handleTierRichMenuSync(store, memberId, tier) {
   if (!isBenefitEnabled) return;
 
   try {
-    const accessToken = await getCurrentAccessToken(store.env, store.userId);
+    const accessToken = await getAccessTokenForStore(store);
 
     if (accessToken) {
       await applyTierRichMenu(store, memberId, tier, accessToken);

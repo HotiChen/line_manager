@@ -8,7 +8,7 @@
  */
 import * as logger from '../utils/logger.js';
 import { linkRichMenuToUser, unlinkRichMenuFromUser } from './line_client.js';
-import { getCurrentAccessToken } from './token_store.js';
+import { getAccessTokenForStore } from './token_store.js';
 
 const DEFAULT_TIER_CONFIG = {
     upgradeRules: {
@@ -181,8 +181,8 @@ export async function checkTierUpgrade(store, lineUserId) {
 }
 
 async function syncTierRichMenu(store, lineUserId, tierId) {
-    // token 的存放不在 bot_store 的管轄範圍（見 token_store.js），仍以 owner 為 key
-    const accessToken = await getCurrentAccessToken(store.env, store.userId);
+    // token 以 store 所屬的 bot 為準（見 token_store.js 的 getAccessTokenForStore）
+    const accessToken = await getAccessTokenForStore(store);
     if (accessToken) {
         await applyTierRichMenu(store, lineUserId, tierId, accessToken);
     }
