@@ -76,13 +76,6 @@ async function recordMemberInteraction(event, store, accessToken, botId) {
                 lastInteraction: new Date().toISOString()
             };
             withBotId(profile, botId);
-
-            // 更新會員列表
-            const list = await store.getOr('members', []);
-            if (!list.includes(lineUserId)) {
-                list.push(lineUserId);
-                await store.put('members', list);
-            }
             logger.info('RECORD_MEMBER', '新會員資料已建立');
         } else {
             profile.status = "active";
@@ -94,6 +87,22 @@ async function recordMemberInteraction(event, store, accessToken, botId) {
         }
 
         await store.put('member', profile, lineUserId);
+
+        // 列表是純索引，兩個分支都補 —— 新舊都走同一段。
+        //
+        // 只在「新會員」分支維護列表的話，一旦列表與 profile 不同步
+        // （清資料只清了列表、回填只補了 profile、或任一邊寫入失敗），
+        // 之後每次 follow 都會因為讀得到 profile 而走「現有會員」分支：
+        // profile 更新成 active，列表卻永遠不會再長出這個 id ——
+        // 而後台的會員名單讀的是列表。那個狀態無法自我修復，
+        // 再封鎖再解除也一樣，只剩手動 /member/save 一條路。
+        const list = await store.getOr('members', []);
+        if (!list.includes(lineUserId)) {
+            list.push(lineUserId);
+            await store.put('members', list);
+            logger.info('RECORD_MEMBER', `會員列表已補上 ${lineUserId}`);
+        }
+
         logger.info('RECORD_MEMBER', '會員資料已儲存至 KV');
         return profile;
     } catch (error) {
