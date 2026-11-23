@@ -14,7 +14,9 @@
 //   - 標籤節點收集標籤動作；結束節點停止
 //   - LINE 一次回覆最多 5 則，超過的截斷並標記 truncated
 
-export const MAX_REPLY_MESSAGES = 5;
+import { LINE_MAX_MESSAGES } from '../../js/shared/message_core.js';
+
+export const MAX_REPLY_MESSAGES = LINE_MAX_MESSAGES;
 export const MAX_STEPS = 50;
 export const POSTBACK_PREFIX = 'flow:';
 export const MAX_DELAY_SECONDS = 24 * 60 * 60;

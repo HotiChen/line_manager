@@ -12,13 +12,12 @@
 
 import * as logger from '../utils/logger.js';
 import { BotKeys, FlowJobKeys } from './kv_schema.js';
-import { formatReplyMessage, normalizeImagemapActions, replyWithRetry } from './line_client.js';
-import { pushMessage } from './line_api.js';
+import { formatReplies, finalizeMessages, sendMessages } from './message_pipeline.js';
+import { usesVariables } from '../../js/shared/message_core.js';
 import { incrementMessageCount } from './message_stats.js';
 import { getAccessTokenForDestination } from './token_store.js';
 import { openBotStoreFor } from './bot_store.js';
-import { replaceMessageVariables, loadVariableContext } from './message_variables.js';
-import { getQuickReplyTemplate } from './quick_reply.js';
+import { loadVariableContext } from './message_variables.js';
 import { callApi, flattenApiResult, MAX_API_CALLS } from './flow_api.js';
 import { findTrigger, runFrom, runTrigger, runButton, parseFlowPostback, MAX_DELAY_SECONDS } from './flow_runtime.js';
 
@@ -93,23 +92,20 @@ async function deliver(result, c) {
     }
 
     // 2. 格式化訊息、替換變數、Quick Reply
-    const formatted = await Promise.all(result.messages.map((m) => formatReplyMessage(m, env, userId)));
-    const messages = formatted.filter(Boolean).map(normalizeImagemapActions);
+    const messages = await formatReplies(result.messages, env, userId);
 
     if (messages.length) {
-        const usesVariables = messages.some((m) => /\(@/.test(`${m.text || ''}${m.altText || ''}`));
-        if (usesVariables || Object.keys(extra).length) {
-            const base = usesVariables ? await loadVariableContext(store, lineUserId, accessToken) : {};
-            replaceMessageVariables(messages, { ...base, extra });
-        }
-        if (result.quickReplyId) {
-            const quickReply = await getQuickReplyTemplate(store, result.quickReplyId);
-            if (quickReply) messages[messages.length - 1].quickReply = quickReply;
-        }
+        // 有 (@xxx) 變數才多查一次 LINE profile / 等級；API 結果（extra）不需要額外查詢
+        const needsProfile = usesVariables(messages);
+        const base = needsProfile ? await loadVariableContext(store, lineUserId, accessToken) : {};
+        await finalizeMessages(messages, {
+            variables: needsProfile || Object.keys(extra).length ? { ...base, extra } : null,
+            store,
+            quickReplyId: result.quickReplyId,
+        });
 
-        if (replyToken) await replyWithRetry(replyToken, messages, accessToken);
-        else await pushMessage(accessToken, lineUserId, messages);
-        await incrementMessageCount(store, replyToken ? 'reply' : 'push');
+        const how = await sendMessages(messages, { replyToken, to: lineUserId, accessToken });
+        await incrementMessageCount(store, how);
     }
 
     // 3. 標籤、延遲排程：回覆已經送出，這兩步失敗只記錄，不重送

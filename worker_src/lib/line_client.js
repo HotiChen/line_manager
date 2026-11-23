@@ -1,6 +1,7 @@
 /**
  * LINE API Client 封裝
  */
+import { toLineMessage, validateMessage, normalizeImagemapActions } from '../../js/shared/message_core.js';
 import * as logger from '../utils/logger.js';
 import { openBotStore } from './bot_store.js';
 
@@ -49,86 +50,27 @@ export async function formatReplyMessage(reply, env, userId) {
         return null;
     }
 
-    switch (reply.type) {
-        case 'text':
-            return { type: 'text', text: reply.text };
-
-        case 'flex': {
-            let contents = reply.contents;
-            // 如果只有 id，嘗試從 KV 抓取
-            if (!contents && reply.id) {
-                // 原本讀的是 `bot:${userId}:flex_list` —— 把 userId 放進了 botId 的
-                // 位置，所以這個 key 永遠對不到任何東西（真正的 key 是
-                // `bot:${botId}:flex_list` 或舊的 `flex_list_${userId}`）。
-                // 結果是：webhook 回覆裡用 id 指定的 Flex 訊息一律被當成內容缺失丟掉。
-                const store = await openBotStore(env, userId);
-                const flexList = await store.getOr('flexList', []);
-                const found = Array.isArray(flexList) ? flexList.find(f => f.id === reply.id) : null;
-                if (found) contents = found.contents;
-            }
-            if (!contents) {
-                logger.warn('LINE_CLIENT', `Flex 訊息內容缺失: ${reply.id || '未知 ID'}`);
-                return null;
-            }
-            return {
-                type: 'flex',
-                altText: reply.altText || '您收到了一則 Flex 訊息',
-                contents: contents
-            };
-        }
-
-        case 'image': {
-            // LINE 要求 https；其他協定（含 http）一律丟掉，不送出去讓整則回覆失敗
-            const original = String(reply.originalContentUrl || '');
-            const preview = String(reply.previewImageUrl || original);
-            if (!/^https:\/\//i.test(original) || !/^https:\/\//i.test(preview)) return null;
-            return { type: 'image', originalContentUrl: original, previewImageUrl: preview };
-        }
-
-        case 'imagemap': {
-            // 🧩 支援 Imagemap 重導向 (某些開發環境需要)
-            const baseUrl = reply.baseUrl || '';
-            const finalBaseUrl = baseUrl.startsWith('http')
-                ? "https://pinti-line-imagemap-url-redirect.hotichen.workers.dev/?uri=" + baseUrl.replace(/\.jpg$/, "")
-                : baseUrl;
-
-            return {
-                type: 'imagemap',
-                baseUrl: finalBaseUrl,
-                altText: reply.altText || '您收到了一則圖卡訊息',
-                baseSize: reply.baseSize,
-                actions: reply.actions
-            };
-        }
-
-        default:
-            logger.warn('LINE_CLIENT', `不支援的訊息類型: ${reply.type}`);
-            return null;
-    }
-}
-
-/**
- * 正規化 Imagemap Actions (LINE 要求 type 為 message 或 uri)
- * 
- * Pre-conditions:
- * - 無特別限制
- */
-export function normalizeImagemapActions(msg) {
-    if (!msg || typeof msg !== 'object' || msg.type !== 'imagemap' || !Array.isArray(msg.actions)) {
-        return msg;
+    let resolved = reply;
+    // Flex 只存了 id：從 KV 查回內容
+    if (reply.type === 'flex' && !reply.contents && reply.id) {
+        // 原本讀的是 `bot:${userId}:flex_list` —— 把 userId 放進了 botId 的位置，
+        // 所以這個 key 永遠對不到任何東西；bot_store 的雙讀會處理新舊命名空間。
+        const store = await openBotStore(env, userId);
+        const flexList = await store.getOr('flexList', []);
+        const found = Array.isArray(flexList) ? flexList.find(f => f.id === reply.id) : null;
+        if (found) resolved = { ...reply, contents: found.contents };
     }
 
-    const normalizedMsg = { ...msg };
-    normalizedMsg.actions = msg.actions.map(action => {
-        // 如果 type 是 keyword，轉為 message
-        if (action.type === 'keyword') {
-            return { ...action, type: 'message', text: action.text || action.keyword };
-        }
-        return action;
-    });
-
-    return normalizedMsg;
+    // 驗證與轉換的規則都在 js/shared/message_core.js
+    const message = toLineMessage(resolved);
+    if (!message) {
+        logger.warn('LINE_CLIENT', `訊息無法格式化（${validateMessage(resolved)}）: ${reply.id || reply.type}`);
+    }
+    return message;
 }
+
+// 相容：舊程式從這裡 import
+export { normalizeImagemapActions };
 
 /**
  * 發送回覆 (具備重試機制)
