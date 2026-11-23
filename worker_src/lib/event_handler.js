@@ -16,6 +16,8 @@
 import * as logger from '../utils/logger.js';
 import { findMatchingKeyword } from './keyword_matcher.js';
 import { tryHandleFlowMessage, tryHandleFlowPostback } from './flow_dispatch.js';
+import { replaceMessageVariables } from './message_variables.js';
+import { getQuickReplyTemplate } from './quick_reply.js';
 import { formatReplyMessage, getLineUserProfile, normalizeImagemapActions, replyWithRetry } from './line_client.js';
 import { incrementMessageCount } from './message_stats.js';
 import { syncMemberRichMenu } from './segmented_richmenu_logic.js';
@@ -100,84 +102,6 @@ async function recordMemberInteraction(event, store, accessToken, botId) {
     } catch (error) {
         logger.error('RECORD_MEMBER', `記錄會員互動失敗: ${error.message}`, error);
         throw error; // 重新拋出讓上層處理
-    }
-}
-/**
- * 替換訊息中的變數
- * 支援: (@name), (@tier), (@tier_name), (@tier_icon), (@date), (@time), (@day), (@year), (@month)
- */
-function replaceMessageVariables(messages, variables) {
-    const { userName, tierInfo } = variables;
-
-    // 取得時間資訊 (台灣時間 UTC+8)
-    const now = new Date();
-    const twTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-
-    const year = twTime.getUTCFullYear();
-    const month = twTime.getUTCMonth() + 1;
-    const date = twTime.getUTCDate();
-    const hours = String(twTime.getUTCHours()).padStart(2, '0');
-    const minutes = String(twTime.getUTCMinutes()).padStart(2, '0');
-
-    const days = ['日', '一', '二', '三', '四', '五', '六'];
-    const dayOfWeek = days[twTime.getUTCDay()];
-
-    // 替換變數對照表 (確保所有值皆為字串)
-    const replacements = {
-        '(@name)': String(userName || '用戶'),
-        '(@tier)': String(tierInfo?.tierTitle || '親愛的'),
-        '(@tier_name)': String(tierInfo?.tierName || '新手'),
-        '(@tier_icon)': String(tierInfo?.tierIcon || '🌱'),
-        '(@date)': String(`${year}/${month}/${date}`),
-        '(@time)': String(`${hours}:${minutes}`),
-        '(@day)': String(`星期${dayOfWeek}`),
-        '(@year)': String(year),
-        '(@month)': String(month),
-    };
-
-    for (const msg of messages) {
-        if (msg.type === 'text' && msg.text) {
-            for (const [key, value] of Object.entries(replacements)) {
-                // 將 (@name) 轉為 \(@name\) 以便於正則匹配
-                const escapedKey = key.replace(/[()]/g, '\\$&');
-                msg.text = msg.text.replace(new RegExp(escapedKey, 'gi'), value);
-            }
-        }
-        if (msg.type === 'flex' && msg.altText) {
-            for (const [key, value] of Object.entries(replacements)) {
-                const escapedKey = key.replace(/[()]/g, '\\$&');
-                msg.altText = msg.altText.replace(new RegExp(escapedKey, 'gi'), value);
-            }
-        }
-    }
-
-    return messages;
-}
-/**
- * 取得 Quick Reply 模板
- */
-async function getQuickReplyTemplate(store, qrId) {
-    try {
-        // 原本在這裡試三個 key，其中 `bot:${userId}:quick_replies` 把 userId
-        // 放進了 botId 的位置，永遠對不到。bot_store 的雙讀取代了這整段。
-        const qrList = await store.getOr('quickReplies', []);
-        logger.info('QR', `共 ${qrList.length} 個模板`);
-        const qr = Array.isArray(qrList) ? qrList.find(q => q.id === qrId) : null;
-        if (!qr || !qr.items || qr.items.length === 0) {
-            logger.debug('QR', `Quick Reply 模板 ${qrId} 不存在或無項目`);
-            return null;
-        }
-
-        logger.info('QR', `取得 Quick Reply 模板: ${qr.name}, ${qr.items.length} 個按鈕`);
-        return {
-            items: qr.items.map(item => ({
-                type: 'action',
-                action: item.action
-            }))
-        };
-    } catch (err) {
-        logger.error('QR', '取得 Quick Reply 模板失敗', err);
-        return null;
     }
 }
 /**

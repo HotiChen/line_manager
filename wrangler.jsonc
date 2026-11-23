@@ -2,6 +2,9 @@
   "name": "pinti-line",
   "compatibility_date": "2025-04-13",
   "main": "worker_src/index.js",
+  // 每分鐘執行一次：處理 flow「延遲」節點到期的工作（worker_src/index.js 的 scheduled）。
+  // 延遲的精確度因此約為 1 分鐘。Cron 不需要付費方案。
+  "triggers": { "crons": ["* * * * *"] },
   "kv_namespaces": [
     {
       "id": "7cbba24c35ad464d875ef1fc5107604e",
@@ -51,6 +54,8 @@
   "env": {
     "dev": {
       "name": "pinti-line-dev",
+      // triggers 不會從頂層繼承，dev 要另外設定
+      "triggers": { "crons": ["* * * * *"] },
       "kv_namespaces": [
         {
           // dev 專用 namespace（title: pinti-line-dev-dev-KV_LINE_STORAGE）。

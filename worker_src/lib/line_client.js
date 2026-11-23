@@ -77,6 +77,14 @@ export async function formatReplyMessage(reply, env, userId) {
             };
         }
 
+        case 'image': {
+            // LINE 要求 https；其他協定（含 http）一律丟掉，不送出去讓整則回覆失敗
+            const original = String(reply.originalContentUrl || '');
+            const preview = String(reply.previewImageUrl || original);
+            if (!/^https:\/\//i.test(original) || !/^https:\/\//i.test(preview)) return null;
+            return { type: 'image', originalContentUrl: original, previewImageUrl: preview };
+        }
+
         case 'imagemap': {
             // 🧩 支援 Imagemap 重導向 (某些開發環境需要)
             const baseUrl = reply.baseUrl || '';

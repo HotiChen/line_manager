@@ -210,3 +210,20 @@ export const LegacyKeys = {
     userKeywords: (userId) => `${KV_PREFIX.LEGACY}:user:${userId}:keywords`,
     userFlexList: (userId) => `${KV_PREFIX.LEGACY}:user:${userId}:flex_list`,
 };
+
+/**
+ * Flow 延遲工作（跨 bot 的排程佇列，所以不放在 bot 命名空間底下）
+ * key 依到期時間（毫秒、補零）排序，cron 從最前面取到「還沒到期」為止。
+ */
+export const FlowJobKeys = {
+    prefix: 'flow_job:',
+    key: (runAtMs, id) => `flow_job:${String(Math.floor(runAtMs)).padStart(15, '0')}:${id}`,
+    /** @returns {number|null} */
+    parseRunAt: (name) => {
+        const m = /^flow_job:(\d{15}):/.exec(String(name));
+        return m ? Number(m[1]) : null;
+    },
+    /** 同一個使用者在同一個延遲節點等待期間只排一個工作 */
+    gate: (botId, lineUserId, flowId, startIds) =>
+        `flow_jobgate:${botId}:${lineUserId}:${flowId}:${[...startIds].sort().join(',')}`,
+};

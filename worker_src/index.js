@@ -31,6 +31,7 @@ import * as segmentedRichMenuHandlers from "./handler/segmented_richmenu.js";
 import { handleTagQueue } from "./queue/tag_consumer.js";
 import * as TierHandler from "./handler/tier.js";
 import * as FlowHandler from "./handler/flow.js";
+import { runDueFlowJobs } from "./lib/flow_dispatch.js";
 import { isBridgePath, isBridgeEnabled, handleBridge } from "./bridge/index.js";
 
 
@@ -200,5 +201,10 @@ export default {
   // 🆕 Queue Consumer Handler
   async queue(batch, env) {
     return handleTagQueue(batch, env);
+  },
+
+  // Cron（wrangler.jsonc 的 triggers.crons，每分鐘）：執行 flow 到期的延遲工作
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runDueFlowJobs(env));
   }
 };
