@@ -61,8 +61,13 @@ export async function tryHandleFlowMessage(ctx) {
     const trigger = findTrigger(published, event.message && event.message.text);
     if (!trigger) return false;
 
+    const result = runTrigger(published, trigger);
+    // 命中但流程沒有任何東西可回（例如從 Richmenu 按鈕展開、還沒接回覆的關鍵字節點）：
+    // 交回「關鍵字回覆」，不能攔下訊息卻什麼都不回
+    if (!result.messages.length && !result.tags.add.length && !result.tags.remove.length) return false;
+
     logger.info('FLOW', `命中已發布流程「${published.name}」的關鍵字「${trigger.keyword}」`);
-    await deliver(runTrigger(published, trigger), ctx);
+    await deliver(result, ctx);
     return true;
 }
 

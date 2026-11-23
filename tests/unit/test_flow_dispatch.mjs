@@ -69,6 +69,22 @@ describe('tryHandleFlowMessage', () => {
         assert.equal(replies.length, 0);
     });
 
+    it('命中但流程沒有任何可回的東西 → false，交回關鍵字回覆（不可攔下卻不回）', async () => {
+        const r = compileFlow({ id: 'f2', name: 'x', nodes: [node('k', 'keyword', { keyword: '客服' })], edges: [] }, { botId: BOT });
+        await env.KV_LINE_STORAGE.put(BotKeys.flowPublished(BOT), JSON.stringify(r.published));
+        assert.equal(await tryHandleFlowMessage(ctx(textEvent('客服'))), false);
+        assert.equal(replies.length, 0);
+    });
+
+    it('只有標籤動作、沒有回覆 → 仍算 flow 處理（套標籤）', async () => {
+        store.members.set(MEMBER, { tags: [] });
+        const r = compileFlow({ id: 'f3', name: 'x', nodes: [node('k', 'keyword', { keyword: '訂閱' }), node('g', 'action_tag', { operation: 'add', tags: ['VIP'] })], edges: [edge('k', 'g')] }, { botId: BOT });
+        await env.KV_LINE_STORAGE.put(BotKeys.flowPublished(BOT), JSON.stringify(r.published));
+        assert.equal(await tryHandleFlowMessage(ctx(textEvent('訂閱'))), true);
+        assert.deepEqual(store.members.get(MEMBER).tags, ['VIP']);
+        assert.equal(replies.length, 0);
+    });
+
     it('別的 bot 看不到這份已發布的 flow', async () => {
         assert.equal(await loadPublishedFlow(env, 'Uother000000000000000000000000b'), null);
     });
