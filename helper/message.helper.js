@@ -403,6 +403,8 @@ export function formatMessagePreview(msgType, item) {
       return `🔗 ${item.label || "未命名"} → ${item.uri}${tagsHtml}`;
     case "postback":
       return `📦 ${item.label || "Postback"}${tagsHtml}`;
+    case "image":
+      return `🖼️ ${(item.originalContentUrl || "圖片").slice(0, 40)}${tagsHtml}`;
     case "flex":
       return `📱 ${item.title || "Flex"}${tagsHtml}`;
     case "imagemap":
@@ -454,6 +456,52 @@ export function waitForGlobalVar(varName, timeout = 5000) {
   });
 }
 
+// ── 多欄位回覆類型（連結 / 訊息回傳 / 圖片）的共用小工具 ─────────────────
+
+const isValidHttpUrl = (value) => /^https?:\/\/[\w-]+(\.[\w-]+)+[/#?]?.*$/.test(value);
+
+/** 在容器裡加一組 input（以 data-reply-field 標記），回傳建立的 input 陣列；values 用來預填 */
+function addReplyFields(container, specs, values = null) {
+  return specs.map((spec) => {
+    const el = document.createElement("input");
+    el.className = `form-control mt-2 ${spec.className || ""}`.trim();
+    el.placeholder = spec.placeholder;
+    if (spec.maxLength) el.maxLength = spec.maxLength;
+    el.dataset.replyField = spec.field;
+    if (values && values[spec.field]) el.value = values[spec.field];
+    container.appendChild(el);
+    return el;
+  });
+}
+
+/** { 欄位: 去頭尾空白的值 } */
+function collectReplyFields(container) {
+  const out = {};
+  container.querySelectorAll("[data-reply-field]").forEach((el) => { out[el.dataset.replyField] = el.value.trim(); });
+  return out;
+}
+
+// label 一律是「按鈕文字」：richmenu / imagemap / flex 的動作用它，送出訊息時也用它
+function uriPayload(v) {
+  const payload = { uri: v.uri || "", label: v.buttonLabel || v.uri || "" };
+  if (v.buttonLabel) payload.buttonLabel = v.buttonLabel;
+  if (v.text) payload.text = v.text;
+  return payload;
+}
+
+function postbackPayload(v) {
+  const payload = { label: v.label || "確認", data: v.data || "" };
+  if (v.displayText) payload.displayText = v.displayText;
+  if (v.text) payload.text = v.text;
+  return payload;
+}
+
+function imagePayload(v) {
+  const payload = { originalContentUrl: v.originalContentUrl || "" };
+  if (v.previewImageUrl) payload.previewImageUrl = v.previewImageUrl;
+  return payload;
+}
+
 // 🧩 產生動態訊息輸入 UI 區塊
 export async function generateReplyInputUI({ builder, userId, onSelect, initialReply = null, customData = {} }) {
   const types = getSupportedMsgTypes(builder);
@@ -487,6 +535,22 @@ export async function generateReplyInputUI({ builder, userId, onSelect, initialR
       input.placeholder = (selectedType === "text" || selectedType === "message") ? "請輸入文字" : "請輸入網址";
       if (initialValue) {
         input.value = initialValue.text || initialValue.uri || "";
+      }
+      if (selectedType === "uri") {
+        // 連結：網址 + 選填的說明文字、按鈕文字（送出時是一則帶連結按鈕的訊息）
+        input.dataset.replyField = "uri";
+        const extras = addReplyFields(inputContainer, [
+          { field: "text", placeholder: "說明文字（選填，預設「請點擊下方按鈕」）" },
+          { field: "buttonLabel", placeholder: "按鈕文字（選填，預設「開啟連結」，最多 20 字）", maxLength: 20 },
+        ], initialValue && { text: initialValue.text, buttonLabel: initialValue.buttonLabel || (initialValue.label !== initialValue.uri ? initialValue.label : "") });
+        const emit = () => {
+          const v = collectReplyFields(inputContainer);
+          if (typeof onSelect === "function") onSelect("uri", uriPayload(v));
+        };
+        input.addEventListener("input", emit);
+        extras.forEach((el) => el.addEventListener("input", emit));
+        inputContainer.insertBefore(input, inputContainer.firstChild);
+        return;
       }
       input.addEventListener("input", () => {
         const value = input.value;
@@ -532,6 +596,32 @@ export async function generateReplyInputUI({ builder, userId, onSelect, initialR
       }
 
       return;
+    } else if (selectedType === "postback") {
+      // 訊息回傳：以前這裡只會顯示「尚無可用的訊息」（沒有任何清單可選），根本設定不出來
+      const els = addReplyFields(inputContainer, [
+        { field: "label", placeholder: "按鈕文字（必填，最多 20 字）", maxLength: 20 },
+        { field: "data", placeholder: "回傳資料（必填，例如 tag=VIP 會替使用者加上標籤）", maxLength: 300, className: "main-reply-input" },
+        { field: "displayText", placeholder: "按下後顯示的文字（選填）", maxLength: 300 },
+        { field: "text", placeholder: "說明文字（選填，預設「請點擊下方按鈕」）" },
+      ], initialValue);
+      const emit = () => {
+        const v = collectReplyFields(inputContainer);
+        if (v.data && typeof onSelect === "function") onSelect("postback", postbackPayload(v));
+      };
+      els.forEach((el) => el.addEventListener("input", emit));
+      return;
+    } else if (selectedType === "image") {
+      // 圖片：以前下拉選單有這個選項，但選了之後沒有任何輸入欄位
+      const els = addReplyFields(inputContainer, [
+        { field: "originalContentUrl", placeholder: "圖片網址（必填，https://，JPG 或 PNG）", className: "main-reply-input" },
+        { field: "previewImageUrl", placeholder: "預覽圖網址（選填，不填就用原圖）" },
+      ], initialValue);
+      const emit = () => {
+        const v = collectReplyFields(inputContainer);
+        if (v.originalContentUrl && typeof onSelect === "function") onSelect("image", imagePayload(v));
+      };
+      els.forEach((el) => el.addEventListener("input", emit));
+      return;
     } else if (selectedType === 'richmenuswitch') {
       const pageSelector = document.createElement("select");
       pageSelector.className = "form-select main-reply-input"; // Add main class
@@ -560,7 +650,7 @@ export async function generateReplyInputUI({ builder, userId, onSelect, initialR
 
     const messageList = await fetchMessageListByType(selectedType, userId);
 
-    if (["imagemap", "flex", "postback", "keyword"].includes(selectedType)) {
+    if (["imagemap", "flex", "keyword"].includes(selectedType)) {
       if (!messageList.length) {
         inputContainer.innerHTML = `<div class="alert alert-warning small">尚無可用的「${messageTypeLabels[selectedType]}」訊息。</div>`;
         return;
@@ -669,13 +759,39 @@ export function getCurrentReplyInput() {
   let value = "";
   let item = null;
 
+  // 有 data-reply-field 的類型（連結、訊息回傳、圖片）：多個欄位一起讀
+  if (inputContainer.querySelector("[data-reply-field]")) {
+    const fields = collectReplyFields(inputContainer);
+    if (type === "uri") {
+      value = fields.uri || "";
+      if (!isValidHttpUrl(value)) {
+        alert("無效網址格式");
+        return null;
+      }
+      item = { type: "uri", ...uriPayload(fields) };
+    } else if (type === "postback") {
+      value = fields.data || "";
+      if (!fields.data) return null;
+      item = { type: "postback", ...postbackPayload(fields) };
+    } else if (type === "image") {
+      value = fields.originalContentUrl || "";
+      if (!/^https:\/\//i.test(value)) {
+        alert("圖片網址必須以 https:// 開頭");
+        return null;
+      }
+      item = { type: "image", ...imagePayload(fields) };
+    }
+    if (item) item.tags = [];
+    return { type, value, item };
+  }
+
   if (input) {
     value = input.value;
     if (type === "text" || type === "message") {
       item = { type: 'message', text: value };
     }
     if (type === "uri") {
-      const isValidUrl = /^https?:\/\/[\w\-]+(\.[\w\-]+)+[/#?]?.*$/.test(value);
+      const isValidUrl = isValidHttpUrl(value);
       if (!isValidUrl) {
         alert("無效網址格式", value);
         console.warn("[getCurrentReplyInput] 無效網址格式:", value);
@@ -688,7 +804,7 @@ export function getCurrentReplyInput() {
     if (type === "text" || type === "message") {
       item = { type: 'message', text: value };
     } else if (type === "uri") {
-      const isValidUrl = /^https?:\/\/[\w\-]+(\.[\w\-]+)+[/#?]?.*$/.test(value);
+      const isValidUrl = isValidHttpUrl(value);
       if (!isValidUrl) {
         alert("無效網址格式", value);
         console.warn("[getCurrentReplyInput] 無效網址格式:", value);

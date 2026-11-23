@@ -14,6 +14,9 @@
 export const LINE_MAX_MESSAGES = 5;
 export const LINE_MAX_TEXT_LENGTH = 5000;
 export const LINE_MAX_ALT_TEXT_LENGTH = 400;
+export const LINE_MAX_BUTTON_LABEL_LENGTH = 20;
+export const LINE_MAX_URI_LENGTH = 1000;
+export const LINE_MAX_POSTBACK_DATA_LENGTH = 300;
 
 /** Imagemap 圖片重導向（某些開發環境需要）；只套用在 http(s) 開頭的 baseUrl */
 export const IMAGEMAP_REDIRECT_BASE = 'https://pinti-line-imagemap-url-redirect.hotichen.workers.dev/?uri=';
@@ -23,6 +26,23 @@ export function isHttpsUrl(url) {
 }
 
 const isNonEmptyString = (v) => typeof v === 'string' && v.trim() !== '';
+const clip = (v, max) => String(v ?? '').slice(0, max);
+
+/**
+ * 「連結」「訊息回傳」這類不是獨立訊息的東西，用一個帶單一按鈕的 Flex 氣泡送出。
+ * altText 用說明文字（通知與聊天列表會看到）。
+ */
+function buttonBubble({ text, action }) {
+    return {
+        type: 'flex',
+        altText: clip(text, LINE_MAX_ALT_TEXT_LENGTH),
+        contents: {
+            type: 'bubble',
+            body: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: clip(text, LINE_MAX_TEXT_LENGTH), wrap: true }] },
+            footer: { type: 'box', layout: 'vertical', contents: [{ type: 'button', style: 'primary', action }] },
+        },
+    };
+}
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 /** 每種類型：validate(reply) → 錯誤訊息或 null；toLine(reply) → LINE 訊息（呼叫前已通過 validate） */
@@ -49,6 +69,40 @@ export const MESSAGE_TYPES = Object.freeze({
             originalContentUrl: r.originalContentUrl,
             previewImageUrl: r.previewImageUrl || r.originalContentUrl,
         }),
+    },
+
+    // 連結：{ uri, text?（說明文字）, label? / buttonLabel?（按鈕文字） }
+    // 舊版編輯器只存 { uri, label: 網址 }：標籤等於網址（太長、不是人話）時用預設按鈕文字
+    uri: {
+        label: '連結',
+        validate: (r) => {
+            const uri = String(r.uri || '');
+            if (!/^https?:\/\/[^\s]+$/i.test(uri)) return '連結必須是 http:// 或 https:// 開頭的網址';
+            if (uri.length > LINE_MAX_URI_LENGTH) return `連結超過 ${LINE_MAX_URI_LENGTH} 字`;
+            return null;
+        },
+        toLine: (r) => {
+            const named = r.buttonLabel || (r.label && r.label !== r.uri ? r.label : '');
+            const label = clip(named || '開啟連結', LINE_MAX_BUTTON_LABEL_LENGTH);
+            return buttonBubble({ text: r.text || '請點擊下方按鈕', action: { type: 'uri', label, uri: r.uri } });
+        },
+    },
+
+    // 訊息回傳：{ data, label?, displayText?, text? }；使用者按下按鈕時 webhook 會收到 postback（例如 tag=VIP 會自動加標籤）
+    postback: {
+        label: '訊息回傳',
+        validate: (r) => {
+            if (!isNonEmptyString(r.data)) return '訊息回傳的「回傳資料」是空的';
+            if (r.data.length > LINE_MAX_POSTBACK_DATA_LENGTH) return `回傳資料超過 ${LINE_MAX_POSTBACK_DATA_LENGTH} 字`;
+            if (r.displayText && String(r.displayText).length > LINE_MAX_POSTBACK_DATA_LENGTH) return `顯示文字超過 ${LINE_MAX_POSTBACK_DATA_LENGTH} 字`;
+            return null;
+        },
+        toLine: (r) => {
+            const label = clip(r.label || '確認', LINE_MAX_BUTTON_LABEL_LENGTH);
+            const action = { type: 'postback', label, data: r.data };
+            if (r.displayText) action.displayText = String(r.displayText);
+            return buttonBubble({ text: r.text || '請點擊下方按鈕', action });
+        },
     },
 
     flex: {

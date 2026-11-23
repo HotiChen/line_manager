@@ -49,6 +49,54 @@ describe('validateMessage / toLineMessage — 每種類型', () => {
         assert.equal(toLineMessage({ type: 'imagemap', baseUrl: 'relative/path', actions: [] }).baseUrl, 'relative/path');
     });
 
+    it('uri：做成帶連結按鈕的訊息；標籤等於網址（編輯器的舊資料）時不拿來當說明文字', () => {
+        const m = toLineMessage({ type: 'uri', uri: 'https://example.com/promo', label: 'https://example.com/promo' });
+        assert.equal(m.type, 'flex');
+        const button = m.contents.footer.contents[0];
+        assert.deepEqual(button.action, { type: 'uri', label: '開啟連結', uri: 'https://example.com/promo' });
+        assert.equal(m.contents.body.contents[0].text, '請點擊下方按鈕');
+        assert.equal(m.altText, '請點擊下方按鈕');
+    });
+
+    it('uri：自訂說明文字與按鈕文字；按鈕文字截到 20 字（LINE 上限）', () => {
+        const m = toLineMessage({ type: 'uri', uri: 'http://a.com/x', text: '本週優惠', buttonLabel: '很長'.repeat(20) });
+        assert.equal(m.contents.body.contents[0].text, '本週優惠');
+        assert.equal(m.altText, '本週優惠');
+        assert.equal(m.contents.footer.contents[0].action.label.length, 20);
+    });
+
+    it('uri：label 是人話時就是按鈕文字（richmenu / flex 動作也用 label）；buttonLabel 優先', () => {
+        const byLabel = toLineMessage({ type: 'uri', uri: 'https://a.com/x', label: '查看優惠' });
+        assert.equal(byLabel.contents.footer.contents[0].action.label, '查看優惠');
+        assert.equal(byLabel.contents.body.contents[0].text, '請點擊下方按鈕');
+        const both = toLineMessage({ type: 'uri', uri: 'https://a.com/x', label: '舊', buttonLabel: '新' });
+        assert.equal(both.contents.footer.contents[0].action.label, '新');
+    });
+
+    it('uri：只允許 http(s)，擋 javascript: / data: / 空白 / 太長', () => {
+        for (const uri of ['javascript:alert(1)', 'data:text/html,x', 'ftp://a.com', 'a.com', '', 'https://a.com/ x', undefined, `https://a.com/${'x'.repeat(1000)}`]) {
+            assert.notEqual(validateMessage({ type: 'uri', uri }), null, String(uri).slice(0, 30));
+            assert.equal(toLineMessage({ type: 'uri', uri }), null);
+        }
+    });
+
+    it('postback：做成帶 postback 按鈕的訊息，data 原樣帶過去；displayText 選填', () => {
+        const m = toLineMessage({ type: 'postback', label: '加入 VIP', data: 'tag=VIP', displayText: '我要加入', text: '想成為 VIP 嗎？' });
+        assert.deepEqual(m.contents.footer.contents[0].action, { type: 'postback', label: '加入 VIP', data: 'tag=VIP', displayText: '我要加入' });
+        assert.equal(m.contents.body.contents[0].text, '想成為 VIP 嗎？');
+        const plain = toLineMessage({ type: 'postback', label: 'OK', data: 'a=1' });
+        assert.equal('displayText' in plain.contents.footer.contents[0].action, false);
+        assert.equal(plain.contents.body.contents[0].text, '請點擊下方按鈕');
+        assert.equal(plain.contents.footer.contents[0].action.label, 'OK');
+    });
+
+    it('postback：沒有 data、data 超過 300 字、displayText 超過 300 字 → 不合法；沒有 label 用預設', () => {
+        for (const bad of [{ data: '' }, { data: undefined }, { data: 'x'.repeat(301) }, { data: 'a', displayText: 'x'.repeat(301) }]) {
+            assert.notEqual(validateMessage({ type: 'postback', label: 'x', ...bad }), null);
+        }
+        assert.equal(toLineMessage({ type: 'postback', data: 'a=1' }).contents.footer.contents[0].action.label, '確認');
+    });
+
     it('未知類型 / 壞輸入 → 不合法，不丟例外；原型鏈上的名稱不算類型', () => {
         for (const bad of [null, undefined, 'x', 5, {}, { type: 'video' }, { type: 'constructor' }, { type: '__proto__' }, { type: 'toString' }]) {
             assert.notEqual(validateMessage(bad), null);
@@ -123,6 +171,18 @@ describe('formatReplies', () => {
         ], {}, 'U1');
         assert.deepEqual(out.map((m) => m.type), ['text', 'imagemap']);
         assert.equal(out[1].actions[0].type, 'message');
+    });
+
+    it('關鍵字回覆 / 歡迎訊息裡的 連結、訊息回傳、圖片 都能送出（以前整則被丟掉）', async () => {
+        const out = await formatReplies([
+            { type: 'text', text: '嗨' },
+            { type: 'uri', uri: 'https://a.com/x', label: 'https://a.com/x', tags: [] },
+            { type: 'postback', label: 'VIP', data: 'tag=VIP', tags: [] },
+            { type: 'image', originalContentUrl: 'https://a.com/1.jpg' },
+        ], {}, 'U1');
+        assert.deepEqual(out.map((m) => m.type), ['text', 'flex', 'flex', 'image']);
+        assert.equal(out[1].contents.footer.contents[0].action.type, 'uri');
+        assert.equal(out[2].contents.footer.contents[0].action.data, 'tag=VIP');
     });
 
     it('超過 5 則 → 截斷（否則 LINE 會整次拒絕）', async () => {
