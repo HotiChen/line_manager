@@ -9,7 +9,18 @@ import { dataLoader } from './flow_designer_data_loader.js';
 import FlowNodeAdapter from './flow_node_adapter.js';
 import { ApiClient as api } from '../helper/api.client.js';
 import { setInnerHTML } from '../helper/security.js';
-import { pruneDanglingEdges } from './shared/flow_schema.js';
+import { NodeTypes, NodeTypeConfig, getDefaultNodeData } from './flow/node_types.js';
+import { FlowStore } from './flow/flow_store.js';
+import { History } from './flow/history.js';
+import { toPersisted, hydrateNodes, parseImport, readDraft, writeDraft, clearDraft } from './flow/serialize.js';
+
+/** 目前選的 bot（草稿依 bot 分開存） */
+function currentBot() {
+    try { return localStorage.getItem('flow_designer_bot') || null; } catch { return null; }
+}
+
+// 相容：其他檔案仍可從 flow_designer.js 取用
+export { NodeTypes, NodeTypeConfig };
 
 function escapeHtml(str) {
     if (typeof str !== 'string') return str;
@@ -17,134 +28,6 @@ function escapeHtml(str) {
     div.textContent = str;
     return div.innerHTML;
 }
-
-/**
- * 節點類型定義
- */
-export const NodeTypes = {
-    // 觸發器
-    RICHMENU: 'richmenu',
-    KEYWORD: 'keyword',
-    WEBHOOK: 'webhook',
-
-    // 訊息節點
-    MESSAGE_TEXT: 'message_text',
-    MESSAGE_FLEX: 'message_flex',
-    MESSAGE_IMAGEMAP: 'message_imagemap',
-    MESSAGE_IMAGE: 'message_image',
-    MESSAGE_SEQUENCE: 'message_sequence',  // 訊息序列
-
-    // 動作節點
-    ACTION_DELAY: 'action_delay',
-    ACTION_CONDITION: 'action_condition',
-    ACTION_API: 'action_api',
-    ACTION_TAG: 'action_tag',
-    URL: 'url',
-    POSTBACK: 'postback',
-
-    // 結束節點
-    END: 'end'
-};
-
-/**
- * 節點類型配置
- */
-export const NodeTypeConfig = {
-    [NodeTypes.RICHMENU]: {
-        label: 'Richmenu',
-        icon: 'bi-menu-button',
-        color: '#9b59b6',
-        category: 'trigger',
-        description: 'LINE Richmenu 選單',
-        multipleOutputs: true  // 支援多輸出（每個按鈕一個）
-    },
-    [NodeTypes.KEYWORD]: {
-        label: '關鍵字觸發',
-        icon: 'bi-key',
-        color: '#3498db',
-        category: 'trigger',
-        description: '當用戶輸入特定關鍵字時觸發'
-    },
-    [NodeTypes.MESSAGE_TEXT]: {
-        label: '文字訊息',
-        icon: 'bi-chat-text',
-        color: '#3498db',
-        category: 'message',
-        description: '發送文字訊息給用戶'
-    },
-    [NodeTypes.MESSAGE_IMAGE]: {
-        label: '圖片訊息',
-        icon: 'bi-image-fill',
-        color: '#3498db',
-        category: 'message',
-        description: '發送圖片給用戶'
-    },
-    [NodeTypes.MESSAGE_SEQUENCE]: {
-        label: '訊息序列',
-        icon: 'bi-chat-left-dots',
-        color: '#16a085',
-        category: 'message',
-        description: '發送多個訊息（最多5個）'
-    },
-    [NodeTypes.MESSAGE_FLEX]: {
-        label: 'Flex Message',
-        icon: 'bi-phone',
-        color: '#3498db',
-        category: 'message',
-        description: '發送 Flex 圖文訊息',
-        multipleOutputs: true  // Flex 可能有多個按鈕
-    },
-    [NodeTypes.MESSAGE_IMAGEMAP]: {
-        label: 'Imagemap',
-        icon: 'bi-image',
-        color: '#3498db',
-        category: 'message',
-        description: '發送 Imagemap 互動圖片'
-    },
-    [NodeTypes.ACTION_DELAY]: {
-        label: '延遲',
-        icon: 'bi-clock',
-        color: '#f39c12',
-        category: 'action',
-        description: '等待指定時間後繼續'
-    },
-    [NodeTypes.ACTION_CONDITION]: {
-        label: '條件判斷',
-        icon: 'bi-code-square',
-        color: '#f39c12',
-        category: 'action',
-        description: '根據條件分支流程',
-        multipleOutputs: true  // 條件有多個分支
-    },
-    [NodeTypes.ACTION_TAG]: {
-        label: '標籤操作',
-        icon: 'bi-tag',
-        color: '#f39c12',
-        category: 'action',
-        description: '為用戶新增或移除標籤'
-    },
-    [NodeTypes.URL]: {
-        label: 'URL 連結',
-        icon: 'bi-link-45deg',
-        color: '#16a085',
-        category: 'action',
-        description: '開啟網址連結'
-    },
-    [NodeTypes.POSTBACK]: {
-        label: 'Postback',
-        icon: 'bi-arrow-return-left',
-        color: '#d35400',
-        category: 'action',
-        description: 'Postback 回傳資料'
-    },
-    [NodeTypes.END]: {
-        label: '結束',
-        icon: 'bi-x-circle',
-        color: '#e74c3c',
-        category: 'end',
-        description: '流程結束點'
-    }
-};
 
 /**
  * 流程設計器類別
@@ -160,11 +43,10 @@ export class FlowDesigner {
             }
         });
         this.container = document.getElementById(containerId);
-        this.nodes = [];
-        this.edges = [];
+        // 資料一律在 store；this.nodes / edges / flowId / flowName 是轉接到 store 的 getter/setter
+        this.store = new FlowStore();
+        this.history = new History(50);
         this.selectedNode = null;
-        this.flowId = null;
-        this.flowName = '未命名流程';
 
         // 連線狀態
         this.connectionStart = null;
@@ -192,11 +74,6 @@ export class FlowDesigner {
         this.keywordList = null;
         this.keywordListLoadTime = null;
 
-        // Undo / Redo history
-        this.history = [];
-        this.historyIndex = -1;
-        this.maxHistory = 50;
-
         // Copy / Paste clipboard
         this.clipboard = null;
 
@@ -223,8 +100,31 @@ export class FlowDesigner {
         this.loadFromLocalStorage();
         this.createMinimap();
         this.initNodePalette();
-        // 初始狀態推入 history
-        this.pushHistory();
+        // 目前畫面（含草稿）作為 undo 的起點
+        this.history.reset(this.snapshot());
+    }
+
+    // ── store 轉接（相容既有程式碼對 this.nodes 等的讀寫） ──
+    get nodes() { return this.store.nodes; }
+    set nodes(v) { this.store.nodes = v; }
+    get edges() { return this.store.edges; }
+    set edges(v) { this.store.edges = v; }
+    get flowId() { return this.store.flowId; }
+    set flowId(v) { this.store.flowId = v; }
+    get flowName() { return this.store.flowName; }
+    set flowName(v) { this.store.flowName = v; }
+
+    /** undo 與草稿用的可序列化快照 */
+    snapshot() {
+        return toPersisted({ nodes: this.nodes, edges: this.edges });
+    }
+
+    /** 整份換掉資料並重畫（載入、匯入、undo/redo、切換 bot） */
+    _replaceFlow({ nodes = [], edges = [], flowId, flowName }) {
+        this.store.replace({ nodes: hydrateNodes(nodes, NodeTypeConfig), edges, flowId, flowName });
+        this.selectedNode = null;
+        this.selectedNodes = [];
+        this.renderAll();
     }
 
     initNodePalette() {
@@ -947,8 +847,7 @@ export class FlowDesigner {
             config: config
         };
 
-        this.pushHistory();
-        this.nodes.push(node);
+        this.store.addNode(node);
         this.renderNode(node);
         this.updateMinimap();
         this.saveToLocalStorage();
@@ -964,61 +863,7 @@ export class FlowDesigner {
      * 取得預設節點資料
      */
     getDefaultNodeData(type) {
-        const defaults = {
-            [NodeTypes.RICHMENU]: {
-                richmenuId: null,
-                name: '選擇 Richmenu',
-                buttons: []
-            },
-            [NodeTypes.KEYWORD]: {
-                keyword: '',
-                matchType: 'exact'  // exact, contains, regex
-            },
-            [NodeTypes.MESSAGE_TEXT]: {
-                text: '請輸入訊息內容'
-            },
-            [NodeTypes.MESSAGE_SEQUENCE]: {
-                name: '訊息序列',
-                messages: [],
-                delay: 0  // 訊息間延遲（毫秒）
-            },
-            [NodeTypes.MESSAGE_FLEX]: {
-                flexId: null,
-                title: '選擇 Flex Message'
-            },
-            [NodeTypes.MESSAGE_IMAGEMAP]: {
-                imagemapId: null,
-                title: '選擇 Imagemap',
-                isExpanded: false  // 防止重複展開
-            },
-            [NodeTypes.ACTION_DELAY]: {
-                seconds: 1
-            },
-            [NodeTypes.ACTION_CONDITION]: {
-                conditions: [
-                    { field: 'text', operator: 'equals', value: '' }
-                ],
-                branches: ['true', 'false']
-            },
-            [NodeTypes.ACTION_TAG]: {
-                operation: 'add',  // add, remove
-                tags: []
-            },
-            [NodeTypes.URL]: {
-                url: '',
-                label: 'URL 連結'
-            },
-            [NodeTypes.POSTBACK]: {
-                data: '',
-                label: 'Postback',
-                displayText: ''
-            },
-            [NodeTypes.END]: {
-                message: '流程結束'
-            }
-        };
-
-        return defaults[type] || { label: '未知節點' };
+        return getDefaultNodeData(type);
     }
 
     /**
@@ -1546,39 +1391,26 @@ export class FlowDesigner {
      * 創建連線
      */
     createEdge(sourceId, sourceHandle, targetId, targetHandle) {
-
-        // 檢查是否已存在相同連線
-        const exists = this.edges.some(e =>
-            e.source === sourceId &&
-            e.sourceHandle === sourceHandle &&
-            e.target === targetId
-        );
-
-        if (exists) {
-            console.warn(`[createEdge] 連線已存在`);
-            toast.warning('該連線已存在');
-            return;
-        }
-
-        this.pushHistory();
-
-        // 檢查是否會形成循環
-        if (this.wouldCreateCycle(sourceId, targetId)) {
-            console.warn(`[createEdge] 會形成循環`);
-            toast.error('無法創建循環連線');
-            return;
-        }
-
-        const edgeId = `edge_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         const edge = {
-            id: edgeId,
+            id: `edge_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             source: sourceId,
             sourceHandle: sourceHandle,
             target: targetId,
             targetHandle: targetHandle
         };
 
-        this.edges.push(edge);
+        const result = this.store.addEdge(edge);
+        if (!result.ok) {
+            const messages = {
+                duplicate: ['warning', '該連線已存在'],
+                cycle: ['error', '無法創建循環連線'],
+                self: ['warning', '節點不能連到自己'],
+                missing: ['error', '連線端點不存在'],
+            };
+            const [level, text] = messages[result.reason] || ['error', '無法建立連線'];
+            toast[level](text);
+            return;
+        }
 
         this.renderEdge(edge);
 
@@ -1814,13 +1646,10 @@ export class FlowDesigner {
      * 刪除連線
      */
     deleteEdge(edgeId) {
-        this.pushHistory();
-        const edge = this.edges.find(e => e.id === edgeId);
+        const edge = this.store.removeEdge(edgeId);
         if (edge && edge._abortController) {
             edge._abortController.abort();
         }
-
-        this.edges = this.edges.filter(e => e.id !== edgeId);
 
         const pathElement = document.getElementById(edgeId);
         if (pathElement) pathElement.remove();
@@ -1954,36 +1783,23 @@ export class FlowDesigner {
     // Undo / Redo
     // ─────────────────────────────────────────────
 
-    pushHistory() {
-        // 捨棄「當前位置之後」的未來歷史（新操作取代 redo 路徑）
-        this.history = this.history.slice(0, this.historyIndex + 1);
-        this.history.push({
-            nodes: JSON.parse(JSON.stringify(this.nodes)),
-            edges: JSON.parse(JSON.stringify(this.edges))
-        });
-        if (this.history.length > this.maxHistory) this.history.shift();
-        else this.historyIndex++;
-    }
-
     undo() {
-        if (this.historyIndex <= 0) { toast.info('已是最早的操作'); return; }
-        this.historyIndex--;
-        this._applyHistorySnapshot(this.history[this.historyIndex]);
+        const snap = this.history.undo();
+        if (!snap) { toast.info('已是最早的操作'); return; }
+        this._applyHistorySnapshot(snap);
         toast.success('↩ 已還原');
     }
 
     redo() {
-        if (this.historyIndex >= this.history.length - 1) { toast.info('沒有可重做的操作'); return; }
-        this.historyIndex++;
-        this._applyHistorySnapshot(this.history[this.historyIndex]);
+        const snap = this.history.redo();
+        if (!snap) { toast.info('沒有可重做的操作'); return; }
+        this._applyHistorySnapshot(snap);
         toast.success('↪ 已重做');
     }
 
     _applyHistorySnapshot(snapshot) {
-        this.nodes = JSON.parse(JSON.stringify(snapshot.nodes));
-        this.edges = JSON.parse(JSON.stringify(snapshot.edges));
-        this.renderAll();
-        this.saveToLocalStorage();
+        this._replaceFlow({ nodes: snapshot.nodes, edges: snapshot.edges });
+        this.commit({ record: false });
     }
 
     // ─────────────────────────────────────────────
@@ -2009,7 +1825,6 @@ export class FlowDesigner {
 
     pasteNodes() {
         if (!this.clipboard) { toast.warning('剪貼簿為空'); return; }
-        this.pushHistory();
 
         const idMap = {};
         const newNodes = this.clipboard.nodes.map(node => {
@@ -2025,8 +1840,8 @@ export class FlowDesigner {
             target: idMap[edge.target]
         }));
 
-        newNodes.forEach(node => { this.nodes.push(node); this.renderNode(node); });
-        newEdges.forEach(edge => { this.edges.push(edge); this.renderEdge(edge); });
+        newNodes.forEach(node => { this.store.addNode(node); this.renderNode(node); });
+        newEdges.forEach(edge => { if (this.store.addEdge(edge).ok) this.renderEdge(edge); });
 
         this.updateMinimap();
         this.saveToLocalStorage();
@@ -2244,26 +2059,7 @@ export class FlowDesigner {
      * 檢查是否會形成循環
      */
     wouldCreateCycle(sourceId, targetId) {
-        // 簡單的循環檢測：檢查從 target 是否能到達 source
-        const visited = new Set();
-        const queue = [targetId];
-
-        while (queue.length > 0) {
-            const current = queue.shift();
-            if (current === sourceId) return true;
-            if (visited.has(current)) continue;
-
-            visited.add(current);
-
-            // 找到所有從 current 出發的連線
-            this.edges.forEach(edge => {
-                if (edge.source === current) {
-                    queue.push(edge.target);
-                }
-            });
-        }
-
-        return false;
+        return this.store.wouldCreateCycle(sourceId, targetId);
     }
 
     /**
@@ -4384,33 +4180,16 @@ export class FlowDesigner {
      * 執行刪除節點（內部方法）
      */
     _executeDeleteNode(nodesToDelete) {
-        this.pushHistory();
+        const { edges: edgesToRemove } = this.store.removeNodes(nodesToDelete);
 
-        // ✅ 先刪除相關的邊的 DOM 元素（SVG path 和控制點）
-        const edgesToRemove = this.edges.filter(edge =>
-            nodesToDelete.includes(edge.source) || nodesToDelete.includes(edge.target)
-        );
-
-
+        // 移除相關連線的 DOM（SVG path 與控制點）
         edgesToRemove.forEach(edge => {
-            // 移除 SVG path（使用 edge.id）
+            if (edge._abortController) edge._abortController.abort();
             const pathElement = document.getElementById(edge.id);
-            if (pathElement) {
-                pathElement.remove();
-            }
-
-            // 移除控制點（使用 data-edge-id 屬性）
+            if (pathElement) pathElement.remove();
             const controlPoint = document.querySelector(`[data-edge-id="${edge.id}"]`);
-            if (controlPoint) {
-                controlPoint.remove();
-            }
+            if (controlPoint) controlPoint.remove();
         });
-
-        // 刪除所有節點和相關的邊
-        this.nodes = this.nodes.filter(n => !nodesToDelete.includes(n.id));
-        this.edges = this.edges.filter(e =>
-            !nodesToDelete.includes(e.source) && !nodesToDelete.includes(e.target)
-        );
 
         // 從 DOM 移除所有節點元素
         nodesToDelete.forEach(id => {
@@ -4432,22 +4211,8 @@ export class FlowDesigner {
     /**
      * 遞歸收集所有子節點（從指定節點展開出來的節點）
      */
-    collectChildNodes(nodeId, collected = []) {
-        // 找到所有從這個節點連出去的邊
-        const outgoingEdges = this.edges.filter(e => e.source === nodeId);
-
-        outgoingEdges.forEach(edge => {
-            const targetId = edge.target;
-
-            // 避免重複收集
-            if (!collected.includes(targetId)) {
-                collected.push(targetId);
-                // 遞歸收集該子節點的子節點
-                this.collectChildNodes(targetId, collected);
-            }
-        });
-
-        return collected;
+    collectChildNodes(nodeId) {
+        return this.store.collectDescendants(nodeId);
     }
 
     /**
@@ -4651,20 +4416,21 @@ export class FlowDesigner {
     async saveFlow() {
         if (this.isSaving) return;
         this.isSaving = true;
+        // toPersisted：去掉 config 與執行期欄位、清掉懸空連線（後端會拒絕）
         const flowData = {
             id: this.flowId,
             name: this.flowName,
-            nodes: this.nodes,
-            // 後端會拒絕指向不存在節點的連線；舊資料可能殘留，存檔前先清掉
-            edges: pruneDanglingEdges(this.nodes, this.edges)
+            ...toPersisted({ nodes: this.nodes, edges: this.edges })
         };
 
         try {
             const result = await api.post('/flow/save', flowData);
             this.flowId = result.flowId;
 
-            this.saveToLocalStorage();
+            // 只更新草稿：不可走 commit()，否則會再排一次自動存檔 → 每 30 秒無限重存
+            this._writeDraft();
             this.isDirty = false;
+            clearTimeout(this._autoSaveTimer);
             toast.success('✅ 流程已儲存');
         } catch (err) {
             console.error('儲存失敗:', err);
@@ -4700,12 +4466,15 @@ export class FlowDesigner {
                 throw new Error('流程資料不存在');
             }
             const flowData = data.flow;
-            this.flowId = flowData.id;
-            this.flowName = flowData.name;
-            this.nodes = flowData.nodes;
-            this.edges = flowData.edges;
-
-            this.renderAll();
+            this._replaceFlow({
+                nodes: flowData.nodes || [],
+                edges: flowData.edges || [],
+                flowId: flowData.id,
+                flowName: flowData.name
+            });
+            this.history.reset(this.snapshot());
+            this._writeDraft();
+            this.isDirty = false;
             toast.success('✅ 流程已載入');
         } catch (err) {
             console.error('載入失敗:', err);
@@ -4743,14 +4512,10 @@ export class FlowDesigner {
             }
             // 如果沒有 flowId，從 localStorage 重新載入
             else {
-                const data = localStorage.getItem('flow_designer_draft');
-                if (data) {
-                    const parsed = JSON.parse(data);
-                    this.nodes = parsed.nodes || [];
-                    this.edges = parsed.edges || [];
-                    this.flowId = parsed.flowId;
-                    this.flowName = parsed.flowName || '未命名流程';
-                    this.renderAll();
+                const draft = readDraft(localStorage, currentBot());
+                if (draft) {
+                    this._replaceFlow(draft);
+                    this.history.reset(this.snapshot());
 
                     // ✅ 重新載入所有 Richmenu 節點的圖片資料
                     await this.refreshAllRichmenuData();
@@ -4828,16 +4593,30 @@ export class FlowDesigner {
     /**
      * 儲存到 LocalStorage
      */
+    /**
+     * 變動完成的提交點：記 undo、寫草稿、標記未存、排自動存檔。
+     * 所有修改流程的操作完成後都要呼叫（含直接改 node.data 的 editor）。
+     * @param {{record?: boolean}} options record=false 用於 undo/redo 本身
+     */
+    commit({ record = true } = {}) {
+        if (record) this.history.record(this.snapshot());
+        this._writeDraft();
+        this.isDirty = true;
+        this.scheduleAutoSave();
+    }
+
+    /** 舊名稱，保留給既有呼叫點 */
     saveToLocalStorage() {
-        const data = {
+        this.commit();
+    }
+
+    _writeDraft() {
+        writeDraft(localStorage, currentBot(), {
             nodes: this.nodes,
             edges: this.edges,
             flowId: this.flowId,
             flowName: this.flowName
-        };
-        localStorage.setItem('flow_designer_draft', JSON.stringify(data));
-        this.isDirty = true;
-        this.scheduleAutoSave();
+        });
     }
 
     scheduleAutoSave() {
@@ -4852,8 +4631,7 @@ export class FlowDesigner {
     exportFlow() {
         const data = JSON.stringify({
             name: this.flowName,
-            nodes: this.nodes,
-            edges: this.edges,
+            ...toPersisted({ nodes: this.nodes, edges: this.edges }),
             exportedAt: new Date().toISOString()
         }, null, 2);
         
@@ -4873,13 +4651,14 @@ export class FlowDesigner {
         input.onchange = async (e) => {
             const file = e.target.files[0];
             if (!file) return;
-            const text = await file.text();
-            const data = JSON.parse(text);
-            this.flowName = data.name;
-            this.nodes = data.nodes || [];
-            this.edges = data.edges || [];
-            this.flowId = null; // 匯入為新流程
-            this.renderAll();
+            const result = parseImport(await file.text());
+            if (!result.ok) {
+                toast.error('匯入失敗：' + result.errors.slice(0, 3).join('；'));
+                return;
+            }
+            // 匯入為新流程；可用 undo 回到匯入前
+            this._replaceFlow({ ...result.flow, flowId: null, flowName: result.flow.name });
+            this.commit();
             toast.success('流程已匯入');
         };
         input.click();
@@ -4889,19 +4668,24 @@ export class FlowDesigner {
      * 從 LocalStorage 載入
      */
     loadFromLocalStorage() {
-        const data = localStorage.getItem('flow_designer_draft');
-        if (data) {
-            try {
-                const parsed = JSON.parse(data);
-                this.nodes = parsed.nodes || [];
-                this.edges = parsed.edges || [];
-                this.flowId = parsed.flowId;
-                this.flowName = parsed.flowName;
-                this.renderAll();
-            } catch (err) {
-                console.error('載入草稿失敗:', err);
-            }
-        }
+        const draft = readDraft(localStorage, currentBot());
+        if (draft) this._replaceFlow(draft);
+    }
+
+    /**
+     * 切換 bot：存好目前草稿，換成新 bot 的草稿（沒有就空白畫布）
+     * 呼叫前 localStorage 的 flow_designer_bot 必須已經是新 bot。
+     */
+    switchBot(previousBot) {
+        writeDraft(localStorage, previousBot, {
+            nodes: this.nodes, edges: this.edges, flowId: this.flowId, flowName: this.flowName
+        });
+        clearTimeout(this._autoSaveTimer);
+        const draft = readDraft(localStorage, currentBot());
+        this._replaceFlow(draft || { nodes: [], edges: [], flowId: null, flowName: '未命名流程' });
+        this.history.reset(this.snapshot());
+        this.isDirty = false;
+        if (typeof this.hideSidebar === 'function') this.hideSidebar();
     }
 
     /**
@@ -4967,12 +4751,11 @@ export class FlowDesigner {
      * 執行清空流程（內部方法）
      */
     _executeClearFlow() {
-        this.nodes = [];
-        this.edges = [];
-        this.flowId = null;
-        this.flowName = '未命名流程';
-        this.renderAll();
-        localStorage.removeItem('flow_designer_draft');
+        this._replaceFlow({ nodes: [], edges: [], flowId: null, flowName: '未命名流程' });
+        this.history.reset(this.snapshot());
+        clearDraft(localStorage, currentBot());
+        clearTimeout(this._autoSaveTimer);
+        this.isDirty = false;
 
         toast.success('✅ 畫布已清空');
     }
@@ -5266,20 +5049,11 @@ async function initializeFlowSelectors() {
             const newBot = e.target.value;
             if (!newBot) return;
 
-            // 檢查是否有未保存的變更
-            if (window.flowDesigner && window.flowDesigner.nodes.length > 0) {
-                const confirmed = confirm(
-                    `切換到「${newBot}」將會清除目前的流程畫布。\n\n` +
-                    `不同 LINE@ 帳號的 Richmenu、Flex 等資源都不同，\n` +
-                    `切換後將載入該帳號的資料。\n\n` +
-                    `確定要切換嗎？`
-                );
-                if (!confirmed) {
-                    // 恢復選擇
-                    botSelect.value = localStorage.getItem('flow_designer_bot') || '';
-                    return;
-                }
-            }
+            // 各 bot 的草稿分開保存，切換不會遺失畫布內容，不需再確認
+            const previousBot = localStorage.getItem('flow_designer_bot');
+            // 切換期間不可讓自動存檔把舊畫布存到新 bot
+            if (window.flowDesigner) clearTimeout(window.flowDesigner._autoSaveTimer);
+            let switched = false;
 
             try {
                 // 保存選擇到 localStorage
@@ -5290,29 +5064,9 @@ async function initializeFlowSelectors() {
 
                 toast.info(`正在切換至 ${newBot}...`);
 
-                // 清除所有節點和連線
                 if (window.flowDesigner) {
-                    // 清除畫布狀態
-                    window.flowDesigner.nodes = [];
-                    window.flowDesigner.edges = [];
-                    window.flowDesigner.selectedNode = null;
-                    window.flowDesigner.selectedNodes = [];
-                    window.flowDesigner.flowId = null;  // 重置 flowId
-                    window.flowDesigner.flowName = '未命名流程';  // 重置名稱
-
-                    // 清除畫布上的 DOM 元素
-                    if (window.flowDesigner.canvasContent) {
-                        const existingNodes = window.flowDesigner.canvasContent.querySelectorAll('.flow-node');
-                        existingNodes.forEach(node => node.remove());
-                    }
-
-                    // 清除連線
-                    if (window.flowDesigner.svgLayer) {
-                        window.flowDesigner.svgLayer.querySelectorAll('path.edge-path').forEach(p => p.remove());
-                    }
-
-                    // ✅ 清除 localStorage 中的舊流程草稿 (正確的 key)
-                    localStorage.removeItem('flow_designer_draft');
+                    window.flowDesigner.switchBot(previousBot);
+                    switched = true;
 
                     // ✅ 清除 dataLoader 快取並重新載入新 Bot 的資料
                     if (window.dataLoader) {
@@ -5320,13 +5074,16 @@ async function initializeFlowSelectors() {
                         await window.dataLoader.loadAllData();
                     }
 
-                    // 不再調用 reloadFlow，因為那會從 localStorage 載入舊資料
-                    // 畫布已清空，等待用戶新建流程或右鍵添加節點
-
-                    toast.success(`已切換至 ${newBot}，畫布已清空`);
+                    toast.success(`已切換至 ${newBot}`);
                 }
             } catch (err) {
                 console.error('❌ 切換 LINE@ 失敗:', err);
+                if (!switched) {
+                    // 後端沒切成功：還原選擇，畫布與草稿維持原 bot
+                    if (previousBot) localStorage.setItem('flow_designer_bot', previousBot);
+                    else localStorage.removeItem('flow_designer_bot');
+                    botSelect.value = previousBot || '';
+                }
                 toast.error('切換失敗，請稍後再試');
             }
         });
