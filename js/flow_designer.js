@@ -20,6 +20,7 @@ import { PropertiesMethods } from './flow/designer/properties.js';
 import { ResourcesMethods } from './flow/designer/resources.js';
 import { PersistMethods } from './flow/designer/persist.js';
 import { DebugMethods } from './flow/designer/debug.js';
+import { bindActions } from './flow/designer/actions.js';
 
 // 相容：其他檔案仍可從 flow_designer.js 取用
 export { NodeTypes, NodeTypeConfig };
@@ -203,6 +204,8 @@ export async function pageInit() {
 
         // 初始化 Flow Designer
         window.flowDesigner = new FlowDesigner('flow-canvas');
+        // 靜態工具列按鈕（pages/flow_designer_full.html 的 data-on）
+        bindActions(document.body, window.flowDesigner);
 
         // 標記已初始化
         window._flowDesignerInitialized = true;

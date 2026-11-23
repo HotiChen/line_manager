@@ -6,6 +6,7 @@ import { toast } from '../../../helper/toast.js';
 import { setInnerHTML } from '../../../helper/security.js';
 import { dataLoader } from '../../flow_designer_data_loader.js';
 import { NodeTypes } from '../node_types.js';
+import { bindActions } from './actions.js';
 
 export class PropertiesMethods {
     /**
@@ -24,10 +25,11 @@ export class PropertiesMethods {
             <p class="text-muted small">${node.config.description}</p>
             <hr>
             ${this.renderNodeProperties(node)}
-            <button class="btn btn-sm btn-danger w-100 mt-3" onclick="flowDesigner.deleteNode('${nodeId}')">
+            <button class="btn btn-sm btn-danger w-100 mt-3" data-on="click:deleteNode" data-node-id="${nodeId}">
                 <i class="bi bi-trash"></i> 刪除節點
             </button>
         `);
+        bindActions(properties, this);
     }
 
     /**
@@ -86,7 +88,7 @@ export class PropertiesMethods {
             
             ${!shouldDisableSelector ? `
                 <button class="btn btn-sm btn-primary w-100 mt-2" 
-                        onclick="flowDesigner.selectRichmenu('${node.id}')">
+                        data-on="click:selectRichmenu" data-node-id="${node.id}">
                     <i class="bi bi-arrow-right-circle"></i> 載入 Richmenu
                 </button>
             ` : ''}
@@ -94,7 +96,7 @@ export class PropertiesMethods {
             ${node.data.buttons.length > 0 ? `
                 <div class="mt-3">
                     <button class="btn btn-sm btn-success w-100" 
-                            onclick="flowDesigner.expandRichmenuButtons(flowDesigner.nodes.find(n => n.id === '${node.id}'))">
+                            data-on="click:expandRichmenuButtons" data-node-id="${node.id}">
                         <i class="bi bi-diagram-3"></i> 展開所有按鈕
                     </button>
                 </div>
@@ -120,14 +122,14 @@ export class PropertiesMethods {
             ${dataLoader.renderResourceSelector('flex', node.data.flexId)}
             
             <button class="btn btn-sm btn-primary w-100 mt-2" 
-                    onclick="flowDesigner.selectFlex('${node.id}')">
+                    data-on="click:selectFlex" data-node-id="${node.id}">
                 <i class="bi bi-arrow-right-circle"></i> 載入 Flex Message
             </button>
             
             ${node.data.buttons && node.data.buttons.length > 0 ? `
                 <div class="mt-3">
                     <button class="btn btn-sm btn-success w-100" 
-                            onclick="flowDesigner.expandFlexButtons(flowDesigner.nodes.find(n => n.id === '${node.id}'))">
+                            data-on="click:expandFlexButtons" data-node-id="${node.id}">
                         <i class="bi bi-diagram-3"></i> 自動展開所有按鈕
                     </button>
                 </div>
@@ -159,7 +161,7 @@ export class PropertiesMethods {
             
             ${!shouldDisableSelector ? `
                 <button class="btn btn-sm btn-primary w-100 mt-2" 
-                        onclick="flowDesigner.selectImagemap('${node.id}')">
+                        data-on="click:selectImagemap" data-node-id="${node.id}">
                     <i class="bi bi-arrow-right-circle"></i> 載入 Imagemap
                 </button>
             ` : ''}
@@ -167,7 +169,7 @@ export class PropertiesMethods {
             ${node.data.actions && node.data.actions.length > 0 ? `
                 <div class="mt-3">
                     <button class="btn btn-sm btn-success w-100" 
-                            onclick="flowDesigner.expandImagemapButtons(flowDesigner.nodes.find(n => n.id === '${node.id}'))">
+                            data-on="click:expandImagemapButtons" data-node-id="${node.id}">
                         <i class="bi bi-diagram-3"></i> 展開所有區域
                     </button>
                 </div>
@@ -193,7 +195,7 @@ export class PropertiesMethods {
             <div class="mb-3">
                 <label class="form-label">訊息內容</label>
                 <textarea class="form-control" rows="4" id="text-content-${node.id}"
-                          oninput="flowDesigner.updateNodeText('${node.id}', this.value)">${node.data.text || ''}</textarea>
+                          data-on="input:updateNodeText" data-node-id="${node.id}">${node.data.text || ''}</textarea>
                 <div class="form-text">最多 2000 字</div>
             </div>
         `;
@@ -208,19 +210,19 @@ export class PropertiesMethods {
             <div class="message-item mb-2 p-2 border rounded" data-index="${index}">
                 <div class="d-flex justify-content-between align-items-center mb-1">
                     <span class="badge bg-primary">${index + 1}</span>
-                    <button class="btn btn-sm btn-danger" onclick="flowDesigner.removeSequenceMessage('${node.id}', ${index})">
+                    <button class="btn btn-sm btn-danger" data-on="click:removeSequenceMessage" data-node-id="${node.id}" data-index="${index}">
                         <i class="bi bi-trash"></i>
                     </button>
                 </div>
                 <div class="mb-1">
-                    <select class="form-select form-select-sm" onchange="flowDesigner.updateMessageType('${node.id}', ${index}, this.value)">
+                    <select class="form-select form-select-sm" data-on="change:updateMessageType" data-node-id="${node.id}" data-index="${index}">
                         <option value="text" ${msg.type === 'text' ? 'selected' : ''}>文字訊息</option>
                         <option value="image" ${msg.type === 'image' ? 'selected' : ''}>圖片訊息 (暫未支援)</option>
                     </select>
                 </div>
                 ${msg.type === 'text' ? `
                     <textarea class="form-control form-control-sm" rows="2" 
-                              onchange="flowDesigner.updateMessageContent('${node.id}', ${index}, this.value)">${msg.text || ''}</textarea>
+                              data-on="change:updateMessageContent" data-node-id="${node.id}" data-index="${index}">${msg.text || ''}</textarea>
                 ` : ''}
             </div>
         `).join('');
@@ -230,7 +232,7 @@ export class PropertiesMethods {
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <label class="form-label mb-0">訊息列表 (${messages.length}/5)</label>
                     <button class="btn btn-sm btn-success" 
-                            onclick="flowDesigner.addSequenceMessage('${node.id}')"
+                            data-on="click:addSequenceMessage" data-node-id="${node.id}"
                             ${messages.length >= 5 ? 'disabled' : ''}>
                         <i class="bi bi-plus-circle"></i> 新增
                     </button>
@@ -243,7 +245,7 @@ export class PropertiesMethods {
                 <label class="form-label">訊息間延遲（毫秒）</label>
                 <input type="number" class="form-control" min="0" max="5000" step="100"
                        value="${node.data.delay || 0}"
-                       onchange="flowDesigner.updateSequenceDelay('${node.id}', this.value)">
+                       data-on="change:updateSequenceDelay" data-node-id="${node.id}">
                 <div class="form-text">0-5000 毫秒</div>
             </div>
         `;
@@ -256,7 +258,7 @@ export class PropertiesMethods {
         return `
             <div class="mb-3">
                 ${dataLoader.renderResourceSelector('keyword', node.data.keyword)}
-                <button class="btn btn-primary w-100 mt-2" onclick="flowDesigner.selectKeyword('${node.id}')">
+                <button class="btn btn-primary w-100 mt-2" data-on="click:selectKeyword" data-node-id="${node.id}">
                     <i class="bi bi-download"></i> 載入 Keyword
                 </button>
             </div>
@@ -264,13 +266,13 @@ export class PropertiesMethods {
                 <label class="form-label">關鍵字</label>
                 <input type="text" class="form-control" value="${node.data.keyword || ''}"
                        id="keyword-${node.id}"
-                       onchange="flowDesigner.updateNodeKeyword('${node.id}', this.value)" readonly>
+                       data-on="change:updateNodeKeyword" data-node-id="${node.id}" readonly>
                 <small class="text-muted">從上方選擇關鍵字後載入</small>
             </div>
             <div class="mb-3">
                 <label class="form-label">比對方式</label>
                 <select class="form-select" id="match-type-${node.id}"
-                        onchange="flowDesigner.updateNodeMatchType('${node.id}', this.value)" disabled>
+                        data-on="change:updateNodeMatchType" data-node-id="${node.id}" disabled>
                     <option value="exact" ${node.data.matchType === 'exact' ? 'selected' : ''}>完全符合</option>
                     <option value="contains" ${node.data.matchType === 'contains' ? 'selected' : ''}>包含</option>
                     <option value="regex" ${node.data.matchType === 'regex' ? 'selected' : ''}>正則表達式</option>
@@ -290,7 +292,7 @@ export class PropertiesMethods {
                 <input type="number" class="form-control" min="1" max="300"
                        value="${node.data.seconds}"
                        id="delay-${node.id}"
-                       onchange="flowDesigner.updateNodeDelay('${node.id}', this.value)">
+                       data-on="change:updateNodeDelay" data-node-id="${node.id}">
                 <div class="form-text">1-300 秒</div>
             </div>
         `;
@@ -304,7 +306,7 @@ export class PropertiesMethods {
             <div class="mb-3">
                 <label class="form-label">操作類型</label>
                 <select class="form-select" id="tag-operation-${node.id}"
-                        onchange="flowDesigner.updateNodeTagOperation('${node.id}', this.value)">
+                        data-on="change:updateNodeTagOperation" data-node-id="${node.id}">
                     <option value="add" ${node.data.operation === 'add' ? 'selected' : ''}>新增標籤</option>
                     <option value="remove" ${node.data.operation === 'remove' ? 'selected' : ''}>移除標籤</option>
                 </select>
@@ -315,7 +317,7 @@ export class PropertiesMethods {
                        placeholder="輸入標籤，用逗號分隔"
                        value="${(node.data.tags || []).join(', ')}"
                        id="tags-${node.id}"
-                       onchange="flowDesigner.updateNodeTags('${node.id}', this.value)">
+                       data-on="change:updateNodeTags" data-node-id="${node.id}">
             </div>
         `;
     }

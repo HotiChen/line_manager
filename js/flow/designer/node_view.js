@@ -6,6 +6,7 @@ import { toast } from '../../../helper/toast.js';
 import { setInnerHTML } from '../../../helper/security.js';
 import FlowNodeAdapter from '../../flow_node_adapter.js';
 import { NodeTypes, NodeTypeConfig, getDefaultNodeData } from '../node_types.js';
+import { bindActions } from './actions.js';
 
 export class NodeViewMethods {
     findOpenPosition(baseX, baseY) {
@@ -128,10 +129,10 @@ export class NodeViewMethods {
                     <span style="font-weight: bold;">${node.data.label || node.data.name || node.config.label}</span>
                 </div>
                 <div class="node-zoom-controls" style="display: flex; gap: 4px;">
-                    <button onclick="flowDesigner.zoomNode('${node.id}', 0.1); event.stopPropagation();" 
+                    <button data-on="click:zoomNode" data-node-id="${node.id}" data-delta="0.1" data-stop 
                             style="width: 20px; height: 20px; border: none; background: #ecf0f1; border-radius: 3px; cursor: pointer; font-size: 12px; line-height: 1;"
                             title="放大">+</button>
-                    <button onclick="flowDesigner.zoomNode('${node.id}', -0.1); event.stopPropagation();" 
+                    <button data-on="click:zoomNode" data-node-id="${node.id}" data-delta="-0.1" data-stop 
                             style="width: 20px; height: 20px; border: none; background: #ecf0f1; border-radius: 3px; cursor: pointer; font-size: 12px; line-height: 1;"
                             title="縮小">-</button>
                 </div>
@@ -146,7 +147,7 @@ export class NodeViewMethods {
                     <img src="${node.data.imageUrl}" 
                          style="width: 100%; height: auto; border-radius: 4px; border: 1px solid #ddd; display: block;"
                          alt="${node.data.name}"
-                         onload="flowDesigner.drawRichmenuButtons('${node.id}', '${imageContainerId}')">
+                         data-on="load:drawRichmenuButtons" data-node-id="${node.id}" data-container-id="${imageContainerId}">
                 </div>
                 <div style="font-size: 11px; color: #666; margin-bottom: 4px;">
                     <strong>${node.data.name}</strong>
@@ -173,7 +174,7 @@ export class NodeViewMethods {
                 <div class="node-output-point"
                      data-node-id="${node.id}"
                      data-output="default"
-                     onmousedown="event.stopPropagation(); flowDesigner.startConnectionDrag('${node.id}', 'output', event, 'default');"
+                     data-on="mousedown:startConnectionDrag" data-handle="default" data-stop
                      style="position: absolute; right: -8px; top: 50%; transform: translateY(-50%);
                             width: 16px; height: 16px; background: ${node.config.color};
                             border: 2px solid white; border-radius: 50%; cursor: crosshair;
@@ -191,8 +192,7 @@ export class NodeViewMethods {
                     <img src="${imagemapImageUrl}" 
                          style="width: 100%; height: auto; border-radius: 4px; border: 1px solid #ddd; display: block; max-width: 280px;"
                          alt="${node.data.altText || node.data.title || 'Imagemap'}"
-                         onload="flowDesigner.drawImagemapAreas('${node.id}', '${imageContainerId}')"
-                         onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                         data-on="load:drawImagemapAreas error:showImageFallback" data-node-id="${node.id}" data-container-id="${imageContainerId}">
                     <div style="display: none; padding: 20px; background: #f8f9fa; border-radius: 4px; text-align: center; color: #6c757d;">
                         <i class="bi bi-image" style="font-size: 24px;"></i>
                         <div style="font-size: 11px; margin-top: 8px;">圖片載入失敗</div>
@@ -213,7 +213,7 @@ export class NodeViewMethods {
                 <div class="node-output-point"
                      data-node-id="${node.id}"
                      data-output="default"
-                     onmousedown="event.stopPropagation(); flowDesigner.startConnectionDrag('${node.id}', 'output', event, 'default');"
+                     data-on="mousedown:startConnectionDrag" data-handle="default" data-stop
                      style="position: absolute; right: -8px; top: 50%; transform: translateY(-50%);
                             width: 16px; height: 16px; background: ${node.config.color};
                             border: 2px solid white; border-radius: 50%; cursor: crosshair;
@@ -235,7 +235,7 @@ export class NodeViewMethods {
                     <div class="node-output-point"
                          data-node-id="${node.id}"
                          data-output="default"
-                         onmousedown="event.stopPropagation(); flowDesigner.startConnectionDrag('${node.id}', 'output', event, 'default');"
+                         data-on="mousedown:startConnectionDrag" data-handle="default" data-stop
                          style="position: absolute; right: -8px; top: 50%; transform: translateY(-50%);
                                 width: 16px; height: 16px; background: ${node.config.color};
                                 border: 2px solid white; border-radius: 50%; cursor: crosshair;
@@ -247,6 +247,7 @@ export class NodeViewMethods {
         }
 
         setInnerHTML(nodeElement, innerHTML);
+        bindActions(nodeElement, this);
 
         // 點擊選中
         nodeElement.onclick = (e) => {

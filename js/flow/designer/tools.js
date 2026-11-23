@@ -4,6 +4,7 @@
 
 import { toast } from '../../../helper/toast.js';
 import { NodeTypeConfig } from '../node_types.js';
+import { bindActions } from './actions.js';
 
 export class ToolsMethods {
     // ─────────────────────────────────────────────
@@ -98,7 +99,7 @@ export class ToolsMethods {
                 <i class="bi bi-search" style="color:#666;"></i>
                 <input type="text" id="flow-search-input" placeholder="搜尋節點名稱、類型…"
                     style="flex:1; border:none; outline:none; font-size:15px;">
-                <button onclick="flowDesigner.hideSearch()"
+                <button data-on="click:hideSearch"
                     style="border:none; background:none; cursor:pointer; color:#aaa; font-size:16px;">✕</button>
             </div>
             <div id="flow-search-results" style="max-height:280px; overflow-y:auto;"></div>
@@ -106,6 +107,7 @@ export class ToolsMethods {
         document.body.appendChild(panel);
         this.searchPanel = panel;
 
+        bindActions(panel, this);
         const input = panel.querySelector('#flow-search-input');
         input.focus();
         input.addEventListener('input', () => this._performSearch(input.value));
@@ -142,7 +144,7 @@ export class ToolsMethods {
         matches.forEach(n => {
             const itemDiv = document.createElement('div');
             itemDiv.style.cssText = 'padding:10px 12px; cursor:pointer; border-radius:6px; display:flex; gap:10px; align-items:center;';
-            itemDiv.onclick = () => { flowDesigner.focusOnNode(n.id); flowDesigner.hideSearch(); };
+            itemDiv.onclick = () => { this.focusOnNode(n.id); this.hideSearch(); };
             itemDiv.onmouseenter = () => { itemDiv.style.background = '#f0f4ff'; };
             itemDiv.onmouseleave = () => { itemDiv.style.background = 'white'; };
 
