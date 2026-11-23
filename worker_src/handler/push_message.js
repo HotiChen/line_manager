@@ -2,6 +2,8 @@ import { jsonResponse } from "../lib/utils.js";
 import { getAccessToken, pushMessage } from "../lib/line_api.js";
 import { incrementMessageCount } from "../lib/message_stats.js";
 import { openBotStore } from "../lib/bot_store.js";
+import { replaceMessageVariables } from "../lib/message_variables.js";
+import { getMemberTier } from "../lib/tier_system.js";
 
 export async function handleSendPushMessage(request, env, userId) {
     try {
@@ -18,42 +20,17 @@ export async function handleSendPushMessage(request, env, userId) {
 
         const store = await openBotStore(env, userId);
 
-        // 🔹 變數替換邏輯 (Variable Replacement)
-        // 取得會員資料
+        // 🔹 變數替換：與關鍵字回覆、歡迎訊息、流程共用同一份（js: message_variables.js）
+        //    以前這裡有自己的一套，只支援 4 種變數、用伺服器時區（UTC），(@day) 也少了「星期」
         const profile = await store.get('member', to);
         const memberName = profile ? (profile.name || profile.lineName || "朋友") : "朋友";
+        const tierInfo = await getMemberTier(store, to).catch(() => null);
 
-        const now = new Date();
-        const dateStr = now.toLocaleDateString('zh-TW');
-        const timeStr = now.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
-        const days = ['日', '一', '二', '三', '四', '五', '六'];
-        const dayStr = days[now.getDay()];
-
-        // 處理每一則訊息
-        const processedMessages = messages.map(msg => {
-            const newMsg = { ...msg };
-
-            // 替換函數
-            const replaceVars = (str) => {
-                if (typeof str !== 'string') return str;
-                return str
-                    .replace(/\(@name\)/g, memberName)
-                    .replace(/\(@date\)/g, dateStr)
-                    .replace(/\(@time\)/g, timeStr)
-                    .replace(/\(@day\)/g, dayStr);
-            };
-
-            // 文字訊息
-            if (newMsg.type === 'text') {
-                newMsg.text = replaceVars(newMsg.text);
-            }
-            // Flex / Imagemap / 其他類型的 altText
-            if (newMsg.altText) {
-                newMsg.altText = replaceVars(newMsg.altText);
-            }
-
-            return newMsg;
-        });
+        // 複製每一則再替換，不改到呼叫端傳進來的物件
+        const processedMessages = replaceMessageVariables(
+            messages.map((msg) => ({ ...msg })),
+            { userName: memberName, tierInfo }
+        );
 
         const result = await pushMessage(token, to, processedMessages);
 

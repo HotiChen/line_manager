@@ -17,8 +17,9 @@ import * as logger from '../utils/logger.js';
 import { findMatchingKeyword } from './keyword_matcher.js';
 import { tryHandleFlowMessage, tryHandleFlowPostback } from './flow_dispatch.js';
 import { replaceMessageVariables } from './message_variables.js';
-import { getQuickReplyTemplate } from './quick_reply.js';
-import { formatReplyMessage, getLineUserProfile, normalizeImagemapActions, replyWithRetry } from './line_client.js';
+import { formatReplies, attachQuickReply } from './message_pipeline.js';
+import { pickQuickReplyId } from '../../js/shared/message_core.js';
+import { getLineUserProfile, replyWithRetry } from './line_client.js';
 import { incrementMessageCount } from './message_stats.js';
 import { syncMemberRichMenu } from './segmented_richmenu_logic.js';
 import { addTagsToEntity, removeTagsFromEntity } from './tag_system.js';
@@ -155,14 +156,8 @@ export async function handleMessageEvent(event, env, userId, accessToken, ctx, b
         return;
     }
     logger.info('MATCH', `匹配成功！關鍵字: "${match.keyword}", 回覆數: ${match.replies.length}`);
-    // 格式化回覆訊息
-    const messages = await Promise.all(
-        match.replies.map(reply => formatReplyMessage(reply, env, userId))
-    );
-    // 過濾掉 null 值並正規化
-    let validMessages = messages
-        .filter(msg => msg !== null)
-        .map(msg => normalizeImagemapActions(msg));
+    // 格式化回覆訊息（丟掉不合法的、限制 5 則、Imagemap 正規化）
+    let validMessages = await formatReplies(match.replies, env, userId);
     if (validMessages.length === 0) {
         logger.warn('REPLY', '沒有有效的回覆訊息');
         return;
@@ -192,17 +187,7 @@ export async function handleMessageEvent(event, env, userId, accessToken, ctx, b
     }
 
     // 處理 keyword-level 的 Quick Reply
-    let qrId = match.quickReplyId;
-    if (!qrId) {
-        const replyWithQR = match.replies.find(r => r.quickReplyId);
-        if (replyWithQR) qrId = replyWithQR.quickReplyId;
-    }
-    if (qrId && validMessages.length > 0) {
-        const quickReply = await getQuickReplyTemplate(store, qrId);
-        if (quickReply) {
-            validMessages[validMessages.length - 1].quickReply = quickReply;
-        }
-    }
+    await attachQuickReply(store, validMessages, pickQuickReplyId(match));
 
     // --- [背景任務區] 使用 ctx.waitUntil 異步處理 ---
     if (ctx && ctx.waitUntil) {
@@ -291,26 +276,14 @@ export async function handleFollowEvent(event, env, userId, accessToken, ctx, bo
     try {
         const welcomeConfig = await store.get('welcome');
         if (welcomeConfig && welcomeConfig.enabled && welcomeConfig.replies) {
-            const messages = await Promise.all(
-                welcomeConfig.replies.map(reply => formatReplyMessage(reply, env, userId))
-            );
-            let validMessages = messages.filter(msg => msg !== null);
+            let validMessages = await formatReplies(welcomeConfig.replies, env, userId);
             // 🆕 取得使用者名稱並替換變數
             const profile = await getLineUserProfile(lineUserId, accessToken);
             const userName = profile?.displayName || '用戶';
             validMessages = replaceMessageVariables(validMessages, { userName });
-            // 處理 keyword-level 的 Quick Reply
-            let qrId = welcomeConfig.quickReplyId;
-            if (!qrId) {
-                const replyWithQR = welcomeConfig.replies.find(r => r.quickReplyId);
-                if (replyWithQR) qrId = replyWithQR.quickReplyId;
-            }
-            if (qrId && validMessages.length > 0) {
-                const quickReply = await getQuickReplyTemplate(store, qrId);
-                if (quickReply) {
-                    validMessages[validMessages.length - 1].quickReply = quickReply;
-                    logger.info('QR', `已附加 QR 到歡迎訊息`);
-                }
+            // 處理 Quick Reply
+            if (await attachQuickReply(store, validMessages, pickQuickReplyId(welcomeConfig))) {
+                logger.info('QR', `已附加 QR 到歡迎訊息`);
             }
             if (validMessages.length > 0) {
                 await replyWithRetry(event.replyToken, validMessages, accessToken);

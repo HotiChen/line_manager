@@ -6,6 +6,7 @@
 import { validateFlow } from '../../js/shared/flow_schema.js';
 import { runFrom, MAX_REPLY_MESSAGES, MAX_DELAY_SECONDS } from './flow_runtime.js';
 import { validateApiNode, MAX_API_CALLS } from './flow_api.js';
+import { validateMessage } from '../../js/shared/message_core.js';
 
 const SUPPORTED = new Set([
     'keyword', 'richmenu',
@@ -17,7 +18,6 @@ const UNSUPPORTED_LABEL = {
     webhook: 'Webhook',
 };
 
-const isHttps = (u) => /^https:\/\//i.test(String(u || ''));
 const CONDITION_FIELDS = ['text', 'userId', 'tag'];
 
 /** 只留執行需要的欄位，避免把整份設計器資料（含預覽圖等）塞進 KV */
@@ -47,15 +47,19 @@ function nodeProblem(node) {
             if (d.matchType && !['exact', 'contains'].includes(d.matchType)) return '比對方式只支援「完全符合」與「包含」';
             return null;
         case 'message_text':
-            return String(d.text || '').trim() ? null : '文字訊息是空的';
+            return validateMessage({ type: 'text', text: d.text });
         case 'message_image':
-            if (!isHttps(d.url)) return '圖片網址必須以 https:// 開頭';
-            if (d.previewUrl && !isHttps(d.previewUrl)) return '預覽圖網址必須以 https:// 開頭';
-            return null;
+            return validateMessage({ type: 'image', originalContentUrl: d.url, previewImageUrl: d.previewUrl });
         case 'message_sequence': {
             const msgs = Array.isArray(d.messages) ? d.messages : [];
-            if (!msgs.some((m) => m && ((m.type === 'text' && m.text) || (m.type === 'image' && m.url)))) return '訊息序列沒有可發送的訊息';
-            if (msgs.some((m) => m && m.type === 'image' && !isHttps(m.url))) return '序列裡的圖片網址必須以 https:// 開頭';
+            if (!msgs.length) return '訊息序列沒有可發送的訊息';
+            for (let i = 0; i < msgs.length; i++) {
+                const m = msgs[i] || {};
+                const error = m.type === 'image'
+                    ? validateMessage({ type: 'image', originalContentUrl: m.url, previewImageUrl: m.previewUrl })
+                    : validateMessage({ type: 'text', text: m.text });
+                if (error) return `序列第 ${i + 1} 則：${error}`;
+            }
             return null;
         }
         case 'action_condition': {
@@ -76,9 +80,9 @@ function nodeProblem(node) {
         case 'action_api':
             return validateApiNode(d);
         case 'message_flex':
-            return d.contents ? null : '尚未選擇 Flex 訊息';
+            return validateMessage({ type: 'flex', contents: d.contents });
         case 'message_imagemap':
-            return (d.baseUrl && Array.isArray(d.actions)) ? null : '尚未選擇 Imagemap';
+            return validateMessage({ type: 'imagemap', baseUrl: d.baseUrl, actions: d.actions });
         case 'action_tag':
             return (Array.isArray(d.tags) && d.tags.some((t) => String(t).trim())) ? null : '標籤節點沒有設定標籤';
         case 'url':
