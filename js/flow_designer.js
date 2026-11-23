@@ -206,6 +206,7 @@ export async function pageInit() {
         window.flowDesigner = new FlowDesigner('flow-canvas');
         // 靜態工具列按鈕（pages/flow_designer_full.html 的 data-on）
         bindActions(document.body, window.flowDesigner);
+        window.flowDesigner.refreshPublishedStatus();
 
         // 標記已初始化
         window._flowDesignerInitialized = true;
@@ -292,6 +293,7 @@ async function initializeFlowSelectors() {
                 if (window.flowDesigner) {
                     window.flowDesigner.switchBot(previousBot);
                     switched = true;
+                    window.flowDesigner.refreshPublishedStatus();
 
                     // ✅ 清除 dataLoader 快取並重新載入新 Bot 的資料
                     if (window.dataLoader) {

@@ -60,6 +60,8 @@ export const ACTIONS = Object.freeze({
     showSearch: (fd) => fd.showSearch(),
     hideSearch: (fd) => fd.hideSearch(),
     reloadFlow: (fd) => fd.reloadFlow(),
+    publishFlow: (fd) => fd.publishFlow(),
+    unpublishFlow: (fd) => fd.unpublishFlow(),
     toggleSidebar: (fd) => fd.toggleSidebar(),
     togglePalette: () => document.getElementById('node-palette')?.classList.toggle('collapsed'),
 });

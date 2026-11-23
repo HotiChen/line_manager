@@ -95,6 +95,9 @@ export const BotKeys = {
     keyword: (botId, keywordId) => botKey(botId, 'keyword', keywordId),
     keywordStats: (botId) => botKey(botId, 'keyword_stats'),
 
+    // ── Flow 執行（每個 bot 同時只有一份已發布的 flow）──
+    flowPublished: (botId) => botKey(botId, 'flow_published'),
+
     // ── 訊息素材 ──
     flexList: (botId) => botKey(botId, 'flex_list'),
     flex: (botId, flexId) => botKey(botId, 'flex', flexId),

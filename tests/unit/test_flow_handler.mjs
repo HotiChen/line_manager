@@ -232,3 +232,70 @@ describe('handleGetFlow / handleDeleteFlow / handleListVersions', () => {
         assert.equal(body.versions[0].name, 'v2');
     });
 });
+
+describe('發布 /flow/publish /flow/unpublish /flow/published', () => {
+    const MEMBER = 'Umember000000000000000000000004';
+    const okFlow = {
+        name: '客服',
+        nodes: [
+            { id: 'k', type: 'keyword', position: { x: 0, y: 0 }, data: { keyword: '你好', matchType: 'exact' } },
+            { id: 't', type: 'message_text', position: { x: 1, y: 0 }, data: { text: '哈囉' } },
+        ],
+        edges: [{ source: 'k', target: 't', sourceHandle: 'default' }],
+    };
+    const save = async (body, user = USER, bot = BOT_A) =>
+        (await json(await handleSaveFlow(req('POST', '/flow/save', { body }), env, user, bot))).body.flowId;
+
+    it('通過檢查 → 寫入已發布版本；GET 看得到；再發布另一份會取代', async () => {
+        const id = await save(okFlow);
+        const { status, body } = await json(await route(req('POST', `/flow/publish/${id}`), env, USER, `/flow/publish/${id}`));
+        assert.equal(status, 200);
+        assert.deepEqual(body.published.keywords, ['你好']);
+
+        const got = (await json(await route(req('GET', '/flow/published'), env, USER, '/flow/published'))).body;
+        assert.equal(got.published.flowId, id);
+
+        const id2 = await save({ ...okFlow, name: '另一份' });
+        await route(req('POST', `/flow/publish/${id2}`), env, USER, `/flow/publish/${id2}`);
+        const again = (await json(await route(req('GET', '/flow/published'), env, USER, '/flow/published'))).body;
+        assert.equal(again.published.name, '另一份');
+    });
+
+    it('檢查沒過 → 400 附節點錯誤，且不動目前已發布的版本', async () => {
+        const good = await save(okFlow);
+        await route(req('POST', `/flow/publish/${good}`), env, USER, `/flow/publish/${good}`);
+
+        const bad = await save({ name: 'bad', nodes: [{ id: 'k', type: 'keyword', position: { x: 0, y: 0 }, data: { keyword: '' } }], edges: [] });
+        const { status, body } = await json(await route(req('POST', `/flow/publish/${bad}`), env, USER, `/flow/publish/${bad}`));
+        assert.equal(status, 400);
+        assert.equal(body.errors[0].nodeId, 'k');
+
+        const got = (await json(await route(req('GET', '/flow/published'), env, USER, '/flow/published'))).body;
+        assert.equal(got.published.flowId, good);
+    });
+
+    it('只有 owner 能發布 / 取消發布；成員只能看', async () => {
+        await env.KV_LINE_STORAGE.put(BotKeys.permissions(BOT_A), JSON.stringify({ users: [{ userId: USER, role: 'owner' }, { userId: MEMBER, role: 'member' }] }));
+        await env.KV_LINE_STORAGE.put(UserKeys.bots(MEMBER), JSON.stringify({ currentBotId: BOT_A, bots: [BOT_A] }));
+        const id = await save(okFlow);
+
+        assert.equal((await route(req('POST', `/flow/publish/${id}`), env, MEMBER, `/flow/publish/${id}`)).status, 403);
+        assert.equal((await route(req('DELETE', '/flow/unpublish'), env, MEMBER, '/flow/unpublish')).status, 403);
+        assert.equal((await route(req('GET', '/flow/published'), env, MEMBER, '/flow/published')).status, 200);
+    });
+
+    it('不存在 / 不合法 id；別的 bot 的 flow 不能發布', async () => {
+        assert.equal((await route(req('POST', '/flow/publish/ghost'), env, USER, '/flow/publish/ghost')).status, 404);
+        assert.equal((await route(req('POST', '/flow/publish/a:b'), env, USER, '/flow/publish/a:b')).status, 400);
+        const other = await save(okFlow, OTHER, BOT_B);
+        assert.equal((await route(req('POST', `/flow/publish/${other}`), env, USER, `/flow/publish/${other}`)).status, 404);
+    });
+
+    it('unpublish 後 GET 回 null', async () => {
+        const id = await save(okFlow);
+        await route(req('POST', `/flow/publish/${id}`), env, USER, `/flow/publish/${id}`);
+        assert.equal((await route(req('DELETE', '/flow/unpublish'), env, USER, '/flow/unpublish')).status, 200);
+        const got = (await json(await route(req('GET', '/flow/published'), env, USER, '/flow/published'))).body;
+        assert.equal(got.published, null);
+    });
+});

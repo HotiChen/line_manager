@@ -1,5 +1,7 @@
 import { jsonResponse } from "../lib/utils.js";
 import { withPermission } from "../middleware/permission.js";
+import { BotKeys } from "../lib/kv_schema.js";
+import { compileFlow } from "../lib/flow_compiler.js";
 import {
     validateFlow,
     normalizeFlowName,
@@ -205,14 +207,61 @@ export async function handleListVersions(request, env, userId, botId, role, flow
     return jsonResponse({ success: true, versions: sorted });
 }
 
+function publishedSummary(p) {
+    return {
+        flowId: p.flowId,
+        name: p.name,
+        publishedAt: p.publishedAt,
+        triggerCount: (p.triggers || []).length,
+        keywords: (p.triggers || []).map((t) => t.keyword),
+    };
+}
+
+/**
+ * POST /flow/publish/:flowId（僅 owner：會改變 bot 的實際回覆）
+ * 以「已儲存」的版本為準：先檢查、編譯，通過才取代目前已發布的 flow（每個 bot 同時只有一份）。
+ */
+export async function handlePublishFlow(request, env, userId, botId, role, flowId) {
+    if (!isValidFlowId(flowId)) return jsonResponse({ error: "Invalid flow id" }, 400);
+    const found = await readFlow(env, userId, botId, flowId);
+    if (!found) return jsonResponse({ error: "Flow not found" }, 404);
+
+    const result = compileFlow({ ...found.flow, id: flowId }, { botId });
+    if (!result.ok) {
+        return jsonResponse({ error: "Flow cannot be published", errors: result.errors.slice(0, 20) }, 400);
+    }
+
+    await env.KV_LINE_STORAGE.put(BotKeys.flowPublished(botId), JSON.stringify(result.published));
+    return jsonResponse({ success: true, published: publishedSummary(result.published), warnings: result.warnings });
+}
+
+/** DELETE /flow/unpublish（僅 owner）— bot 回到只用「關鍵字回覆」 */
+export async function handleUnpublishFlow(request, env, userId, botId) {
+    await env.KV_LINE_STORAGE.delete(BotKeys.flowPublished(botId));
+    return jsonResponse({ success: true });
+}
+
+/** GET /flow/published — 目前已發布的 flow（沒有則 published: null） */
+export async function handleGetPublished(request, env, userId, botId) {
+    const p = parseJson(await env.KV_LINE_STORAGE.get(BotKeys.flowPublished(botId)), null);
+    return jsonResponse({ success: true, published: p && p.version === 1 ? publishedSummary(p) : null });
+}
+
 /**
  * Router — 每條路由都經 withPermission（botId 由它注入）
  */
 export function route(request, env, userId, pathname) {
     const guarded = (handler, ...args) => withPermission(handler)(request, env, userId, ...args);
+    const ownerOnly = (handler, ...args) => withPermission(handler, "owner")(request, env, userId, ...args);
+
+    if (pathname === "/flow/published" && request.method === "GET") return guarded(handleGetPublished);
+    if (pathname === "/flow/unpublish" && request.method === "DELETE") return ownerOnly(handleUnpublishFlow);
 
     if (pathname === "/flow/list" && request.method === "GET") return guarded(handleListFlows);
     if (pathname === "/flow/save" && request.method === "POST") return guarded(handleSaveFlow);
+
+    const publish = pathname.match(/^\/flow\/publish\/(.+)$/);
+    if (publish && request.method === "POST") return ownerOnly(handlePublishFlow, publish[1]);
 
     const match = pathname.match(/^\/flow\/(get|delete|versions)\/(.+)$/);
     if (match) {

@@ -88,6 +88,7 @@ export class PersistMethods {
             this._writeDraft();
             this.isDirty = false;
             toast.success('✅ 流程已載入');
+            this.refreshPublishedStatus();
         } catch (err) {
             console.error('載入失敗:', err);
             toast.error('❌ 載入失敗: ' + err.message);
@@ -314,6 +315,94 @@ export class PersistMethods {
         this.isDirty = false;
 
         toast.success('✅ 畫布已清空');
+    }
+
+
+    /**
+     * 發布：先儲存，再請後端檢查並編譯；通過後 LINE 官方帳號就照這份流程執行。
+     * 檢查沒過時，把有問題的節點標紅並跳到第一個。
+     */
+    async publishFlow() {
+        if (this.isPublishing) return;
+        this.isPublishing = true;
+        try {
+            await this.saveFlow();
+            if (!this.flowId || this.isDirty) return; // 儲存失敗，saveFlow 已提示
+
+            const res = await api.post(`/flow/publish/${this.flowId}`, {}, { rawResponse: true, showErrorToast: false });
+            const data = await res.json().catch(() => ({}));
+
+            if (res.ok) {
+                toast.success('🚀 已發布，LINE 官方帳號現在照這個流程回覆');
+                (data.warnings || []).slice(0, 3).forEach((w) => toast.warning(escapeHtml(String(w))));
+                this.clearPublishErrors();
+                await this.refreshPublishedStatus();
+            } else if (res.status === 400 && Array.isArray(data.errors)) {
+                this.showPublishErrors(data.errors);
+            } else if (res.status === 403) {
+                toast.error('只有 Bot 擁有者可以發布流程');
+            } else {
+                toast.error('發布失敗：' + (data.error || `HTTP ${res.status}`));
+            }
+        } catch (err) {
+            toast.error('發布失敗：' + err.message);
+        } finally {
+            this.isPublishing = false;
+        }
+    }
+
+    /** 取消發布：LINE 官方帳號回到只使用「關鍵字回覆」 */
+    unpublishFlow() {
+        this.showConfirm('取消發布', '取消後，LINE 官方帳號不再執行這個流程，改回只使用「關鍵字回覆」。確定嗎？', async () => {
+            try {
+                await api.delete('/flow/unpublish');
+                toast.success('已取消發布');
+                await this.refreshPublishedStatus();
+            } catch (err) {
+                toast.error('取消發布失敗：' + err.message);
+            }
+        });
+    }
+
+    clearPublishErrors() {
+        document.querySelectorAll('.flow-node.publish-error').forEach((el) => el.classList.remove('publish-error'));
+    }
+
+    showPublishErrors(errors) {
+        this.clearPublishErrors();
+        const lines = errors.slice(0, 5).map((e) => {
+            const node = e.nodeId ? this.store.getNode(e.nodeId) : null;
+            const label = node ? (node.data.label || node.config?.label || node.type) : '';
+            if (e.nodeId) document.getElementById(e.nodeId)?.classList.add('publish-error');
+            return label ? `「${escapeHtml(String(label))}」${escapeHtml(e.message)}` : escapeHtml(e.message);
+        });
+        toast.error(`無法發布，請先修正：<br>${lines.join('<br>')}${errors.length > 5 ? `<br>…還有 ${errors.length - 5} 項` : ''}`);
+        const first = errors.find((e) => e.nodeId && this.store.getNode(e.nodeId));
+        if (first) this.focusOnNode(first.nodeId);
+    }
+
+    /** 更新工具列的發布狀態 */
+    async refreshPublishedStatus() {
+        const badge = document.getElementById('publish-status');
+        const unpublishBtn = document.getElementById('unpublish-btn');
+        if (!badge) return;
+        try {
+            const { published } = await api.get('/flow/published', { showErrorToast: false });
+            this.published = published || null;
+            if (!published) {
+                badge.textContent = '未發布';
+                badge.className = 'badge bg-secondary';
+            } else {
+                const mine = published.flowId === this.flowId;
+                badge.textContent = mine ? '已發布（目前流程）' : `已發布：${published.name}`;
+                badge.className = mine ? 'badge bg-success' : 'badge bg-warning text-dark';
+                badge.title = `關鍵字：${(published.keywords || []).join('、')}\n發布時間：${new Date(published.publishedAt).toLocaleString()}`;
+            }
+            if (unpublishBtn) unpublishBtn.style.display = published ? '' : 'none';
+        } catch {
+            badge.textContent = '發布狀態未知';
+            badge.className = 'badge bg-secondary';
+        }
     }
 
     /**
