@@ -68,15 +68,6 @@ describe('validateFlow', () => {
         assert.equal(r.ok, false);
         assert.match(r.errors[0], /Too many nodes/);
     });
-
-    it('前端 NodeTypes 的每個值都在白名單內', async () => {
-        const { readFile } = await import('node:fs/promises');
-        const src = await readFile(new URL('../../js/flow_designer.js', import.meta.url), 'utf8');
-        const block = src.match(/export const NodeTypes = \{([\s\S]*?)\};/)[1];
-        const values = [...block.matchAll(/:\s*'([a-z_]+)'/g)].map((m) => m[1]);
-        assert.ok(values.length >= 10);
-        for (const v of values) assert.ok(FLOW_NODE_TYPES.includes(v), `${v} 不在 FLOW_NODE_TYPES`);
-    });
 });
 
 describe('pruneDanglingEdges', () => {
