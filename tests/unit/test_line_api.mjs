@@ -15,7 +15,8 @@ import {
 } from '../../worker_src/lib/line_api.js';
 
 const originalFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = originalFetch; });
+const originalLog = console.log;
+afterEach(() => { globalThis.fetch = originalFetch; console.log = originalLog; });
 
 const MSGS = [{ type: 'text', text: 'hi' }];
 
@@ -30,6 +31,13 @@ function mockFetch(handler) {
 
 function jsonRes(body, status = 200, headers = {}) {
     return new Response(JSON.stringify(body), { status, headers });
+}
+
+/** 攔下 console.log，回傳收到的字串陣列（afterEach 會還原） */
+function captureLog() {
+    const lines = [];
+    console.log = (...args) => { lines.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')); };
+    return lines;
 }
 
 describe('pushMessage', () => {
@@ -52,6 +60,35 @@ describe('pushMessage', () => {
         const calls = mockFetch(() => jsonRes({}));
         await pushMessage('T', 'U1', MSGS, { retryKey: '123e4567-e89b-42d3-a456-426614174000' });
         assert.equal(calls[0].init.headers['X-Line-Retry-Key'], '123e4567-e89b-42d3-a456-426614174000');
+    });
+
+    it('預設不記 debug log', async () => {
+        mockFetch(() => jsonRes({}));
+        const logs = captureLog();
+        await pushMessage('T', 'U1', MSGS, { retryKey: '123e4567-e89b-42d3-a456-426614174000' });
+        assert.equal(logs.filter((l) => l.includes('[SendDebug]')).length, 0);
+    });
+
+    it('debug: true 時記下真正送出的 header 與 body（無 token、userId 已遮）', async () => {
+        mockFetch(() => jsonRes({}, 200, { 'x-line-request-id': 'req-1' }));
+        const logs = captureLog();
+        await pushMessage('TOKEN_SECRET', 'U0123456789abcdef0123456789abcdef', MSGS, { retryKey: '123e4567-e89b-42d3-a456-426614174000', debug: true });
+        const joined = logs.join('\n');
+        assert.ok(!joined.includes('TOKEN_SECRET'), 'log 含 token');
+        assert.ok(!joined.includes('U0123456789abcdef0123456789abcdef'), 'log 含 userId');
+        const req = JSON.parse(logs.find((l) => l.includes('Push request')).slice(logs.find((l) => l.includes('Push request')).indexOf('{')));
+        assert.equal(req.url, 'https://api.line.me/v2/bot/message/push');
+        assert.equal(req.headers['X-Line-Retry-Key'], '123e4567-e89b-42d3-a456-426614174000');
+        assert.ok(req.body.includes('"messages":[{"type":"text","text":"hi"}]'));
+        const res = JSON.parse(logs.find((l) => l.includes('Push response')).slice(logs.find((l) => l.includes('Push response')).indexOf('{')));
+        assert.deepEqual(res, { status: 200, request_id: 'req-1' });
+    });
+
+    it('debug: true 時失敗的回應也記下來（狀態碼與 request id）', async () => {
+        mockFetch(() => jsonRes({ message: 'bad' }, 400, { 'x-line-request-id': 'req-2' }));
+        const logs = captureLog();
+        await assert.rejects(() => pushMessage('T', 'U1', MSGS, { debug: true }));
+        assert.ok(logs.some((l) => l.includes('Push response') && l.includes('"status":400') && l.includes('req-2')));
     });
 
     it('失敗：丟 LineApiError，帶 status 與 body', async () => {

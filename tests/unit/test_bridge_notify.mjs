@@ -20,6 +20,7 @@ import { retryKeyFor } from '../../worker_src/bridge/retry_key.js';
 import { buildFlexMessage } from '../../worker_src/bridge/notify.js';
 import { writeAudit } from '../../worker_src/bridge/db.js';
 import { currentPeriod } from '../../worker_src/bridge/quota.js';
+import { maskUserId } from '../../worker_src/lib/send_debug.js';
 
 const ORIGIN = 'https://worker.example.com';
 const OWNER = 'Uowner0000000000000000000000001';
@@ -72,6 +73,7 @@ function installLine() {
         const u = String(url);
         if (u.endsWith('/v2/bot/message/quota/consumption')) return new Response(JSON.stringify({ totalUsage: line.usage }), { status: 200 });
         if (u.endsWith('/v2/bot/message/quota')) return new Response(JSON.stringify({ type: 'limited', value: line.limit }), { status: 200 });
+        if (u.endsWith('/v2/bot/info')) return new Response(JSON.stringify({ basicId: '@123abcde', displayName: 'OA' }), { status: 200 });
         if (u === PUSH_URL) {
             line.pushCalls.push({ init, body: JSON.parse(init.body), headers: init.headers });
             return line.push(line.pushCalls.length);
@@ -1007,6 +1009,70 @@ describe('audit 白名單：message_id 嚴格格式', () => {
         });
         const rows = await auditRows();
         assert.deepEqual(JSON.parse(rows[0].detail), { message_id: 'msg_0123456789abcdef' });
+    });
+});
+
+// ───────────────────────── 暫時診斷旗標 ─────────────────────────
+
+describe('BRIDGE_DEBUG_SEND：記錄真正送給 LINE 的請求', () => {
+    const debugEnv = () => ({ ...env, BRIDGE_DEBUG_SEND: '1' });
+    const debugLines = () => logs.filter((l) => l.includes('[SendDebug]'));
+
+    it('旗標沒開時完全不記（平時的「console 不含內容」約定不變）', async () => {
+        const r = await send({ action: { label: '查看', url: URL_OK } });
+        assert.equal(r.res.status, 200);
+        assert.equal(debugLines().length, 0);
+    });
+
+    it('旗標是別的值（""、"0"、"true"）也不記', async () => {
+        for (const v of ['', '0', 'true']) {
+            await send({}, { e: { ...env, BRIDGE_DEBUG_SEND: v } });
+            assert.equal(debugLines().length, 0, v);
+        }
+    });
+
+    it('旗標開啟時記下 body、header 與回應，且不含 token 與 userId', async () => {
+        line.push = () => new Response('{}', { status: 200, headers: { 'x-line-request-id': 'req-xyz' } });
+        const r = await send({ action: { label: '查看訂單', url: URL_OK } }, { e: debugEnv() });
+        assert.equal(r.res.status, 200);
+
+        const joined = debugLines().join('\n');
+        assert.ok(!joined.includes(LINE_TOKEN), 'log 含 token');
+        assert.ok(!joined.includes(LINE_USER), 'log 含 userId');
+
+        const reqLine = debugLines().find((l) => l.includes('Push request'));
+        const req = JSON.parse(reqLine.slice(reqLine.indexOf('{')));
+        assert.equal(req.url, PUSH_URL);
+        assert.equal(req.headers['Content-Type'], 'application/json');
+        assert.match(req.headers.Authorization, /^Bearer <redacted len=\d+ fp=[0-9a-f]{8}>$/);
+        assert.match(req.headers['X-Line-Retry-Key'], /^[0-9a-f-]{36}$/);
+        // body 逐字（可以直接拿去跟手動送的比），只有 to 被遮
+        assert.ok(req.body.includes(`"to":"${await maskUserId(LINE_USER)}"`), req.body);
+        assert.ok(req.body.includes('"type":"flex"'));
+        assert.ok(req.body.includes(TITLE));
+        assert.equal(req.body_bytes, new TextEncoder().encode(JSON.stringify(line.pushCalls[0].body)).length);
+
+        const resLine = debugLines().find((l) => l.includes('Push response'));
+        assert.deepEqual(JSON.parse(resLine.slice(resLine.indexOf('{'))), { status: 200, request_id: 'req-xyz' });
+    });
+
+    it('旗標開啟時另記一行「送件脈絡」：OA 的 basicId、收件人遮罩、連結與事件型別', async () => {
+        await send({}, { e: debugEnv() });
+        const ctxLine = debugLines().find((l) => l.includes('notify context'));
+        assert.ok(ctxLine, debugLines().join('\n'));
+        const ctx = JSON.parse(ctxLine.slice(ctxLine.indexOf('{')));
+        assert.equal(ctx.bot_basic_id, '@123abcde');
+        assert.equal(ctx.recipient, await maskUserId(LINE_USER));
+        assert.equal(ctx.link_id, LNK_A);
+        assert.equal(ctx.event_type, 'order.shipped');
+        assert.ok(!JSON.stringify(ctx).includes(LINE_USER));
+    });
+
+    it('旗標開啟也不影響發送結果（送出的 body 與平時一致）', async () => {
+        await send({}, { e: debugEnv() });
+        assert.equal(line.pushCalls.length, 1);
+        assert.equal(line.pushCalls[0].body.to, LINE_USER);
+        assert.deepEqual(line.pushCalls[0].body.messages, [buildFlexMessage({ title: TITLE, body: BODY, action: null })]);
     });
 });
 

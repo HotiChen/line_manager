@@ -1,4 +1,6 @@
 import { getCurrentAccessToken } from "./token_store.js";
+// 暫時診斷（BRIDGE_DEBUG_SEND=1）：查完請連同 send_debug.js 一起移除
+import { logSendRequest, logSendResponse } from "./send_debug.js";
 
 /**
  * 當前專案的 access token。
@@ -50,12 +52,14 @@ function lineHeaders(token, retryKey) {
     return headers;
 }
 
-async function postMessages(label, url, token, payload, retryKey) {
-    const response = await fetch(url, {
-        method: "POST",
-        headers: lineHeaders(token, retryKey),
-        body: JSON.stringify(payload),
-    });
+async function postMessages(label, url, token, payload, retryKey, debug = false) {
+    const headers = lineHeaders(token, retryKey);
+    const body = JSON.stringify(payload);
+    // 暫時診斷：記下真正送出的 header 與 body（無 token、userId 已遮）。預設關閉
+    if (debug) await logSendRequest(label, url, headers, payload, body);
+
+    const response = await fetch(url, { method: "POST", headers, body });
+    if (debug) await logSendResponse(label, response);
 
     const resJson = await readJsonLoose(response);
 
@@ -78,10 +82,11 @@ async function postMessages(label, url, token, payload, retryKey) {
  * @param {string} token
  * @param {string} to
  * @param {Object[]} messages
- * @param {{retryKey?: string}} [options] retryKey 必須是 UUID（LINE 的規定）
+ * @param {{retryKey?: string, debug?: boolean}} [options] retryKey 必須是 UUID（LINE 的規定）；
+ *        debug 為暫時診斷旗標（見 lib/send_debug.js），由呼叫端依 env.BRIDGE_DEBUG_SEND 決定
  */
 export async function pushMessage(token, to, messages, options = {}) {
-    return postMessages("Push", "https://api.line.me/v2/bot/message/push", token, { to, messages }, options.retryKey);
+    return postMessages("Push", "https://api.line.me/v2/bot/message/push", token, { to, messages }, options.retryKey, options.debug === true);
 }
 
 /** 單次最多 500 人（LINE 上限）。 */
@@ -91,7 +96,7 @@ export const MULTICAST_MAX_RECIPIENTS = 500;
  * @param {string} token
  * @param {string[]} to
  * @param {Object[]} messages
- * @param {{retryKey?: string}} [options]
+ * @param {{retryKey?: string, debug?: boolean}} [options]
  */
 export async function multicastMessage(token, to, messages, options = {}) {
     if (!Array.isArray(to) || to.length === 0) {
@@ -100,7 +105,7 @@ export async function multicastMessage(token, to, messages, options = {}) {
     if (to.length > MULTICAST_MAX_RECIPIENTS) {
         throw new Error(`multicast supports at most ${MULTICAST_MAX_RECIPIENTS} recipients`);
     }
-    return postMessages("Multicast", "https://api.line.me/v2/bot/message/multicast", token, { to, messages }, options.retryKey);
+    return postMessages("Multicast", "https://api.line.me/v2/bot/message/multicast", token, { to, messages }, options.retryKey, options.debug === true);
 }
 
 export async function broadcastMessage(token, messages) {

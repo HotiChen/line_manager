@@ -27,7 +27,7 @@
  *     status、cost；不記 ref、userId、標題、內文、網址
  *   - 缺 BRIDGE_DB 或查詢失敗 → 503 INTERNAL bridge_not_configured（fail-closed）
  */
-import { getBotAccessToken, markMemberInactive } from "../lm_service.js";
+import { getBotAccessToken, getBotBasicId, markMemberInactive } from "../lm_service.js";
 import { sha256Hex } from "../lib/crypto_util.js";
 import { pushMessage, LineApiError } from "../lib/line_api.js";
 import { bridgeError, ERROR_DEFAULTS } from "./errors.js";
@@ -377,6 +377,34 @@ async function mapLineError(err, { env, botId, lineUserId }) {
   return failure("INTERNAL", "LINE is unavailable, retry later", { status: 502, retryable: err.status >= 500 });
 }
 
+// ── 暫時診斷（BRIDGE_DEBUG_SEND=1）──
+//
+// 查「LM 送出的 JSON 與人手動用 LINE push API 送的差在哪」用的；預設完全關閉（旗標精確等於 "1"）。
+// 真正的 header 與 body 由 lib/send_debug.js 記錄（pushMessage 的 debug 選項），這裡只補送件脈絡。
+// 遮罩公式與 lib/send_debug.js 的 maskUserId 相同（刻意重寫一次：bridge/ 的 import 邊界只放行
+// lm_service 與少數共用模組，不為暫時工具開新的口）。查完請一併移除這一節與 pushMessage 的 debug 參數。
+
+const sendDebug = (env) => Boolean(env) && env.BRIDGE_DEBUG_SEND === "1";
+
+/** LINE userId → `<uid:` + SHA-256 前 6 碼。userId 原文不進 log */
+const maskUid = async (id) => `<uid:${(await sha256Hex(String(id))).slice(0, 6)}>`;
+
+async function logNotifyContext(env, principal, content, lineUserId) {
+  try {
+    console.log("[SendDebug] notify context", JSON.stringify({
+      bot_basic_id: await getBotBasicId(env, principal.botId),
+      recipient: await maskUid(lineUserId),
+      link_id: principal.linkId,
+      product_id: principal.productId,
+      event_type: content.eventType,
+      has_action: Boolean(content.action),
+    }));
+  } catch (err) {
+    // 診斷記錄不可讓發送失敗
+    console.error("[SendDebug] notify context failed:", err && err.message);
+  }
+}
+
 // ── 實際送出 ──
 
 /**
@@ -399,9 +427,13 @@ async function execute(env, principal, content, idemKey, messageId) {
   const message = buildFlexMessage(content);
   const retryKey = await retryKeyFor(botId, `link:${linkId}`, idemKey);
 
+  // 暫時診斷：記下「哪個 OA、送給誰（遮罩）」，再由 line_api 記下真正的 header 與 body。預設關閉
+  const debug = sendDebug(env);
+  if (debug) await logNotifyContext(env, principal, content, lineUserId);
+
   let consumed = 1;
   try {
-    await pushMessage(token, lineUserId, [message], { retryKey });
+    await pushMessage(token, lineUserId, [message], { retryKey, debug });
   } catch (err) {
     // LINE 409：這把 retry key 先前已被接受，客戶已經收到了 → 視為成功，不再計用量
     if (err instanceof LineApiError && err.status === 409) consumed = 0;
