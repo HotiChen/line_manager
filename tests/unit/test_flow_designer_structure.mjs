@@ -11,6 +11,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTIONS, parseOn } from '../../js/flow/designer/actions.js';
+import { escapeAttr } from '../../js/flow/designer/util.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const DESIGNER_DIR = path.join(ROOT, 'js/flow/designer');
@@ -106,6 +107,25 @@ describe('模組結構', () => {
         for (const f of designerFiles) {
             const code = read(f).replace(/^\s*\/\/.*$/gm, '');
             assert.doesNotMatch(code, /(?<![\w.])flowDesigner\./, f);
+        }
+    });
+});
+
+describe('escapeAttr（使用者資料放進 HTML 屬性）', () => {
+    it('跳脫引號與角括號，屬性不會被撐破', () => {
+        assert.equal(escapeAttr('" onfocus="alert(1)'), '&quot; onfocus=&quot;alert(1)');
+        assert.equal(escapeAttr(`'><script>`), '&#39;&gt;&lt;script&gt;');
+        assert.equal(escapeAttr('a&b'), 'a&amp;b');
+        assert.equal(escapeAttr(null), '');
+        assert.equal(escapeAttr(undefined), '');
+    });
+
+    it('新的側欄編輯器（圖片 / 條件 / API / Quick Reply）所有使用者資料都經過 escapeAttr', () => {
+        const src = read('js/flow/designer/properties.js');
+        for (const field of ['node.data.url', 'node.data.previewUrl', 'c.value', 'd.url', 'd.headers', 'd.body', 'msg.url']) {
+            const uses = [...src.matchAll(new RegExp('\\$\\{([^}]*' + field.replace('.', '\\.') + '[^}]*)\\}', 'g'))].map((m) => m[1]);
+            assert.ok(uses.length > 0, `${field} 沒出現在模板裡`);
+            for (const u of uses) assert.match(u, /escapeAttr\(/, `${field} 沒經過 escapeAttr：\${${u}}`);
         }
     });
 });

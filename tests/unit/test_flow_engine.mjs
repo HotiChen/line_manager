@@ -41,11 +41,11 @@ describe('compileFlow — 檢查', () => {
         assert.deepEqual(ids, ['a', 'b', 'c', 'd', 'e', 'k']);
     });
 
-    it('尚不支援的節點（延遲/條件/API/圖片）接在觸發後 → 擋；沒接上的只警告', () => {
-        const nodes = [node('k', 'keyword', { keyword: 'a' }), node('t', 'message_text', { text: 'x' }), node('d', 'action_delay', { seconds: 1 }), node('lonely', 'action_api')];
-        const bad = compile(nodes, [edge('k', 't'), edge('t', 'd')]);
-        assert.match(errorsOf(bad)[0], /延遲.*還不能執行/);
-        const ok = compile(nodes.filter((n) => n.id !== 'd'), [edge('k', 't')]);
+    it('不支援的節點（Webhook）接在觸發後 → 擋；沒接上的只警告', () => {
+        const nodes = [node('k', 'keyword', { keyword: 'a' }), node('t', 'message_text', { text: 'x' }), node('w', 'webhook'), node('lonely', 'webhook')];
+        const bad = compile(nodes, [edge('k', 't'), edge('t', 'w')]);
+        assert.match(errorsOf(bad)[0], /Webhook.*還不能執行/);
+        const ok = compile(nodes.filter((n) => n.id !== 'w'), [edge('k', 't')]);
         assert.equal(ok.ok, true);
         assert.equal(ok.warnings.length, 1);
     });
@@ -71,7 +71,7 @@ describe('compileFlow — 檢查', () => {
 
     it('已發布資料只留執行需要的欄位', () => {
         const r = compile([node('k', 'keyword', { keyword: 'a', label: 'LONG', preview: 'x' }), node('t', 'message_text', { text: 'x', label: 'L' })], [edge('k', 't')]);
-        assert.deepEqual(Object.keys(r.published.nodes.t.data), ['text']);
+        assert.deepEqual(Object.keys(r.published.nodes.t.data).sort(), ['quickReplyId', 'text']);
     });
 });
 

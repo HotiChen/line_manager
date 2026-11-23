@@ -99,6 +99,13 @@ export const NodeTypeConfig = {
         description: '根據條件分支流程',
         multipleOutputs: true  // 條件有多個分支
     },
+    [NodeTypes.ACTION_API]: {
+        label: '呼叫 API',
+        icon: 'bi-cloud-arrow-down',
+        color: '#f39c12',
+        category: 'action',
+        description: '呼叫外部網址，結果可用 (@api.欄位) 放進後面的訊息'
+    },
     [NodeTypes.ACTION_TAG]: {
         label: '標籤操作',
         icon: 'bi-tag',
@@ -150,6 +157,16 @@ export function getDefaultNodeData(type) {
             name: '訊息序列',
             messages: [],
             delay: 0  // 訊息間延遲（毫秒）
+        },
+        [NodeTypes.MESSAGE_IMAGE]: {
+            url: '',
+            previewUrl: ''
+        },
+        [NodeTypes.ACTION_API]: {
+            url: '',
+            method: 'GET',
+            headers: '{}',
+            body: '{}'
         },
         [NodeTypes.MESSAGE_FLEX]: {
             flexId: null,
