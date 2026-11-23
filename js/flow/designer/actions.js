@@ -49,6 +49,10 @@ export const ACTIONS = Object.freeze({
     updateNodeDelay: (fd, el) => fd.updateNodeDelay(nodeId(el), el.value),
     updateNodeTagOperation: (fd, el) => fd.updateNodeTagOperation(nodeId(el), el.value),
     updateNodeTags: (fd, el) => fd.updateNodeTags(nodeId(el), el.value),
+    updateNodeField: (fd, el) => fd.updateNodeField(nodeId(el), el.dataset.field, el.value),
+    addCondition: (fd, el) => fd.addCondition(nodeId(el)),
+    removeCondition: (fd, el) => fd.removeCondition(nodeId(el), index(el)),
+    updateCondition: (fd, el) => fd.updateCondition(nodeId(el), index(el), el.dataset.key, el.value),
 
     // 工具列 / 面板
     showFlowList: (fd) => fd.showFlowList(),

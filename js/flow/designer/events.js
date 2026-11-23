@@ -13,7 +13,8 @@ export class EventsMethods {
         palette.querySelectorAll('.palette-item').forEach(item => {
             // Drag to canvas
             item.addEventListener('dragstart', (e) => {
-                e.dataTransfer.setData('text/plain', item.dataset.type);
+                // 自訂 MIME：畫布只接受來自節點面板的拖放，不會把選取的文字當成節點類型
+                e.dataTransfer.setData('application/x-flow-node', item.dataset.type);
                 e.dataTransfer.effectAllowed = 'copy';
             });
 
@@ -26,7 +27,7 @@ export class EventsMethods {
         });
 
         this.container.addEventListener('dragover', (e) => {
-            if (!e.dataTransfer.types.includes('text/plain')) return;
+            if (!e.dataTransfer.types.includes('application/x-flow-node')) return;
             e.preventDefault();
             e.dataTransfer.dropEffect = 'copy';
             this.container.classList.add('palette-drag-over');
@@ -39,10 +40,10 @@ export class EventsMethods {
         });
 
         this.container.addEventListener('drop', (e) => {
-            e.preventDefault();
             this.container.classList.remove('palette-drag-over');
-            const type = e.dataTransfer.getData('text/plain');
+            const type = e.dataTransfer.getData('application/x-flow-node');
             if (!type) return;
+            e.preventDefault();
             const canvasRect = this.container.getBoundingClientRect();
             const canvasX = (e.clientX - canvasRect.left + this.container.scrollLeft) / this.canvasZoom;
             const canvasY = (e.clientY - canvasRect.top + this.container.scrollTop) / this.canvasZoom;

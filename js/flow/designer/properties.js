@@ -7,6 +7,14 @@ import { setInnerHTML } from '../../../helper/security.js';
 import { dataLoader } from '../../flow_designer_data_loader.js';
 import { NodeTypes } from '../node_types.js';
 import { bindActions } from './actions.js';
+import { escapeAttr } from './util.js';
+import { ApiClient as api } from '../../../helper/api.client.js';
+
+/** 可附 Quick Reply 的節點（附在這串回覆的最後一則） */
+const QUICK_REPLY_TYPES = new Set([
+    NodeTypes.MESSAGE_TEXT, NodeTypes.MESSAGE_IMAGE, NodeTypes.MESSAGE_FLEX,
+    NodeTypes.MESSAGE_IMAGEMAP, NodeTypes.MESSAGE_SEQUENCE,
+]);
 
 export class PropertiesMethods {
     /**
@@ -25,11 +33,13 @@ export class PropertiesMethods {
             <p class="text-muted small">${node.config.description}</p>
             <hr>
             ${this.renderNodeProperties(node)}
+            ${QUICK_REPLY_TYPES.has(node.type) ? this.renderQuickReplyField(node) : ''}
             <button class="btn btn-sm btn-danger w-100 mt-3" data-on="click:deleteNode" data-node-id="${nodeId}">
                 <i class="bi bi-trash"></i> 刪除節點
             </button>
         `);
         bindActions(properties, this);
+        if (QUICK_REPLY_TYPES.has(node.type)) this.populateQuickReplySelect(node);
     }
 
     /**
@@ -69,6 +79,12 @@ export class PropertiesMethods {
                 return this.renderDelayProperties(node);
             case NodeTypes.ACTION_TAG:
                 return this.renderTagProperties(node);
+            case NodeTypes.MESSAGE_IMAGE:
+                return this.renderImageProperties(node);
+            case NodeTypes.ACTION_CONDITION:
+                return this.renderConditionProperties(node);
+            case NodeTypes.ACTION_API:
+                return this.renderApiProperties(node);
             default:
                 return this.renderGenericProperties(node);
         }
@@ -217,13 +233,17 @@ export class PropertiesMethods {
                 <div class="mb-1">
                     <select class="form-select form-select-sm" data-on="change:updateMessageType" data-node-id="${node.id}" data-index="${index}">
                         <option value="text" ${msg.type === 'text' ? 'selected' : ''}>文字訊息</option>
-                        <option value="image" ${msg.type === 'image' ? 'selected' : ''}>圖片訊息 (暫未支援)</option>
+                        <option value="image" ${msg.type === 'image' ? 'selected' : ''}>圖片訊息</option>
                     </select>
                 </div>
                 ${msg.type === 'text' ? `
                     <textarea class="form-control form-control-sm" rows="2" 
                               data-on="change:updateMessageContent" data-node-id="${node.id}" data-index="${index}">${msg.text || ''}</textarea>
-                ` : ''}
+                ` : `
+                    <input type="url" class="form-control form-control-sm" placeholder="https://… 圖片網址（JPG / PNG）"
+                           value="${escapeAttr(msg.url)}"
+                           data-on="change:updateMessageContent" data-node-id="${node.id}" data-index="${index}">
+                `}
             </div>
         `).join('');
 
@@ -289,11 +309,11 @@ export class PropertiesMethods {
         return `
             <div class="mb-3">
                 <label class="form-label">延遲時間（秒）</label>
-                <input type="number" class="form-control" min="1" max="300"
+                <input type="number" class="form-control" min="1" max="86400"
                        value="${node.data.seconds}"
                        id="delay-${node.id}"
                        data-on="change:updateNodeDelay" data-node-id="${node.id}">
-                <div class="form-text">1-300 秒</div>
+                <div class="form-text">1 到 86400 秒（24 小時）。延遲之後的訊息用「推播」送出，會計入每月訊息額度；實際時間約有 1 分鐘的誤差。</div>
             </div>
         `;
     }
@@ -320,6 +340,172 @@ export class PropertiesMethods {
                        data-on="change:updateNodeTags" data-node-id="${node.id}">
             </div>
         `;
+    }
+
+
+    /** 圖片訊息 */
+    renderImageProperties(node) {
+        return `
+            <div class="mb-3">
+                <label class="form-label">圖片網址</label>
+                <input type="url" class="form-control form-control-sm" placeholder="https://…（JPG / PNG，10MB 以內）"
+                       value="${escapeAttr(node.data.url)}"
+                       data-on="change:updateNodeField" data-node-id="${node.id}" data-field="url">
+                <div class="form-text">必須是 https。</div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">預覽圖網址（選填）</label>
+                <input type="url" class="form-control form-control-sm" placeholder="不填就用原圖（1MB 以內較佳）"
+                       value="${escapeAttr(node.data.previewUrl)}"
+                       data-on="change:updateNodeField" data-node-id="${node.id}" data-field="previewUrl">
+            </div>
+        `;
+    }
+
+    /** 條件判斷：所有條件都成立走「是」，否則走「否」 */
+    renderConditionProperties(node) {
+        const conditions = node.data.conditions || [];
+        const opt = (value, label, current) => `<option value="${value}" ${current === value ? 'selected' : ''}>${label}</option>`;
+        const rows = conditions.map((c, index) => `
+            <div class="p-2 mb-2 border rounded">
+                <div class="d-flex gap-1 mb-1">
+                    <select class="form-select form-select-sm" data-on="change:updateCondition" data-node-id="${node.id}" data-index="${index}" data-key="field">
+                        ${opt('text', '文字內容', c.field)}${opt('tag', '標籤', c.field)}${opt('userId', '使用者 ID', c.field)}
+                    </select>
+                    <select class="form-select form-select-sm" data-on="change:updateCondition" data-node-id="${node.id}" data-index="${index}" data-key="operator">
+                        ${opt('equals', '等於', c.operator)}${opt('contains', '包含', c.operator)}
+                    </select>
+                    <button class="btn btn-sm btn-outline-danger" data-on="click:removeCondition" data-node-id="${node.id}" data-index="${index}" title="刪除條件">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+                <input type="text" class="form-control form-control-sm" placeholder="值"
+                       value="${escapeAttr(c.value)}"
+                       data-on="change:updateCondition" data-node-id="${node.id}" data-index="${index}" data-key="value">
+            </div>
+        `).join('');
+        return `
+            <div class="mb-2">${rows || '<div class="text-muted small">還沒有條件</div>'}</div>
+            <button class="btn btn-sm btn-outline-primary w-100 mb-2" data-on="click:addCondition" data-node-id="${node.id}">
+                <i class="bi bi-plus"></i> 新增條件
+            </button>
+            <div class="form-text">
+                全部成立 → 從綠色「是」輸出口走；否則從紅色「否」走。<br>
+                「文字內容」只在由關鍵字觸發時有值；從 Flex 按鈕進來時是空的。
+            </div>
+        `;
+    }
+
+    /** 呼叫 API */
+    renderApiProperties(node) {
+        const d = node.data;
+        const field = (key, label, input) => `<div class="mb-2"><label class="form-label small mb-1">${label}</label>${input}</div>`;
+        const common = (key) => `data-on="change:updateNodeField" data-node-id="${node.id}" data-field="${key}"`;
+        return `
+            ${field('url', '網址（https）', `<input type="url" class="form-control form-control-sm" placeholder="https://api.example.com/..." value="${escapeAttr(d.url)}" ${common('url')}>`)}
+            ${field('method', '請求方式', `<select class="form-select form-select-sm" ${common('method')}>
+                <option value="GET" ${d.method !== 'POST' ? 'selected' : ''}>GET</option>
+                <option value="POST" ${d.method === 'POST' ? 'selected' : ''}>POST</option></select>`)}
+            ${field('headers', '標頭 Headers（JSON）', `<textarea class="form-control form-control-sm font-monospace" rows="2" ${common('headers')}>${escapeAttr(d.headers)}</textarea>`)}
+            ${field('body', 'POST 內容 Body（JSON）', `<textarea class="form-control form-control-sm font-monospace" rows="3" ${common('body')}>${escapeAttr(d.body)}</textarea>`)}
+            <div class="form-text">
+                回應的欄位可放進後面的文字訊息，例如 <code>(@api.city)</code>、<code>(@api.user.name)</code>；
+                <code>(@api.ok)</code> 表示呼叫是否成功。<br>
+                限制：只能 https、公開網域；3 秒逾時；回應只讀前 64KB；一次最多 3 個 API 節點。<br>
+                <strong>網址和標頭會存在流程中，團隊成員看得到，請勿放重要金鑰。</strong>
+            </div>
+        `;
+    }
+
+    /** Quick Reply 選擇（附在最後一則訊息上） */
+    renderQuickReplyField(node) {
+        return `
+            <hr>
+            <div class="mb-2">
+                <label class="form-label small mb-1">Quick Reply（快速回覆按鈕）</label>
+                <select class="form-select form-select-sm" id="qr-select-${escapeAttr(node.id)}"
+                        data-on="change:updateNodeField" data-node-id="${node.id}" data-field="quickReplyId">
+                    <option value="">不使用</option>
+                    ${node.data.quickReplyId ? `<option value="${escapeAttr(node.data.quickReplyId)}" selected>載入中…</option>` : ''}
+                </select>
+                <div class="form-text">套用在這串回覆的最後一則訊息。</div>
+            </div>
+        `;
+    }
+
+    async populateQuickReplySelect(node) {
+        const select = document.getElementById(`qr-select-${node.id}`);
+        if (!select) return;
+        try {
+            if (!this._quickReplies) {
+                const res = await api.get('/quickreply/list', { showErrorToast: false });
+                this._quickReplies = Array.isArray(res && res.data) ? res.data : [];
+            }
+            const current = node.data.quickReplyId || '';
+            select.textContent = '';
+            const add = (value, label, selected) => {
+                const o = document.createElement('option');
+                o.value = value;
+                o.textContent = label;
+                o.selected = selected;
+                select.appendChild(o);
+            };
+            add('', '不使用', !current);
+            for (const qr of this._quickReplies) add(qr.id, qr.name || qr.id, qr.id === current);
+            if (current && !this._quickReplies.some((q) => q.id === current)) add(current, '（模板已不存在）', true);
+        } catch {
+            select.options[0].textContent = '無法載入模板';
+        }
+    }
+
+    /** 允許直接寫入 node.data 的欄位（依節點類型）；其他一律忽略 */
+    updateNodeField(nodeId, field, value) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (!node) return;
+        const allowed = {
+            [NodeTypes.MESSAGE_IMAGE]: ['url', 'previewUrl'],
+            [NodeTypes.ACTION_API]: ['url', 'method', 'headers', 'body'],
+        }[node.type] || [];
+        const isQuickReply = field === 'quickReplyId' && QUICK_REPLY_TYPES.has(node.type);
+        if (!allowed.includes(field) && !isQuickReply) return;
+
+        if (isQuickReply) {
+            if (value) node.data.quickReplyId = String(value); else delete node.data.quickReplyId;
+        } else if (field === 'method') {
+            node.data.method = value === 'POST' ? 'POST' : 'GET';
+        } else {
+            node.data[field] = String(value).trim();
+        }
+        this.updateNodePreview(nodeId);
+        this.saveToLocalStorage();
+    }
+
+    addCondition(nodeId) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (!node) return;
+        node.data.conditions = [...(node.data.conditions || []), { field: 'text', operator: 'equals', value: '' }];
+        this.updateNodePreview(nodeId);
+        this.saveToLocalStorage();
+        this.showNodeProperties(nodeId);
+    }
+
+    removeCondition(nodeId, index) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        if (!node || !node.data.conditions) return;
+        node.data.conditions = node.data.conditions.filter((_, i) => i !== index);
+        this.updateNodePreview(nodeId);
+        this.saveToLocalStorage();
+        this.showNodeProperties(nodeId);
+    }
+
+    updateCondition(nodeId, index, key, value) {
+        const node = this.nodes.find(n => n.id === nodeId);
+        const cond = node && node.data.conditions && node.data.conditions[index];
+        const allowed = { field: ['text', 'tag', 'userId'], operator: ['equals', 'contains'] };
+        if (!cond || !['field', 'operator', 'value'].includes(key)) return;
+        if (allowed[key] && !allowed[key].includes(value)) return;
+        cond[key] = key === 'value' ? String(value) : value;
+        this.saveToLocalStorage();
     }
 
     /**
@@ -413,7 +599,9 @@ export class PropertiesMethods {
     updateMessageContent(nodeId, index, content) {
         const node = this.nodes.find(n => n.id === nodeId);
         if (node && node.data.messages && node.data.messages[index]) {
-            node.data.messages[index].text = content;
+            const msg = node.data.messages[index];
+            if (msg.type === 'image') msg.url = String(content).trim();
+            else msg.text = content;
             this.saveToLocalStorage();
         }
     }
@@ -487,7 +675,9 @@ export class PropertiesMethods {
     updateNodeDelay(nodeId, seconds) {
         const node = this.nodes.find(n => n.id === nodeId);
         if (node) {
-            node.data.seconds = parseInt(seconds);
+            const n = parseInt(seconds, 10);
+            node.data.seconds = Number.isFinite(n) ? Math.min(Math.max(n, 1), 86400) : 1;
+            this.updateNodePreview(nodeId);
             this.saveToLocalStorage();
         }
     }

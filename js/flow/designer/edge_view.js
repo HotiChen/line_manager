@@ -174,8 +174,7 @@ export class EdgeViewMethods {
         const targetHeight = targetElement.offsetHeight;
 
         // 直接使用節點的 position 屬性（最簡單可靠的方式）
-        const startX = (sourceNode.position?.x ?? 0) + sourceWidth;  // 右側
-        const startY = (sourceNode.position?.y ?? 0) + sourceHeight / 2;  // 中央
+        const { x: startX, y: startY } = this.edgeStartPoint(sourceNode, sourceElement, edge.sourceHandle);
         const endX = targetNode.position?.x ?? 0;  // 左側
         const endY = (targetNode.position?.y ?? 0) + targetHeight / 2;  // 中央
 
@@ -345,6 +344,19 @@ export class EdgeViewMethods {
     }
 
     /**
+     * 連線起點（畫布座標）：一般節點在右側正中；條件節點的「是 / 否」從各自的輸出口出發
+     */
+    edgeStartPoint(sourceNode, sourceElement, handle) {
+        const x = (sourceNode.position?.x ?? 0) + sourceElement.offsetWidth;
+        let y = (sourceNode.position?.y ?? 0) + sourceElement.offsetHeight / 2;
+        if (handle === 'true' || handle === 'false') {
+            const dot = sourceElement.querySelector(`.node-output-point[data-output="${handle}"]`);
+            if (dot) y = (sourceNode.position?.y ?? 0) + dot.offsetTop + dot.offsetHeight / 2;
+        }
+        return { x, y };
+    }
+
+    /**
      * 創建曲線路徑（支持自定義控制點）
      */
     createCurvePath(startX, startY, endX, endY, controlPoint = null) {
@@ -388,6 +400,8 @@ export class EdgeViewMethods {
      * 開始連接拖拉 (n8n 風格)
      */
     startConnectionDrag(nodeId, type, event, handleId = 'default') {
+        // 拖連線時不要選取文字：選到的文字會被瀏覽器當成拖放內容
+        if (event && event.preventDefault) event.preventDefault();
 
         this.connectionDragState.isDragging = true;
         this.connectionDragState.sourceNodeId = nodeId;
@@ -443,7 +457,16 @@ export class EdgeViewMethods {
 
         const sourceRect = sourceElement.getBoundingClientRect();
         const startX = sourceRect.right - svgRect.left;
-        const startY = sourceRect.top + sourceRect.height / 2 - svgRect.top;
+        let startY = sourceRect.top + sourceRect.height / 2 - svgRect.top;
+        // 條件節點：暫時連線從被拖的「是 / 否」圓點出發
+        const handle = this.connectionDragState.sourceHandle;
+        if (handle === 'true' || handle === 'false') {
+            const dot = sourceElement.querySelector(`.node-output-point[data-output="${handle}"]`);
+            if (dot) {
+                const dotRect = dot.getBoundingClientRect();
+                startY = dotRect.top + dotRect.height / 2 - svgRect.top;
+            }
+        }
 
         // 移除之前的高亮
         document.querySelectorAll('.flow-node.connect-target').forEach(n => 
@@ -563,8 +586,7 @@ export class EdgeViewMethods {
         const targetHeight = targetElement.offsetHeight;
 
         // 直接使用節點的 position 屬性
-        const startX = sourceNode.position.x + sourceWidth;
-        const startY = sourceNode.position.y + sourceHeight / 2;
+        const { x: startX, y: startY } = this.edgeStartPoint(sourceNode, sourceElement, edge.sourceHandle);
         const endX = targetNode.position.x;
         const endY = targetNode.position.y + targetHeight / 2;
 

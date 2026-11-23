@@ -229,8 +229,23 @@ export class NodeViewMethods {
                 </div>
             `;
 
-            // 添加單一輸出點
-            if (node.type !== NodeTypes.END) {
+            // 條件判斷：「是」「否」兩個輸出口
+            if (node.type === NodeTypes.ACTION_CONDITION) {
+                const dot = (handle, top, color, label) => `
+                    <div class="node-output-point"
+                         data-node-id="${node.id}"
+                         data-output="${handle}"
+                         data-on="mousedown:startConnectionDrag" data-handle="${handle}" data-stop
+                         style="position: absolute; right: -8px; top: ${top}; transform: translateY(-50%);
+                                width: 16px; height: 16px; background: ${color};
+                                border: 2px solid white; border-radius: 50%; cursor: crosshair;
+                                box-shadow: 0 2px 4px rgba(0,0,0,0.2);"
+                         title="${label}時走這條">
+                    </div>
+                    <span style="position: absolute; right: 14px; top: ${top}; transform: translateY(-50%); font-size: 10px; font-weight: bold; color: ${color}; pointer-events: none;">${label}</span>`;
+                innerHTML += dot('true', '30%', '#27ae60', '是') + dot('false', '70%', '#e74c3c', '否');
+            } else if (node.type !== NodeTypes.END) {
+                // 添加單一輸出點
                 innerHTML += `
                     <div class="node-output-point"
                          data-node-id="${node.id}"
@@ -339,7 +354,8 @@ export class NodeViewMethods {
         });
 
         nodeElement.appendChild(leftConnector);
-        nodeElement.appendChild(rightConnector);
+        // 條件節點只能從「是 / 否」兩個輸出口連出，不要通用的中間輸出點（那條連線執行時不會被選中）
+        if (node.type !== NodeTypes.ACTION_CONDITION) nodeElement.appendChild(rightConnector);
 
         // 拖曳功能
         this.makeDraggable(nodeElement, node);
@@ -463,6 +479,17 @@ export class NodeViewMethods {
                 return node.data.name || '未設定';
             case NodeTypes.ACTION_DELAY:
                 return `等待 ${node.data.seconds} 秒`;
+            case NodeTypes.MESSAGE_IMAGE:
+                return node.data.url ? `🖼 ${node.data.url.substring(0, 28)}${node.data.url.length > 28 ? '...' : ''}` : '未設定圖片網址';
+            case NodeTypes.ACTION_CONDITION: {
+                const n = (node.data.conditions || []).length;
+                return n ? `${n} 個條件` : '未設定條件';
+            }
+            case NodeTypes.ACTION_API: {
+                let host = '';
+                try { host = new URL(node.data.url).hostname; } catch { /* 還沒填 */ }
+                return host ? `${node.data.method || 'GET'} ${host}` : '未設定網址';
+            }
             case NodeTypes.URL:
                 return node.data.url || '未設定 URL';
             case NodeTypes.POSTBACK:
