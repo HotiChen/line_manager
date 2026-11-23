@@ -72,6 +72,11 @@
 
 
         /* ✅ 多選節點樣式 */
+        #flow-canvas .flow-node.publish-error {
+            outline: 3px solid #e74c3c !important;
+            box-shadow: 0 0 12px rgba(231, 76, 60, 0.6) !important;
+        }
+
         #flow-canvas .flow-node.multi-selected {
             border: 3px solid #3498db !important;
             box-shadow: 0 0 15px rgba(52, 152, 219, 0.6) !important;
@@ -528,6 +533,14 @@
                     <i class="bi bi-search"></i>
                 </button>
                 <!-- 分隔 -->
+                <div style="width:1px; background:rgba(255,255,255,0.3); margin:0 2px;"></div>
+                <button class="btn btn-sm btn-success" data-on="click:publishFlow" title="儲存並發布：LINE 官方帳號會照這個流程回覆">
+                    <i class="bi bi-rocket-takeoff"></i> 發布
+                </button>
+                <span id="publish-status" class="badge bg-secondary align-self-center">未發布</span>
+                <button id="unpublish-btn" class="btn btn-sm btn-outline-light" style="display:none" data-on="click:unpublishFlow" title="取消發布">
+                    <i class="bi bi-stop-circle"></i>
+                </button>
                 <div style="width:1px; background:rgba(255,255,255,0.3); margin:0 2px;"></div>
                 <button class="btn btn-sm btn-info" data-on="click:reloadFlow" title="重新載入最新流程資料">
                     <i class="bi bi-arrow-repeat"></i> 重新載入

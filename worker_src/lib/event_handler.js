@@ -15,6 +15,7 @@
  */
 import * as logger from '../utils/logger.js';
 import { findMatchingKeyword } from './keyword_matcher.js';
+import { tryHandleFlowMessage, tryHandleFlowPostback } from './flow_dispatch.js';
 import { formatReplyMessage, getLineUserProfile, normalizeImagemapActions, replyWithRetry } from './line_client.js';
 import { incrementMessageCount } from './message_stats.js';
 import { syncMemberRichMenu } from './segmented_richmenu_logic.js';
@@ -210,6 +211,9 @@ export async function handleMessageEvent(event, env, userId, accessToken, ctx, b
             return;
         }
     }
+
+    // 已發布的 flow 優先；沒命中才走「關鍵字回覆」
+    if (await tryHandleFlowMessage({ event, env, userId, accessToken, store, botId })) return;
 
     const userMessage = event.message.text.trim();
     logger.info('MESSAGE', `使用者訊息: "${userMessage}"`);
@@ -420,6 +424,14 @@ export async function handlePostbackEvent(event, env, userId, accessToken, ctx, 
     const postbackData = event.postback.data;
     const lineUserId = event.source.userId;
     logger.info('POSTBACK', `收到 Postback: ${postbackData}`);
+
+    // flow 按鈕：由已發布的流程處理；失效時安靜略過，不回「已收到您的操作」
+    try {
+        if (await tryHandleFlowPostback({ event, env, userId, accessToken, store, botId })) return;
+    } catch (error) {
+        logger.error('FLOW', `流程按鈕處理失敗: ${error.message}`);
+        return;
+    }
 
     // 🆕 自動標籤系統 (Postback Level) - 極簡版
     // 支援格式: tag=VIP, untag=Normal 或 URL query style
