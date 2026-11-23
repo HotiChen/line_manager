@@ -10,8 +10,6 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
 
-    <!-- React Flow CSS -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reactflow@11.10.1/dist/style.css">
 
     <!-- Flex2HTML CSS -->
     <link rel="stylesheet" href="../css/flex2html.css">
@@ -71,19 +69,7 @@
             min-height: 100%;
         }
 
-        .react-flow__node {
-            background: white;
-            border: 2px solid #3498db;
-            border-radius: 8px;
-            padding: 10px;
-            min-width: 180px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }
 
-        .react-flow__node.selected {
-            border-color: #e74c3c;
-            box-shadow: 0 0 0 2px rgba(231, 76, 60, 0.2);
-        }
 
         /* ✅ 多選節點樣式 */
         #flow-canvas .flow-node.multi-selected {
@@ -261,19 +247,8 @@
             font-size: 12px;
         }
 
-        .react-flow__handle {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-        }
 
-        .react-flow__handle-left {
-            left: -5px;
-        }
 
-        .react-flow__handle-right {
-            right: -5px;
-        }
 
         /* Flex Message 顯示修復 */
         .flow-node * {
@@ -727,11 +702,6 @@
             };
         }
     </script>
-
-    <!-- React & React Flow (CDN) -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/reactflow@11.10.1/dist/umd/index.js"></script>
 
     <!-- Bootstrap -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>

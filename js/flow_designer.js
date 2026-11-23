@@ -9,6 +9,7 @@ import { dataLoader } from './flow_designer_data_loader.js';
 import FlowNodeAdapter from './flow_node_adapter.js';
 import { ApiClient as api } from '../helper/api.client.js';
 import { setInnerHTML } from '../helper/security.js';
+import { pruneDanglingEdges } from './shared/flow_schema.js';
 
 function escapeHtml(str) {
     if (typeof str !== 'string') return str;
@@ -4654,9 +4655,8 @@ export class FlowDesigner {
             id: this.flowId,
             name: this.flowName,
             nodes: this.nodes,
-            edges: this.edges,
-            createdAt: this.flowId ? undefined : new Date().toISOString(),
-            updatedAt: new Date().toISOString()
+            // 後端會拒絕指向不存在節點的連線；舊資料可能殘留，存檔前先清掉
+            edges: pruneDanglingEdges(this.nodes, this.edges)
         };
 
         try {
@@ -5073,7 +5073,7 @@ export class FlowDesigner {
                                             ${flows.map(f => `
                                                 <tr>
                                                     <td>
-                                                        <div class="fw-bold">${escapeHtml(f.name)}</div>
+                                                        <div class="fw-bold">${escapeHtml(f.name)}${f.legacy ? ' <span class="badge bg-secondary" title="舊版資料，儲存一次即歸入目前的 Bot">未歸類</span>' : ''}</div>
                                                         <small class="text-muted font-monospace">${escapeHtml(f.id)}</small>
                                                     </td>
                                                     <td><span class="badge bg-info">${f.nodeCount}</span></td>
