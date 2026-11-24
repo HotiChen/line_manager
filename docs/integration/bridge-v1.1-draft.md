@@ -111,7 +111,7 @@ X-LM-Signature: v1=<hex(HMAC-SHA256(event_signing_secret, "<timestamp>.<raw body
 ### C.1 流程
 ```
 客人在 Rich Menu 按「我的相片」(網址按鈕)
-  → https://liff.line.me/<該 OA 的 LIFF ID>/bridge/identity?p=<product_key>&to=<路徑>
+  → https://liff.line.me/<該 OA 的 LIFF ID(LM 自動建立，§C.4)>/bridge/identity?p=<product_key>&to=<路徑>
   → LM 的 LIFF 頁取得 ID token，送給 LM 後端
   → LM 向 LINE 驗證 ID token，得到 userId
   → LM 找這個 OA 上 product_key 對應、有 identity:read 的 active 連結
@@ -133,7 +133,25 @@ X-LM-Signature: v1=<hex(HMAC-SHA256(event_signing_secret, "<timestamp>.<raw body
 - LM 不回傳也不記錄 userId；稽核只記 `link_id`、結果、時間。
 
 ### C.3 平台限制(重要)
-LINE userId 是**依 Provider 區分**的：同一個人在不同 Provider 底下的 userId 不同。綁定時 LM 存的是「OA 所屬 Provider」底下的 userId，所以 **LIFF 必須和該 OA 在同一個 Provider 底下**，換出來的身分才對得上。見 Q1。
+LINE userId 是**依 Provider 區分**的：同一個人在不同 Provider 底下的 userId 不同。綁定時 LM 存的是「OA 所屬 Provider」底下的 userId，所以 **LIFF 必須和該 OA 在同一個 Provider 底下**，換出來的身分才對得上。見 Q1 與 C.4。
+
+### C.4 LIFF 的建立：攝影師只建 channel，LIFF 由 LM 自動建立
+LIFF App 只能掛在 **LINE Login channel**(或 LINE MINI App channel)底下，不能掛在 Messaging API channel。LINE Login channel **沒有建立用的 API**，但 LIFF App 有(LIFF Server API)。分工如下：
+
+| 步驟 | 誰做 | 方式 |
+|---|---|---|
+| 1. 在 OA 所屬的 Provider 底下建立 LINE Login channel | **攝影師，手動一次** | LINE Developers Console；LM 提供圖文教學 |
+| 2. 把 channel ID、channel secret 填進 LM(依 OA 設定) | **攝影師** | LM 後台的 OA 設定頁，和現在填 OA 的 channel secret、token 同一處 |
+| 3. 用 channel ID＋secret 取得 LINE Login channel 的 access token | LM，自動 | LINE 的 channel access token API |
+| 4. 建立 LIFF App(endpoint = LM 的 `/bridge/identity` 頁，scope `openid`) | LM，自動 | `POST https://api.line.me/liff/v1/apps` |
+| 5. 存下 LIFF ID；設定 Rich Menu 的「我的相片」按鈕時自動帶入 LIFF 網址 | LM，自動 | — |
+
+規則：
+- **Provider 驗證**：LIFF 建好後，LM 要確認這個 LINE Login channel 和 OA 屬於同一個 Provider，否則不啟用 C。實作前要先確認 LINE 有沒有提供可靠的判斷方式；沒有的話，改用「攝影師本人在 LIFF 登入一次，比對他在 OA 的 userId」來驗證，或改為人工確認。
+- **密鑰保存**：LINE Login 的 channel secret 是新的密鑰，比照 OA token 加密保存；不進回應、log 或稽核。
+- **冪等**：重新執行步驟 3–5 時，已經有 LM 建立的 LIFF 就沿用(依 endpoint 比對)，不重複建立。攝影師換掉 channel 時，舊的 LIFF ID 失效、重新建立。
+- **失敗處理**：步驟 3–4 失敗時(secret 錯誤、channel 不是 LINE Login 類型、LIFF 數量達上限)，在 LM 後台顯示可行動的錯誤訊息；這個 OA 的 C 功能維持關閉，其他功能不受影響。
+- **未驗證**：上表依目前對 LINE API 的了解所寫，**沒有查證最新文件，也沒有實測**。實作前先查 LINE 官方文件，確認 API、所需權限與 LIFF 數量上限。
 
 ---
 
@@ -160,7 +178,7 @@ LINE userId 是**依 Provider 區分**的：同一個人在不同 Provider 底�
 
 | # | 問題 | 建議 |
 |---|---|---|
-| Q1 | LIFF 和 OA 的 Provider 必須相同(§C.3)。其他攝影師的 OA 在他們自己的 Provider 底下 | v1.1 的 C **只支援 LIFF 和 OA 同一個 Provider 的情況**：每個 OA 在 LM 登記自己的 LIFF ID(攝影師在自己的 Provider 建 LINE Login channel 與 LIFF)。Tim 的 OA 先做；多租戶時再評估操作成本 |
+| Q1 | LIFF 和 OA 的 Provider 必須相同(§C.3)。其他攝影師的 OA 在他們自己的 Provider 底下 | 依 §C.4：**攝影師只在自己 OA 的 Provider 底下建一個 LINE Login channel，並填入 channel ID 和 secret；LIFF 由 LM 自動建立。** Tim 的 OA 先做；多租戶時這一步列入攝影師的上線教學 |
 | Q2 | 備用內容設定在哪 | LM 後台，依 OA × product_key × action 設定 |
 | Q3 | 逾時秒數 | 2500 毫秒，可用環境變數調整 |
 | Q4 | 轉發限流 | 每位 LINE 使用者、每條連結每分鐘 10 次 |
