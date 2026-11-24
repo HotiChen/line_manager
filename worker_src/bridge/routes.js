@@ -24,8 +24,25 @@ const LINK_ROOTS = ["/bridge/v1/admin", "/bridge/v1/link", "/bridge/v1/links"];
 /** 聯絡人綁定的路徑根（LM-3A，由 contacts.js 處理；一律用連結金鑰認證） */
 const CONTACTS_ROOT = "/bridge/v1/contacts";
 
+/** LINE 身分（LM-4C，由 identity.js 處理）：公開頁、公開的 verify／exchange、產品用的 token、後台的設定 */
+const IDENTITY_PAGE_ROOT = "/bridge/identity";
+const IDENTITY_V1_PATHS = new Set(["/bridge/v1/identity/verify", "/bridge/v1/identity/exchange", "/bridge/v1/identity/token", "/bridge/v1/admin/identity"]);
+
 /** 受限通知端點（LM-3B，由 notify.js 處理；精確比對，/messages/ 之下沒有任何端點） */
 export const NOTIFY_PATH = "/bridge/v1/messages";
+
+/**
+ * 是否為 LINE 身分路由（LM-4C）：/bridge/identity/{botId}（公開頁）、/bridge/v1/identity/{verify|exchange|token}、/bridge/v1/admin/identity。
+ * 精確比對，/bridge/identity 本身與其他子路徑都不算。
+ *
+ * @param {string} pathname
+ * @returns {boolean}
+ */
+export function isIdentityRoute(pathname) {
+  if (typeof pathname !== "string") return false;
+  if (IDENTITY_V1_PATHS.has(pathname)) return true;
+  return pathname.startsWith(`${IDENTITY_PAGE_ROOT}/`) && pathname.length > IDENTITY_PAGE_ROOT.length + 1;
+}
 
 /**
  * 是否為受限通知路由（LM-3B，POST /bridge/v1/messages；連結金鑰＋messages:send，bridgeError 格式）。
@@ -83,6 +100,7 @@ export function isBridgeServiceRoute(pathname) {
   if (isLinkRoute(pathname)) return false;
   if (isContactsRoute(pathname)) return false;
   if (isNotifyRoute(pathname)) return false;
+  if (isIdentityRoute(pathname)) return false;
   if (pathname === HEALTH_PATH) return false;
   return true;
 }

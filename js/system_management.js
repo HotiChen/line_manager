@@ -15,7 +15,7 @@ import { toast } from '../helper/toast.js';
 import { showConfirm } from '../helper/modal.helper.js';
 import { apiBase } from '../helper/state.js';
 import { SCOPES, validateSystemId, buildCreatePayload, buildCurlExample, describeError } from '../helper/system_form.js';
-import { normalizeLinks, scopeShortLabel, formatIsoTime, describeLinkError, buildFallbackPayload, describeFallbackError } from '../helper/link_authorize_form.js';
+import { normalizeLinks, scopeShortLabel, formatIsoTime, describeLinkError, buildFallbackPayload, describeFallbackError, buildIdentityPayload, describeIdentityError } from '../helper/link_authorize_form.js';
 
 let botId = null;
 let busy = false;
@@ -300,6 +300,90 @@ async function renderFallbackEditor(link, editor) {
   );
 }
 
+// ── LINE 身分（LM-4C）──
+// 填 LINE Login channel → LM 自動建立 LIFF → 用手機開「驗證連結」確認和這個官方帳號同一個 Provider。
+// 這個區塊自成一體：任何失敗只影響這裡。
+
+function showIdentityNotice(message) {
+  const el = byId('identity-notice');
+  el.textContent = message || '';
+  el.classList.toggle('d-none', !message);
+}
+
+async function loadIdentity() {
+  const body = byId('identity-body');
+  if (!body) return;
+  showIdentityNotice('');
+  if (!botId) {
+    body.replaceChildren();
+    return showIdentityNotice('無法確認目前的專案，暫時無法設定。');
+  }
+  const res = await call('GET', '/bridge/v1/admin/identity', null, { 'X-Bot-Id': botId });
+  if (!res.ok) {
+    body.replaceChildren();
+    return showIdentityNotice(describeIdentityError(res.status, res.data));
+  }
+  renderIdentity(body, res.data || {});
+}
+
+function renderIdentity(body, status) {
+  const channelId = h('input', { class: 'form-control form-control-sm', placeholder: '例如 1234567890', autocomplete: 'off', value: status.channel_id || '' });
+  const secret = h('input', { class: 'form-control form-control-sm', type: 'password', placeholder: '32 個英數字', autocomplete: 'new-password' });
+  const field = (label, input) => h('div', { class: 'mb-2' }, h('label', { class: 'form-label small mb-1', text: label }), input);
+  const copyRow = (label, value) => h(
+    'div', { class: 'small mb-1 text-break' },
+    h('span', { class: 'text-muted', text: `${label}：` }),
+    h('code', { text: value })
+  );
+
+  const badge = status.configured
+    ? h('span', { class: `badge ${status.verified ? 'bg-success' : 'bg-warning text-dark'}`, text: status.verified ? '已啟用' : '尚未驗證' })
+    : h('span', { class: 'badge bg-secondary', text: '尚未設定' });
+
+  body.replaceChildren(
+    h('div', { class: 'card shadow-sm border-0' }, h('div', { class: 'card-body' },
+      h('div', { class: 'mb-3' }, badge),
+      field('LINE Login channel ID', channelId),
+      field(status.configured ? 'Channel secret（要更換時才填；留白會被擋下，請重新輸入）' : 'Channel secret', secret),
+      h('button', {
+        type: 'button', class: 'btn btn-sm btn-primary me-2', text: status.configured ? '更新設定' : '儲存並建立',
+        onclick: async (e) => {
+          const built = buildIdentityPayload({ channelId: channelId.value, channelSecret: secret.value });
+          if (built.error) return toast.error(built.error);
+          e.currentTarget.disabled = true;
+          const r = await call('PUT', '/bridge/v1/admin/identity', built.payload, { 'X-Bot-Id': botId });
+          e.currentTarget.disabled = false;
+          secret.value = '';
+          if (!r.ok) return toast.error(describeIdentityError(r.status, r.data));
+          toast.success('已儲存，LIFF 已建立');
+          renderIdentity(body, r.data || {});
+        },
+      }),
+      status.configured
+        ? h('button', {
+            type: 'button', class: 'btn btn-sm btn-outline-danger', text: '移除',
+            onclick: async () => {
+              const ok = await showConfirm({ title: '移除 LINE 身分設定', message: '移除後，客人從選單開啟產品頁面時無法確認身分。確定嗎？' });
+              if (!ok) return;
+              const r = await call('DELETE', '/bridge/v1/admin/identity', null, { 'X-Bot-Id': botId });
+              if (!r.ok) return toast.error(describeIdentityError(r.status, r.data));
+              toast.success('已移除');
+              loadIdentity();
+            },
+          })
+        : null,
+      status.configured && status.liff_url
+        ? h('div', { class: 'mt-3 border-top pt-3' },
+            h('div', { class: 'fw-semibold small mb-2', text: status.verified ? '已通過驗證' : '下一步：用手機驗證' }),
+            status.verified ? null : h('p', { class: 'small text-muted mb-2', text: '先確認你自己已加這個官方帳號為好友並傳過一則訊息，再用手機（LINE 內）打開下面的驗證連結。看到「✅ 驗證完成」後，重新整理這個頁面。' }),
+            copyRow('驗證連結', status.verify_url || ''),
+            copyRow('Rich Menu「我的相片」按鈕網址', `${status.liff_url}?p=<產品代號>&to=<產品頁面路徑，例如 /photos>`)
+          )
+        : null
+    ))
+  );
+}
+
 function showLinkNotice(message) {
   const el = byId('link-notice');
   el.textContent = message || '';
@@ -468,4 +552,5 @@ export async function pageInit() {
   await loadSystems();
   // 連結區塊自成一體：不 await —— 它慢或失敗都不該拖住全頁的載入遮罩與上面的系統列表（loadLinks 自己吞掉所有錯誤）
   loadLinks();
+  loadIdentity();
 }

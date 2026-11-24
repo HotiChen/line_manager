@@ -59,6 +59,7 @@ const BIND = OP('POST', '/bridge/v1/contacts/bind-tokens');
 const CONTACT_GET = OP('GET', '/bridge/v1/contacts/{external_contact_ref}');
 const CONTACT_DELETE = OP('DELETE', '/bridge/v1/contacts/{external_contact_ref}');
 const SEGMENT_PUT = OP('PUT', '/bridge/v1/contacts/{external_contact_ref}/segment');
+const IDENTITY_TOKEN = OP('POST', '/bridge/v1/identity/token');
 const MESSAGES = OP('POST', '/bridge/v1/messages');
 const RAW_PUSH = OP('POST', '/bridge/v1/raw/push');
 const RAW_MULTICAST = OP('POST', '/bridge/v1/raw/multicast');
@@ -529,6 +530,48 @@ describe('PUT /bridge/v1/contacts/{external_contact_ref}/segment', () => {
         await withPinnedWindow(async () => {
             let last;
             for (let i = 0; i < 61; i++) last = await put(KEY_A, { body: {} });
+            expectErr(last, 429, 'RATE_LIMITED', true);
+            assert.match(last.res.headers.get('Retry-After'), /^[1-9]\d*$/);
+        });
+    });
+});
+
+// ───────────────────────── POST /identity/token（v1.1）─────────────────────────
+
+describe('POST /bridge/v1/identity/token', () => {
+    const redeem = (key, { body = { code: 'x' }, e = env } = {}) => call(IDENTITY_TOKEN, 'POST', '/bridge/v1/identity/token', { key, body, e });
+    const newCode = async (ref = null) => {
+        const code = `lmi_${Array.from(crypto.getRandomValues(new Uint8Array(43)), (b) => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"[b % 64]).join("")}`;
+        const { sha256Hex } = await import('../../worker_src/lib/crypto_util.js');
+        const bdb = await import('../../worker_src/bridge/db.js');
+        await bdb.createIdentityCode(env, { codeHash: await sha256Hex(code), linkId: LNK_A, botId: BOT, ref, status: ref ? 'bound' : null });
+        return code;
+    };
+    beforeEach(async () => {
+        const scopes = JSON.stringify(LINK_SCOPES);
+        await d1.db.prepare('UPDATE links SET scopes = ?2 WHERE link_id = ?1').bind(LNK_A, scopes).run();
+        await d1.db.prepare('UPDATE service_keys SET scopes = ?2 WHERE link_id = ?1').bind(LNK_A, scopes).run();
+    });
+    sharedFailures('POST /identity/token', (key, e) => redeem(key, { e }), 'identity:read');
+
+    it('200 {link_id, contact}（已綁定與未綁定；Cache-Control: no-store）', async () => {
+        const bound = await redeem(KEY_A, { body: { code: await newCode(REF) } });
+        assert.equal(bound.res.status, 200, bound.text);
+        assert.deepEqual(bound.body, { link_id: LNK_A, contact: { external_contact_ref: REF, status: 'bound' } });
+        const none = await redeem(KEY_A, { body: { code: await newCode() } });
+        assert.deepEqual(none.body, { link_id: LNK_A, contact: null });
+    });
+
+    it('400 INVALID_CODE：用過、格式不對、不存在（同一種回應）；INVALID_REQUEST：本文不是 JSON', async () => {
+        const code = await newCode(REF);
+        await redeem(KEY_A, { body: { code } });
+        for (const c of [code, 'lmi_short', `lmi_${'A'.repeat(43)}`]) expectErr(await redeem(KEY_A, { body: { code: c } }), 400, 'INVALID_CODE', false);
+    });
+
+    it('429 RATE_LIMITED + Retry-After（每連結每分鐘 60 次）', async () => {
+        await withPinnedWindow(async () => {
+            let last;
+            for (let i = 0; i < 61; i++) last = await redeem(KEY_A, { body: { code: 'x' } });
             expectErr(last, 429, 'RATE_LIMITED', true);
             assert.match(last.res.headers.get('Retry-After'), /^[1-9]\d*$/);
         });

@@ -54,6 +54,7 @@ tags:
   - name: system
   - name: link
   - name: contacts
+  - name: identity
   - name: messages
   - name: raw
 
@@ -411,6 +412,61 @@ paths:
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /bridge/v1/identity/token:
+    post:
+      tags: [identity]
+      summary: 用身分碼換出客戶代號（v1.1）
+      description: |
+        客人從 Rich Menu 的「我的相片」按鈕開啟 LIFF 頁（`https://liff.line.me/<LIFF ID>?p=<product_key>&to=<路徑>`）後，
+        LM 以 LINE 驗證過的 ID token 確認身分，發一次性身分碼 `lmi_…`，並導向產品登記的 `identity_return_uris` 第一個網址
+        （附 `?code=lmi_…&to=<路徑>`）。產品後端用本端點把碼換成 `external_contact_ref`。
+        **產品永遠拿不到 LINE userId。** `to` 是產品自己的相對路徑（`^/[A-Za-z0-9/_\-.?=&]{0,199}$`，不可以 `//` 開頭），LM 原樣帶回、不解讀；產品要再驗證一次，避免開放轉址。
+        身分碼：60 秒、只能用一次、只存雜湊、必須用「發碼那條連結」的金鑰兌換；第二次使用、過期、別條連結、格式不對、不存在 → 一律 `INVALID_CODE`（同一種回應）。
+        `contact` 為 `null`：這個 LINE 帳號在這條連結下沒有綁定 —— 產品應引導客人先綁定，不要自己猜是誰。
+        產品的回調頁要設 `Referrer-Policy: no-referrer`，換完碼立即導向不含 `code` 的網址。
+        **login CSRF**：攻擊者可能把「自己的」導回網址（含他的身分碼）丟給受害者，讓受害者的瀏覽器登入成攻擊者。
+        產品若從自己的網頁發起（例如「用 LINE 開啟」），在 LIFF 網址加 `s=<隨機 state>`，LM 會原樣帶回成 `state=…`，產品必須和自己 cookie 裡的比對。
+        從固定的 Rich Menu 按鈕發起時無法帶 per-session state：產品應把這種進入點的權限降到最低（例如只讀、不接受上傳），或要求客人再按一次確認。
+        需先套用遷移 0007、OA 已設定 LINE Login channel 並通過驗證，產品登記時需有 `identity:read`、`product_key` 與 `identity_return_uris`。
+        每條連結每分鐘 60 次。
+      x-status: implemented
+      x-scope: identity:read
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, pattern: '^lmi_[A-Za-z0-9_-]{43}$' }
+      responses:
+        '200':
+          description: 兌換成功
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [link_id, contact]
+                properties:
+                  link_id: { type: string, pattern: '^lnk_[a-f0-9]{16}$' }
+                  contact:
+                    type: object
+                    nullable: true
+                    required: [external_contact_ref, status]
+                    properties:
+                      external_contact_ref: { $ref: '#/components/schemas/ContactRef' }
+                      status: { type: string, enum: [bound] }
+        '400':
+          description: "INVALID_CODE（碼不存在、已用過、過期、屬於別條連結、格式不對），或 INVALID_REQUEST（本文不是 JSON）"
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { $ref: '#/components/responses/InvalidKey' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /bridge/v1/messages:
     post:
       tags: [messages]
@@ -674,7 +730,7 @@ components:
                 url: { type: string, format: uri, description: "https，主機在產品登記的 url_domains 內" }
     Scope:
       type: string
-      enum: [link:manage, contacts:bind, messages:send, segments:write, events:receive, raw:push]
+      enum: [link:manage, contacts:bind, messages:send, segments:write, events:receive, identity:read, raw:push]
     ContactRef:
       type: string
       pattern: '^[A-Za-z0-9_-]{8,64}$'

@@ -10,7 +10,7 @@ import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTestD1, readMigrations, splitStatements } from '../helpers/mock_d1.mjs';
 
-const ALL_TABLES = ['audit_log', 'auth_codes', 'bind_codes', 'contacts', 'counters', 'event_fallbacks', 'flags', 'idempotency', 'links', 'products', 'service_keys', 'systems'];
+const ALL_TABLES = ['audit_log', 'auth_codes', 'bind_codes', 'contacts', 'counters', 'event_fallbacks', 'flags', 'idempotency', 'identity_channels', 'identity_codes', 'links', 'products', 'service_keys', 'systems'];
 
 let d1;
 before(async () => { d1 = await createTestD1(); });
@@ -32,7 +32,7 @@ describe('遷移檔', () => {
         assert.deepEqual(files, [...files].sort());
     });
 
-    it('建立計畫書的十二張表（0001 的四張＋0002 的 products、links、auth_codes＋0003 的 bind_codes、contacts＋0004 的 counters、flags＋0006 的 event_fallbacks）', async () => {
+    it('建立計畫書的十四張表（0001 的四張＋0002 的 products、links、auth_codes＋0003 的 bind_codes、contacts＋0004 的 counters、flags＋0006 的 event_fallbacks＋0007 的 identity_channels、identity_codes）', async () => {
         assert.deepEqual(await names('table'), ALL_TABLES);
     });
 

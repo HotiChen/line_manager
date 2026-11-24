@@ -184,6 +184,7 @@ export const CONFORMANCE = Object.freeze({
     'POST /bridge/v1/contacts/bind-tokens': ['201', '400', '401', '403', '429', '503'],
     'GET /bridge/v1/contacts/{external_contact_ref}': ['200', '401', '403', '404', '503'],
     'DELETE /bridge/v1/contacts/{external_contact_ref}': ['204', '401', '403', '404', '503'],
+    'POST /bridge/v1/identity/token': ['200', '400', '401', '403', '429', '503'],
     'PUT /bridge/v1/contacts/{external_contact_ref}/segment': ['204', '400', '401', '403', '404', '409', '429', '503'],
     'POST /bridge/v1/messages': ['200', '400', '401', '402', '403', '409', '413', '422', '429', '502', '503'],
     'POST /bridge/v1/raw/push': ['200', '400', '401', '402', '403', '404', '409', '413', '422', '429', '502', '503'],

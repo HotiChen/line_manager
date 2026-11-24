@@ -111,6 +111,9 @@ X-LM-Signature: v1=<hex(HMAC-SHA256(event_signing_secret, "<timestamp>.<raw body
 
 ## C. LINE 身分換 ref
 
+> **狀態：已實作(LM-4C)，`POST /identity/token` 已搬進 `bridge-v1.yaml`(1.1.0)；LIFF 頁、verify、exchange 屬 LM 內部。** §C.4 的「未驗證」已於 2026-11 對照 LINE 官方文件查證，結果與仍需真機實測的部分見 `lm-4-plan.md` 的 LM-4C 實作紀錄。
+> 與草案的差異：LM 不是在 Rich Menu 設定時帶入 LIFF 網址，而是後台顯示按鈕網址範本讓人貼上；「同 Provider 驗證」採「sub 是這個 OA 的會員」的備案（LINE 沒有查 Provider 的 API）。
+
 ### C.1 流程
 ```
 客人在 Rich Menu 按「我的相片」(網址按鈕)

@@ -20,7 +20,7 @@
 | **LM-4R** | Rich Menu 規則統一(標籤規則＋產品分眾，`tier` 不再綁 Rich Menu) | 中 | 無 | ✅(要先確認正式資料，見 4R) |
 | **LM-4D** | 客人分眾 API(`PUT /contacts/{ref}/segment`) | 中 | 4R | ✅ 已實作 |
 | **LM-4B** | 事件轉發(同步回覆、簽章、備用內容) | 高 | 4A | ✅ 已實作 |
-| **LM-4C** | LINE Login channel 設定、LIFF 自動建立、身分換 ref | 高 | 無 | ⚠️ 先查證 LINE 文件(草案 §C.4 標為未驗證) |
+| **LM-4C** | LINE Login channel 設定、LIFF 自動建立、身分換 ref | 高 | 無 | ✅ 已實作(文件已查證；真機未測) |
 
 建議順序：4A → 4R → 4D → 4B → 4C。每張工單一個分支、一個 PR。
 
@@ -90,6 +90,17 @@
 - **範圍**：OA 設定頁新增 LINE Login channel ID 與 secret(加密保存，比照 OA token)；自動建立 LIFF(冪等)；LIFF 頁 `/bridge/identity`；`lmi_` 身分碼(比照 `lmc_` 的雜湊、單次、60 秒)；`POST /bridge/v1/identity/token`；`identity:read` scope；產品登記新增 `identity_return_uris`。
 - **測試**：ID token 驗證失敗；身分碼單次、過期、跨連結使用；連結撤銷；`contact = null`；`to` 路徑格式；回應與 log 不含 userId。
 - **安全審查**：上線前做一次(身分)。
+- **實作紀錄**
+  - **LINE 文件查證結果(2026-11，官方頁面)**：LIFF Server API `POST https://api.line.me/liff/v1/apps`，Bearer 是 **LINE Login channel** 的 access token(short-lived 或 stateless)；必填 `view.type`、`view.url`(https、不可有 fragment)；回 `{liffId}`；每個 channel 最多 30 個 LIFF；`GET /liff/v1/apps` 列出、`DELETE /liff/v1/apps/{id}` 刪除。驗 ID token：`POST https://api.line.me/oauth2/v2.1/verify`(`id_token`、`client_id`)，回 `iss`、`sub`、`aud`、`exp`。同 Provider 底下的 Login channel 與 Messaging API channel，同一人的 userId 相同。
+  - **查不到、採保守做法的部分**：(1) 用 channel ID＋secret 換 token 的端點(stateless `POST /oauth2/v3/token`、short-lived `POST /v2/oauth/accessToken`，`grant_type=client_credentials`)來自網頁摘要，未逐字核對 → 先試 stateless，被 4xx 拒絕再退回 short-lived；(2) **LINE 沒有查「Login channel 與 OA 是否同 Provider」的 API** → 用「LIFF 登入者的 sub 是不是這個 OA 的會員(`lm_service.hasMember`)」證明：不同 Provider 的 sub 不會剛好等於該 OA 的某位會員；沒通過驗證就不發身分碼。
+  - **真機必須確認**：stateless token 是否被 LIFF Server API 接受；`https://liff.line.me/<id>?p=..&to=..` 的 query 是否轉送到 endpoint(endpoint 用路徑帶 bot，不依賴 endpoint 自帶 query)；LIFF 頁的 CSP 是否擋到 SDK(`connect-src` 放行 `*.line.me`、`*.line-scdn.net`)；ID token 驗證錯誤的 HTTP 狀態。
+  - 遷移 `0007_bridge_identity.sql`：`identity_channels`(secret 為 AES-GCM 密文)、`identity_codes`(只存雜湊與 ref／status，**不存 userId**)、`products.identity_return_uris`。**先套用，再部署。**
+  - `lib/line_api.js`：`issueLoginChannelToken`、`listLiffApps`、`createLiffApp`、`deleteLiffApp`、`verifyIdToken`(LINE 驗過後本地再比對 iss／aud／sub／exp)；失敗只記 HTTP 狀態。
+  - `bridge/identity.js`：後台 `GET|PUT|DELETE /bridge/v1/admin/identity`(冪等建立 LIFF，endpoint = `<origin><mount>/bridge/identity/<botId>`，只要 `openid` scope)、公開頁 `GET /bridge/identity/{botId}`(Worker 回極小 HTML，嚴格 CSP、no-referrer)、公開 `POST /bridge/v1/identity/verify`、`POST /bridge/v1/identity/exchange`、產品 `POST /bridge/v1/identity/token`。
+  - `js/identity_liff.js`：LIFF 登入 → 只送 ID token → verify 模式顯示結果／exchange 模式導向 LM 回的 https 網址。
+  - 公開端點的「未啟用」(OA 不存在、未驗證、產品／連結不合)回完全相同的回應；每 IP 30／分、每 bot 120／分；`/identity/token` 每連結 60／分。`to` 不可以 `//` 開頭。
+  - 產品登記：`identity:read` 需要 `product_key` 與 `identity_return_uris`(規則同 redirect_uris)；`PATCH` 可補。導回網址一律取第一個登記值。
+  - 後台：「已連結的產品」頁下方新增「LINE 身分(我的相片)」區塊。
 
 ## 2. Tim 要做的
 - 4R 開工前：確認正式環境的 tier 是否綁了 Rich Menu。

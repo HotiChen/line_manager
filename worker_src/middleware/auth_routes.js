@@ -50,6 +50,9 @@ const PUBLIC_PATHS = new Set([
   "/team/invite/preview",
   "/api/webhook",
   "/bridge/v1/health",
+  // LM-4C：LIFF 身分頁的兩個公開 API（以 LINE ID token 為憑，由 bridge/identity.js 驗證與限流）
+  "/bridge/v1/identity/verify",
+  "/bridge/v1/identity/exchange",
 ]);
 
 /**
@@ -61,5 +64,7 @@ const PUBLIC_PATHS = new Set([
 export function requiresAuthentication(pathname) {
   if (typeof pathname !== "string" || pathname === "") return false;
   if (PUBLIC_PATHS.has(pathname)) return false;
+  // LM-4C：LIFF 身分頁（/bridge/identity/{botId}）是公開的 HTML，只內嵌 liffId；沒有任何資料操作
+  if (pathname.startsWith("/bridge/identity/")) return false;
   return PROTECTED_PREFIXES.some(prefix => pathname.startsWith(prefix));
 }

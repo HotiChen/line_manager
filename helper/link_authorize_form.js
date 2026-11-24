@@ -18,6 +18,7 @@ const SCOPE_TEXT = Object.freeze({
   'contacts:bind': { long: '為你的客戶產生綁定碼', short: '產生綁定碼' },
   'messages:send': { long: '向已綁定的客戶發送通知', short: '發送通知' },
   'events:receive': { long: '在客戶按下選單按鈕時，把事件轉給你的系統並由你回覆', short: '接收選單事件' },
+  'identity:read': { long: '確認開啟選單的客戶是哪一位（讓他們開啟你的頁面時不用重新登入）', short: '確認客戶身分' },
   'segments:write': { long: '標記客戶的分眾（例如 VIP），讓官方帳號顯示對應的選單', short: '設定客戶分眾' },
 });
 
@@ -308,6 +309,37 @@ export function formatIsoTime(iso) {
   const t = typeof iso === 'string' ? Date.parse(iso) : NaN;
   if (!Number.isFinite(t)) return '—';
   return new Date(t).toLocaleString('zh-TW', { hour12: false });
+}
+
+// ── LINE 身分設定（LM-4C）──
+
+/**
+ * 表單 → PUT /admin/identity 的本文。只做基本格式檢查（伺服器才是最後一道）。
+ *
+ * @param {{channelId: string, channelSecret: string}} form
+ * @returns {{error: string} | {payload: {channel_id: string, channel_secret: string}}}
+ */
+export function buildIdentityPayload(form) {
+  const f = form || {};
+  const channelId = typeof f.channelId === 'string' ? f.channelId.trim() : '';
+  const channelSecret = typeof f.channelSecret === 'string' ? f.channelSecret.trim() : '';
+  if (!/^[0-9]{6,20}$/.test(channelId)) return { error: 'Channel ID 是一串數字（在 LINE Developers 的 LINE Login channel 頁面最上方）' };
+  if (!/^[0-9a-f]{32}$/i.test(channelSecret)) return { error: 'Channel secret 是 32 個英數字（Basic settings 頁面）' };
+  return { payload: { channel_id: channelId, channel_secret: channelSecret } };
+}
+
+/** 後端錯誤 → 給人看的字（身分設定端點） */
+export function describeIdentityError(status, data) {
+  const message = data && data.error && typeof data.error.message === 'string' ? data.error.message : '';
+  if (status === 400) return /LINE rejected/.test(message)
+    ? 'LINE 拒絕了這組設定：請確認 channel ID 與 secret 正確、這是 LINE Login channel（不是 Messaging API），而且 LIFF 數量沒有達到上限。'
+    : (message !== '' ? message.slice(0, 200) : '資料格式不正確');
+  if (status === 401 || status === 403) return '沒有權限，請重新登入';
+  if (status === 404) return '找不到這個專案';
+  if (status === 429) return '操作太頻繁，請稍後再試';
+  if (status === 502) return 'LINE 暫時無法連線，請稍後再試';
+  if (status === 503) return '服務尚未完成設定，請聯絡營運';
+  return '儲存失敗，請稍後再試';
 }
 
 // ── 事件備用內容（LM-4B）──
