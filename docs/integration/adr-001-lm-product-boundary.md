@@ -42,6 +42,8 @@ IP 接上 LM 後，每討論一個新功能(對個別客人發訊息、群發、
 
 ### 2.4 契約要補的三項(v1.1，全部是新增)
 
+每一種 LINE 功能(Rich Menu、Flex、Imagemap、Quick Reply、關鍵字……)放哪、按鈕怎麼接：`lm-product-feature-map.md`。
+
 細節見 `bridge-v1.1-draft.md`：
 
 - **A. postback 命名規則**：`lm:` 由 LM 處理；`px:<product_key>:` 轉給產品；沒有前綴的維持舊行為。
