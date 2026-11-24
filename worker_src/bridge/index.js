@@ -11,6 +11,7 @@
  *   /admin/*、/link/*、/links/*       連結流程（LM-2A，links.js；新錯誤格式 bridgeError）
  *   /contacts/*                       聯絡人綁定（LM-3A，contacts.js；連結金鑰＋contacts:bind）
  *   POST /messages                    受限通知（LM-3B，notify.js；連結金鑰＋messages:send）
+ *   /identity/*、/admin/identity       LINE 身分（LM-4C，identity.js；公開頁與 ID token、連結金鑰＋identity:read、LIFF＋owner）
  *   其他                              404
  *
  * Feature flag：只有 env.BRIDGE_ENABLED === "1"（精確字串）才啟用。
@@ -21,11 +22,12 @@
  */
 import { jsonResponse } from "../lib/utils.js";
 import { authenticateUser } from "../lm_service.js";
-import { isSystemsRoute, isLinkRoute, isContactsRoute, isNotifyRoute, isBridgeServiceRoute, HEALTH_PATH } from "./routes.js";
+import { isSystemsRoute, isLinkRoute, isContactsRoute, isIdentityRoute, isNotifyRoute, isBridgeServiceRoute, HEALTH_PATH } from "./routes.js";
 import * as MessagesHandler from "./messages.js";
 import * as SystemsHandler from "./systems.js";
 import * as LinksHandler from "./links.js";
 import * as ContactsHandler from "./contacts.js";
+import * as IdentityHandler from "./identity.js";
 import * as NotifyHandler from "./notify.js";
 import { BridgeDbError, bridgeUnavailable, pingDb } from "./db.js";
 
@@ -78,6 +80,12 @@ async function dispatch(request, env, pathname, ctx) {
       return res;
     }
     return SystemsHandler.route(request, env, auth.userId, pathname);
+  }
+
+  // LINE 身分（LM-4C）：公開頁與 verify／exchange（以 ID token 為憑）、產品的 token（連結金鑰）、後台設定（LIFF＋owner）。
+  // 必須在 isLinkRoute 之前：/bridge/v1/admin/identity 也在 /admin 之下
+  if (isIdentityRoute(pathname)) {
+    return IdentityHandler.route(request, env, pathname);
   }
 
   // 連結流程（LM-2A）：各端點自己認證（營運密鑰／瀏覽器／LIFF／產品密鑰／連結金鑰），回應一律用 bridgeError 格式

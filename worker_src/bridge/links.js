@@ -168,6 +168,18 @@ function validateRedirectUri(value, allowLocalhost) {
   return null;
 }
 
+/** identity_return_uris：1–MAX_REDIRECT_URIS 個，逐一用 redirect_uris 的規則驗證 @returns {{error: string} | {value: string[]}} */
+function parseIdentityReturnUris(list, allowLocalhost) {
+  if (!Array.isArray(list) || list.length === 0 || list.length > MAX_REDIRECT_URIS) {
+    return { error: `identity_return_uris must be an array of 1-${MAX_REDIRECT_URIS} URLs` };
+  }
+  for (const uri of list) {
+    const err = validateRedirectUri(uri, allowLocalhost);
+    if (err) return { error: err.replace("redirect_uris", "identity_return_uris") };
+  }
+  return { value: [...new Set(list)] };
+}
+
 /** @returns {{error: string} | {value: object}} */
 function parseProductInput(body, env) {
   const name = typeof body.name === "string" ? body.name.trim() : "";
@@ -215,7 +227,18 @@ function parseProductInput(body, env) {
   } else if (body.event_url !== undefined) {
     return { error: "event_url requires the events:receive scope" };
   }
-  return { value: { name, redirectUris, urlDomains, scopes: onlyLinkScopes(body.scopes), productKey, eventUrl } };
+
+  // LM-4C：identity:read 需要 product_key 與 identity_return_uris（規則同 redirect_uris，精確比對）；沒有這個 scope 就不接受
+  let identityReturnUris = null;
+  if (body.scopes.includes("identity:read")) {
+    if (!productKey) return { error: "identity:read requires product_key" };
+    const checked = parseIdentityReturnUris(body.identity_return_uris, allowLocalhost);
+    if (checked.error) return checked;
+    identityReturnUris = checked.value;
+  } else if (body.identity_return_uris !== undefined) {
+    return { error: "identity_return_uris requires the identity:read scope" };
+  }
+  return { value: { name, redirectUris, urlDomains, scopes: onlyLinkScopes(body.scopes), productKey, eventUrl, identityReturnUris } };
 }
 
 /**
@@ -245,7 +268,7 @@ async function handleRegisterProduct(request, env) {
   if (!body) return invalidRequest("Invalid JSON body");
   const parsed = parseProductInput(body, env);
   if (parsed.error) return invalidRequest(parsed.error);
-  const { name, redirectUris, urlDomains, scopes, productKey, eventUrl } = parsed.value;
+  const { name, redirectUris, urlDomains, scopes, productKey, eventUrl, identityReturnUris } = parsed.value;
 
   const idPart = randomHex(6);
   const productId = `prd_${idPart}`;
@@ -262,7 +285,7 @@ async function handleRegisterProduct(request, env) {
     }
   }
   const created = await createProduct(env, {
-    productId, name, secretHash: await sha256Hex(productSecret), redirectUris, urlDomains, scopes, productKey, eventUrl, eventSecretEnc,
+    productId, name, secretHash: await sha256Hex(productSecret), redirectUris, urlDomains, scopes, productKey, eventUrl, eventSecretEnc, identityReturnUris,
   });
   if (created.keyTaken) return invalidRequest("product_key is already in use");
   if (created.conflict) return bridgeError("INTERNAL", "Please retry");
@@ -272,6 +295,7 @@ async function handleRegisterProduct(request, env) {
     product_id: productId, product_secret: productSecret, name,
     redirect_uris: redirectUris, url_domains: urlDomains, scopes, product_key: productKey,
     ...(eventUrl ? { event_url: eventUrl, event_signing_secret: eventSecret } : {}),
+    ...(identityReturnUris ? { identity_return_uris: identityReturnUris } : {}),
   }, 201);
 }
 
@@ -315,6 +339,12 @@ async function handleUpdateProduct(request, env, productId) {
     if (!checked.ok) return invalidRequest("event_url must be an https URL whose host is in url_domains");
     eventUrl = checked.url;
   }
+  let identityReturnUris = null;
+  if (body.identity_return_uris !== undefined) {
+    const checked = parseIdentityReturnUris(body.identity_return_uris, env.BRIDGE_ALLOW_LOCALHOST_REDIRECT === "1");
+    if (checked.error) return invalidRequest(checked.error);
+    identityReturnUris = checked.value;
+  }
   if (body.rotate_event_secret !== undefined && typeof body.rotate_event_secret !== "boolean") {
     return invalidRequest("rotate_event_secret must be a boolean");
   }
@@ -325,6 +355,10 @@ async function handleUpdateProduct(request, env, productId) {
   if (wantsEvents && !finalKey) return invalidRequest("events:receive requires product_key");
   if (wantsEvents && !finalEventUrl) return invalidRequest("events:receive requires event_url");
   if (!wantsEvents && eventUrl) return invalidRequest("event_url requires the events:receive scope");
+  const wantsIdentity = finalScopes.includes("identity:read");
+  if (wantsIdentity && !finalKey) return invalidRequest("identity:read requires product_key");
+  if (wantsIdentity && !(identityReturnUris ?? product.identityReturnUris).length) return invalidRequest("identity:read requires identity_return_uris");
+  if (!wantsIdentity && identityReturnUris) return invalidRequest("identity_return_uris requires the identity:read scope");
 
   let eventSecret = null;
   let eventSecretEnc = null;
@@ -337,11 +371,11 @@ async function handleUpdateProduct(request, env, productId) {
       return bridgeError("INTERNAL", "event_secret_not_configured", { status: 503 });
     }
   }
-  if (productKey === null && scopes === null && eventUrl === null && eventSecretEnc === null) {
-    return invalidRequest("Nothing to update (product_key, scopes, event_url or rotate_event_secret)");
+  if (productKey === null && scopes === null && eventUrl === null && eventSecretEnc === null && identityReturnUris === null) {
+    return invalidRequest("Nothing to update (product_key, scopes, event_url, identity_return_uris or rotate_event_secret)");
   }
 
-  const updated = await updateProduct(env, { productId, productKey, scopes, eventUrl, eventSecretEnc });
+  const updated = await updateProduct(env, { productId, productKey, scopes, eventUrl, eventSecretEnc, identityReturnUris });
   if (updated.keyTaken) return invalidRequest("product_key is already in use");
   if (updated.keyLocked) return invalidRequest("product_key cannot be changed once set");
   if (updated.notFound) return notFound("Product not found");
@@ -353,6 +387,7 @@ async function handleUpdateProduct(request, env, productId) {
   const fresh = await getProduct(env, productId);
   return json({
     product_id: productId, name: fresh.name, product_key: fresh.productKey, scopes: fresh.scopes, event_url: fresh.eventUrl,
+    identity_return_uris: fresh.identityReturnUris,
     ...(eventSecret ? { event_signing_secret: eventSecret } : {}),
   });
 }
@@ -401,7 +436,7 @@ async function handleAuthorize(request, env) {
 // ── 人主體（LIFF）──
 
 /** @returns {Promise<{userId: string} | {response: Response}>} */
-async function requireUser(request, env) {
+export async function requireUser(request, env) {
   const auth = await authenticateUser(request, env);
   if (auth.authenticated) return { userId: auth.userId };
   if (auth.status === 429) {
@@ -588,7 +623,7 @@ async function handleRotateOwnKey(request, env, principal, linkId) {
 // ── 後台（人主體 + owner）──
 
 /** bot 來自 X-Bot-Id 或 ?bot_id=，且必須通過 owner 檢查 */
-async function resolveOwnedBot(request, env, userId) {
+export async function resolveOwnedBot(request, env, userId) {
   const botId = request.headers.get("X-Bot-Id") || new URL(request.url).searchParams.get("bot_id");
   if (typeof botId !== "string" || !BOT_ID_RE.test(botId)) return { response: invalidRequest("X-Bot-Id is required") };
   const bot = await getOwnedBot(env, userId, botId);

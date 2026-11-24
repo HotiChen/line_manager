@@ -89,7 +89,7 @@ describe('products', () => {
         assert.deepEqual(p, {
             productId: PRD, name: 'Image Picker', secretHash: H('9'), redirectUris: [URI],
             urlDomains: ['picker.example.com'], scopes: ['link:manage', 'contacts:bind', 'messages:send'],
-            disabled: false, createdAt: 1000, productKey: null, eventUrl: null, eventSecretEnc: null,
+            disabled: false, createdAt: 1000, productKey: null, eventUrl: null, eventSecretEnc: null, identityReturnUris: [],
         });
     });
 

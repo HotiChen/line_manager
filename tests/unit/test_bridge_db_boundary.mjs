@@ -119,10 +119,14 @@ describe('LM-3A：LINE userId 不外流', () => {
         assert.match(code(join(SRC, 'bridge', 'segments.js')), /listSegmentRecipients/);
     });
 
-    it('LM-4B：getBoundContactByUser、getEventTarget（含密文密鑰）只有 events.js 在用；event_secret_enc 只在 db.js 與 events 相關檔案出現', () => {
+    it('LM-4B／4C：getBoundContactByUser 只有 events.js 與 identity.js 在用；getEventTarget（含密文密鑰）只有 events.js；event_secret_enc 只在 db.js', () => {
+        for (const f of walk(SRC)) {
+            if (f.endsWith('/bridge/db.js') || f.endsWith('/bridge/events.js') || f.endsWith('/bridge/identity.js')) continue;
+            assert.doesNotMatch(code(f), /getBoundContactByUser/, relative(ROOT, f));
+        }
         for (const f of walk(SRC)) {
             if (f.endsWith('/bridge/db.js') || f.endsWith('/bridge/events.js')) continue;
-            assert.doesNotMatch(code(f), /getBoundContactByUser|getEventTarget/, relative(ROOT, f));
+            assert.doesNotMatch(code(f), /getEventTarget/, relative(ROOT, f));
         }
         assert.match(code(join(SRC, 'bridge', 'events.js')), /getBoundContactByUser/);
         // 密文密鑰的欄位名只准出現在 db.js；links.js 只經 sealEventSecret 寫入，不讀出
@@ -143,6 +147,30 @@ describe('LM-3A：LINE userId 不外流', () => {
             assert.doesNotMatch(m[0], /lineUserId|replyToken/, m[0]);
         }
         assert.doesNotMatch(src, /replyToken/);
+    });
+
+    it('LM-4C：identity_codes 沒有任何 LINE userId 欄位；identity_channels 的密文欄位只在 db.js', () => {
+        const migration = readFileSync(join(ROOT, 'migrations', '0007_bridge_identity.sql'), 'utf8');
+        const codesTable = migration.slice(migration.indexOf('CREATE TABLE identity_codes'), migration.indexOf('CREATE INDEX idx_identity_codes_expiry'));
+        assert.ok(codesTable.length > 50);
+        assert.doesNotMatch(codesTable.replace(/--.*$/gm, ''), /user_?id|line_user/i);
+        for (const f of walk(SRC)) {
+            if (f.endsWith('/bridge/db.js')) continue;
+            assert.doesNotMatch(code(f), /\bsecret_enc\b/, relative(ROOT, f));
+        }
+        const src = readFileSync(join(SRC, 'bridge', 'db.js'), 'utf8');
+        const insert = src.slice(src.indexOf('export async function createIdentityCode'), src.indexOf('export async function consumeIdentityCode'));
+        assert.doesNotMatch(insert, /line_user|lineUserId/);
+    });
+
+    it('LM-4C：identity.js 把 LINE userId（驗證後的 sub）只當 hasMember 與 getBoundContactByUser 的查詢條件，不進回應、稽核、log', () => {
+        const src = code(join(SRC, 'bridge', 'identity.js'));
+        for (const m of src.matchAll(/(?:audit\(env, \{|json\(|console\.\w+\()[^;]*;/g)) {
+            assert.doesNotMatch(m[0], /auth\.sub|\bsub\b|lineUserId|id_token|idToken/, m[0]);
+        }
+        // sub 只出現在兩個查詢呼叫與 verifyIdToken 的結果取用
+        const uses = [...src.matchAll(/auth\.sub/g)].length;
+        assert.ok(uses >= 2 && uses <= 3, `auth.sub 使用次數 ${uses}`);
     });
 
     it('getContactForSend 只有 notify.js 在用（其他 bridge 檔案與 LM 核心都不用）', () => {

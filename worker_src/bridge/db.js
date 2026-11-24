@@ -301,6 +301,7 @@ function rowToProduct(row) {
     productKey: row.product_key ?? null,
     eventUrl: row.event_url ?? null,
     eventSecretEnc: row.event_secret_enc ?? null,
+    identityReturnUris: asList(row.identity_return_uris),
   };
 }
 
@@ -309,15 +310,15 @@ function rowToProduct(row) {
  *
  * @returns {Promise<{created: true} | {created: false, conflict: true}>}
  */
-export async function createProduct(env, { productId, name, secretHash, redirectUris, urlDomains, scopes, productKey = null, eventUrl = null, eventSecretEnc = null, now = Date.now() }) {
+export async function createProduct(env, { productId, name, secretHash, redirectUris, urlDomains, scopes, productKey = null, eventUrl = null, eventSecretEnc = null, identityReturnUris = null, now = Date.now() }) {
   return withDb(env, async (db) => {
     try {
       await db
         .prepare(
-          `INSERT INTO products (product_id, name, secret_hash, redirect_uris, url_domains, scopes, disabled, created_at, product_key, event_url, event_secret_enc)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, ?9, ?10)`
+          `INSERT INTO products (product_id, name, secret_hash, redirect_uris, url_domains, scopes, disabled, created_at, product_key, event_url, event_secret_enc, identity_return_uris)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, ?9, ?10, ?11)`
         )
-        .bind(productId, name, secretHash, JSON.stringify(redirectUris), JSON.stringify(urlDomains ?? []), JSON.stringify(scopes), now, productKey, eventUrl, eventSecretEnc)
+        .bind(productId, name, secretHash, JSON.stringify(redirectUris), JSON.stringify(urlDomains ?? []), JSON.stringify(scopes), now, productKey, eventUrl, eventSecretEnc, identityReturnUris ? JSON.stringify(identityReturnUris) : null)
         .run();
     } catch (err) {
       const msg = String(err && err.message);
@@ -330,22 +331,23 @@ export async function createProduct(env, { productId, name, secretHash, redirect
 }
 
 /**
- * 營運更新產品（LM-4D；LM-4B 加 event_url 與 event_secret_enc，只覆蓋有給的欄位）：product_key 只能從 NULL 設一次（同值視為冪等），scopes 由呼叫端確保只增不減。
+ * 營運更新產品（LM-4D；LM-4B 加 event_url 與 event_secret_enc、LM-4C 加 identity_return_uris，只覆蓋有給的欄位）：product_key 只能從 NULL 設一次（同值視為冪等），scopes 由呼叫端確保只增不減。
  * product_key 撞到別的產品 → {updated:false, keyTaken:true}；已有不同的 product_key → {updated:false, keyLocked:true}。
  *
  * @returns {Promise<{updated: true} | {updated: false, keyTaken?: true, keyLocked?: true, notFound?: true}>}
  */
-export async function updateProduct(env, { productId, productKey, scopes, eventUrl, eventSecretEnc }) {
+export async function updateProduct(env, { productId, productKey, scopes, eventUrl, eventSecretEnc, identityReturnUris }) {
   return withDb(env, async (db) => {
     let res;
     try {
       res = await db
         .prepare(
           `UPDATE products SET product_key = COALESCE(product_key, ?2), scopes = COALESCE(?3, scopes),
-                 event_url = COALESCE(?4, event_url), event_secret_enc = COALESCE(?5, event_secret_enc)
+                 event_url = COALESCE(?4, event_url), event_secret_enc = COALESCE(?5, event_secret_enc),
+                 identity_return_uris = COALESCE(?6, identity_return_uris)
             WHERE product_id = ?1 AND (?2 IS NULL OR product_key IS NULL OR product_key = ?2)`
         )
-        .bind(productId, productKey ?? null, scopes ? JSON.stringify(scopes) : null, eventUrl ?? null, eventSecretEnc ?? null)
+        .bind(productId, productKey ?? null, scopes ? JSON.stringify(scopes) : null, eventUrl ?? null, eventSecretEnc ?? null, identityReturnUris ? JSON.stringify(identityReturnUris) : null)
         .run();
     } catch (err) {
       if (/UNIQUE constraint failed/i.test(String(err && err.message))) return { updated: false, keyTaken: true };
@@ -360,7 +362,7 @@ export async function updateProduct(env, { productId, productKey, scopes, eventU
 /** @returns {Promise<null | {productId: string, name: string, secretHash: string, redirectUris: string[], urlDomains: string[], scopes: string[], disabled: boolean, createdAt: number, productKey: string|null, eventUrl: string|null, eventSecretEnc: string|null}>} */
 export async function getProduct(env, productId) {
   return withDb(env, async (db) => {
-    const row = await db.prepare("SELECT product_id, name, secret_hash, redirect_uris, url_domains, scopes, disabled, created_at, product_key, event_url, event_secret_enc FROM products WHERE product_id = ?1").bind(productId).first();
+    const row = await db.prepare("SELECT product_id, name, secret_hash, redirect_uris, url_domains, scopes, disabled, created_at, product_key, event_url, event_secret_enc, identity_return_uris FROM products WHERE product_id = ?1").bind(productId).first();
     return row ? rowToProduct(row) : null;
   });
 }
@@ -368,7 +370,7 @@ export async function getProduct(env, productId) {
 /** @returns {Promise<null | object>} 同 getProduct，以 product_key 查 */
 export async function getProductByKey(env, productKey) {
   return withDb(env, async (db) => {
-    const row = await db.prepare("SELECT product_id, name, secret_hash, redirect_uris, url_domains, scopes, disabled, created_at, product_key, event_url, event_secret_enc FROM products WHERE product_key = ?1").bind(productKey).first();
+    const row = await db.prepare("SELECT product_id, name, secret_hash, redirect_uris, url_domains, scopes, disabled, created_at, product_key, event_url, event_secret_enc, identity_return_uris FROM products WHERE product_key = ?1").bind(productKey).first();
     return row ? rowToProduct(row) : null;
   });
 }
@@ -1038,6 +1040,144 @@ export async function deleteEventFallback(env, { botId, productKey, action }) {
   });
 }
 
+// ── LINE 身分（LM-4C，migration 0007）──
+//
+// identity_codes 刻意不存 LINE userId：只存雜湊與發碼當下解出的 ref／status。
+// identity_channels.secret_enc 是密文，只給 identity.js 解開使用，不得放進回應、audit 或 log。
+
+/** 身分碼有效時間：60 秒（草案 §C.2，比照授權碼） */
+export const IDENTITY_CODE_TTL_MS = 60 * 1000;
+const IDENTITY_CODE_PURGE_AFTER_MS = 60 * 60 * 1000;
+
+/** @returns {Promise<null | {botId: string, channelId: string, secretEnc: string, liffId: string|null, liffUrl: string|null, verifiedAt: number|null, updatedAt: number}>} */
+export async function getIdentityChannel(env, botId) {
+  return withDb(env, async (db) => {
+    const row = await db
+      .prepare("SELECT bot_id, channel_id, secret_enc, liff_id, liff_url, verified_at, updated_at FROM identity_channels WHERE bot_id = ?1")
+      .bind(botId)
+      .first();
+    return row
+      ? {
+          botId: row.bot_id, channelId: row.channel_id, secretEnc: row.secret_enc, liffId: row.liff_id ?? null,
+          liffUrl: row.liff_url ?? null, verifiedAt: row.verified_at ?? null, updatedAt: row.updated_at,
+        }
+      : null;
+  });
+}
+
+/**
+ * 寫入（或整組覆蓋）這個 OA 的 LINE Login channel。換 channel 或換 LIFF 時 verified_at 歸零，要重新驗證；
+ * keepVerified = true（呼叫端確認 channel ID 與 LIFF 都沒變，只是換 secret）才保留。
+ */
+export async function putIdentityChannel(env, { botId, channelId, secretEnc, liffId = null, liffUrl = null, keepVerified = false, now = Date.now() }) {
+  return withDb(env, async (db) => {
+    await db
+      .prepare(
+        `INSERT INTO identity_channels (bot_id, channel_id, secret_enc, liff_id, liff_url, verified_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)
+         ON CONFLICT (bot_id) DO UPDATE SET channel_id = excluded.channel_id, secret_enc = excluded.secret_enc,
+           liff_id = excluded.liff_id, liff_url = excluded.liff_url,
+           verified_at = CASE WHEN ?7 = 1 THEN identity_channels.verified_at ELSE NULL END, updated_at = excluded.updated_at`
+      )
+      .bind(botId, channelId, secretEnc, liffId, liffUrl, now, keepVerified ? 1 : 0)
+      .run();
+  });
+}
+
+/** @returns {Promise<boolean>} 有這個 OA 的設定（且已建立 LIFF）並已記錄 → true */
+export async function setIdentityVerified(env, { botId, now = Date.now() }) {
+  return withDb(env, async (db) => {
+    const res = await db.prepare("UPDATE identity_channels SET verified_at = ?2 WHERE bot_id = ?1 AND liff_id IS NOT NULL").bind(botId, now).run();
+    return res.meta.changes === 1;
+  });
+}
+
+/** @returns {Promise<boolean>} */
+export async function deleteIdentityChannel(env, botId) {
+  return withDb(env, async (db) => {
+    const res = await db.prepare("DELETE FROM identity_channels WHERE bot_id = ?1").bind(botId).run();
+    return res.meta.changes > 0;
+  });
+}
+
+/**
+ * 這個 bot 上、product_key 對應的 active 連結與產品（身分碼的對象）。找不到 → null。
+ *
+ * @returns {Promise<null | {linkId: string, productId: string, linkScopes: string[], productDisabled: boolean, identityReturnUris: string[]}>}
+ */
+export async function getIdentityTarget(env, { botId, productKey }) {
+  return withDb(env, async (db) => {
+    const row = await db
+      .prepare(
+        `SELECT l.link_id AS link_id, l.scopes AS link_scopes, p.product_id AS product_id, p.disabled AS disabled,
+                p.identity_return_uris AS uris
+           FROM links l JOIN products p ON p.product_id = l.product_id
+          WHERE l.bot_id = ?1 AND l.status = 'active' AND p.product_key = ?2
+          LIMIT 1`
+      )
+      .bind(botId, productKey)
+      .first();
+    if (!row) return null;
+    const list = (t) => { const v = parseJson(t, []); return Array.isArray(v) ? v : []; };
+    return {
+      linkId: row.link_id,
+      productId: row.product_id,
+      linkScopes: list(row.link_scopes),
+      productDisabled: row.disabled === 1,
+      identityReturnUris: list(row.uris),
+    };
+  });
+}
+
+/**
+ * 存一組身分碼（只存雜湊），並順手清掉早已過期的舊碼。雜湊撞到既有列 → {created:false}。
+ *
+ * @returns {Promise<{created: boolean}>}
+ */
+export async function createIdentityCode(env, { codeHash, linkId, botId, ref = null, status = null, now = Date.now() }) {
+  return withDb(env, async (db) => {
+    const results = await db.batch([
+      db.prepare("DELETE FROM identity_codes WHERE expires_at < ?1").bind(now - IDENTITY_CODE_PURGE_AFTER_MS),
+      db
+        .prepare(
+          `INSERT INTO identity_codes (code_hash, link_id, bot_id, ref, status, created_at, expires_at, used_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL) ON CONFLICT (code_hash) DO NOTHING`
+        )
+        .bind(codeHash, linkId, botId, ref, status, now, now + IDENTITY_CODE_TTL_MS),
+    ]);
+    return { created: results[1].meta.changes === 1 };
+  });
+}
+
+/**
+ * 兌換身分碼：單次（UPDATE … WHERE used_at IS NULL，changes = 1 才算搶到）、未過期、而且必須是「發碼那條連結」。
+ * 條件不符（不存在、用過、過期、別條連結、連結已撤銷、產品停用）一律回 null，呼叫端不得區分原因。
+ *
+ * @returns {Promise<null | {ref: string|null, status: string|null, botId: string, productId: string}>}
+ */
+export async function consumeIdentityCode(env, { codeHash, linkId, now = Date.now() }) {
+  return withDb(env, async (db) => {
+    const updated = await db
+      .prepare(
+        `UPDATE identity_codes SET used_at = ?3
+          WHERE code_hash = ?1 AND link_id = ?2 AND used_at IS NULL AND expires_at > ?3
+            AND EXISTS (SELECT 1 FROM links l JOIN products p ON p.product_id = l.product_id
+                         WHERE l.link_id = identity_codes.link_id AND l.status = 'active' AND p.disabled = 0)`
+      )
+      .bind(codeHash, linkId, now)
+      .run();
+    if (updated.meta.changes !== 1) return null;
+    const row = await db
+      .prepare(
+        `SELECT c.ref AS ref, c.status AS status, c.bot_id AS bot_id, l.product_id AS product_id
+           FROM identity_codes c JOIN links l ON l.link_id = c.link_id WHERE c.code_hash = ?1`
+      )
+      .bind(codeHash)
+      .first();
+    return row ? { ref: row.ref ?? null, status: row.status ?? null, botId: row.bot_id, productId: row.product_id } : null;
+  });
+}
+
 // ── 原子計數與旗標（M-01／M-02，migration 0004）──
 //
 // 缺 counters／flags 表（只套用到 0003）→ 查詢失敗 → BridgeDbError，呼叫端 fail-closed（不放行）。
@@ -1251,6 +1391,7 @@ function sanitizeDetail(detail) {
   if (typeof detail.error === "string" && CODE_RE.test(detail.error)) out.error = detail.error;
   if (typeof detail.disabled === "boolean") out.disabled = detail.disabled;
   if (typeof detail.cleared === "boolean") out.cleared = detail.cleared;
+  if (typeof detail.has_contact === "boolean") out.has_contact = detail.has_contact;
   if (typeof detail.outcome === "string" && CODE_RE.test(detail.outcome)) out.outcome = detail.outcome;
   if (typeof detail.event_id === "string" && /^evt_[0-9a-f]{32}$/.test(detail.event_id)) out.event_id = detail.event_id;
   if (typeof detail.event_action === "string" && /^[a-z][a-z0-9_.-]{0,31}$/.test(detail.event_action)) out.event_action = detail.event_action;

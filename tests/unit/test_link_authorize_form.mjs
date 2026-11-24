@@ -7,7 +7,7 @@ import {
   describeScopes, scopeShortLabel, UNKNOWN_SCOPE_TEXT,
   readAuthParams, saveAuthParams, restoreAuthParams, clearAuthParams, resolveAuthParams, AUTH_STORAGE_KEY,
   validateRedirectTarget, parsePreview, buildApprovePayload, describeLinkError, normalizeLinks, formatIsoTime,
-  redirectHostLabel, consentNotice, MAX_HOST_DISPLAY, MAX_OA_NAME_DISPLAY, buildFallbackPayload, describeFallbackError,
+  redirectHostLabel, consentNotice, MAX_HOST_DISPLAY, MAX_OA_NAME_DISPLAY, buildFallbackPayload, describeFallbackError, buildIdentityPayload, describeIdentityError,
 } from '../../helper/link_authorize_form.js';
 import { LINK_SCOPES } from '../../worker_src/bridge/scopes.js';
 
@@ -411,5 +411,25 @@ describe('LM-4B 備用訊息表單', () => {
     ];
     const keys = Object.fromEntries(normalizeLinks({ links: rows }).map((l) => [l.linkId, l.productKey]));
     assert.deepEqual(keys, { lnk_a: 'ip', lnk_b: null, lnk_c: null });
+  });
+});
+
+describe('LM-4C 身分設定表單', () => {
+  it('buildIdentityPayload：格式正確 → 去空白後帶上；channel ID 要是數字、secret 要是 32 個英數字', () => {
+    assert.deepEqual(buildIdentityPayload({ channelId: ' 1234567890 ', channelSecret: ` ${'a1'.repeat(16)} ` }),
+      { payload: { channel_id: '1234567890', channel_secret: 'a1'.repeat(16) } });
+    const bad = [
+      { channelId: 'abc', channelSecret: 'a'.repeat(32) }, { channelId: '123', channelSecret: 'a'.repeat(32) }, { channelId: '', channelSecret: 'a'.repeat(32) },
+      { channelId: '1234567890', channelSecret: 'short' }, { channelId: '1234567890', channelSecret: 'z'.repeat(32) }, { channelId: '1234567890', channelSecret: '' },
+      null, undefined, {},
+    ];
+    for (const f of bad) assert.ok(buildIdentityPayload(f).error, JSON.stringify(f));
+  });
+
+  it('describeIdentityError：LINE 拒絕有專用說明；其餘依狀態碼；不回顯 secret', () => {
+    assert.match(describeIdentityError(400, { error: { message: 'LINE rejected the channel ID or secret' } }), /LINE 拒絕/);
+    assert.equal(describeIdentityError(400, { error: { message: 'channel_id must be numeric' } }), 'channel_id must be numeric');
+    for (const s of [401, 403, 404, 429, 502, 503, 500, 0]) assert.ok(describeIdentityError(s, null).length > 0);
+    assert.ok(describeIdentityError(400, { error: { message: 'x'.repeat(500) } }).length <= 200);
   });
 });

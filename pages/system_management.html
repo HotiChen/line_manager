@@ -69,6 +69,17 @@
             載入中...
         </div>
     </section>
+
+    <!-- LINE 身分（LM-4C）：讓客人按選單上的「我的相片」時，產品知道他是哪一位客戶 -->
+    <section class="mt-5" id="identity-section">
+        <h4 class="mb-1">LINE 身分（我的相片）</h4>
+        <p class="text-muted small mb-3">
+            客人從選單開啟產品的頁面時，LM 用 LINE 登入確認他是誰，再把結果交給產品（產品拿不到 LINE 的使用者 ID）。
+            需要在<strong>這個官方帳號所屬的 Provider</strong> 底下建立一個 LINE Login channel，並把 channel ID 與 secret 填在下面。
+        </p>
+        <div class="alert alert-warning d-none" id="identity-notice" role="alert"></div>
+        <div id="identity-body"></div>
+    </section>
 </div>
 
 <!-- 註冊新系統 -->
