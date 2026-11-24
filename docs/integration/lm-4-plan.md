@@ -1,6 +1,6 @@
 # LM-4 開工計畫：Bridge v1.1(LM 這一側)
 
-- 狀態：**可以開工**(Tim, 2026-11-24)。尚未有任何程式碼。
+- 狀態：**可以開工**(Tim, 2026-11-24)。LM-4A 已實作(待真機驗收)；其餘尚未開工。
 - 依據：`adr-001-lm-product-boundary.md`(分工)、`bridge-v1.1-draft.md`(契約草案 A–D)、`lm-product-feature-map.md`(各 LINE 功能放哪)
 - 給設計師的對照網頁：https://claude.ai/artifact/VxujekYmTpKW1v8tnkVwvn(私人頁面，由 Tim 分享)
 - 產品端(Image Picker)的對應工單在 `imge_picker` repo：`docs/line-v1.1.md`
@@ -16,7 +16,7 @@
 
 | 工單 | 內容 | 風險 | 相依 | 可否現在開工 |
 |---|---|---|---|---|
-| **LM-4A** | postback 分流(`lm:`／`px:`／無前綴)、拿掉原始字串回覆 | 低 | 無 | ✅ |
+| **LM-4A** | postback 分流(`lm:`／`px:`／無前綴)、拿掉原始字串回覆 | 低 | 無 | ✅ 已實作，待真機驗收 |
 | **LM-4R** | Rich Menu 規則統一(標籤規則＋產品分眾，`tier` 不再綁 Rich Menu) | 中 | 無 | ✅(要先確認正式資料，見 4R) |
 | **LM-4D** | 客人分眾 API(`PUT /contacts/{ref}/segment`) | 中 | 4R | ✅ |
 | **LM-4B** | 事件轉發(同步回覆、簽章、備用內容) | 高 | 4A | ✅(預設值見草案 Q2–Q5) |
@@ -36,6 +36,13 @@
   - 格式不合：不回覆、不轉發，記稽核原因碼。
 - **測試**(`tests/unit/test_postback_route.mjs`、`test_event_handler_postback.mjs`)：合法格式；`action`／query 長度與數量上限；300 字元上限；未知前綴；`lm:reply` 命中與未命中；舊的 `tag=` 行為不變；**任何情況都不再回原始 data**。
 - **驗收**：真機按 Rich Menu 的 `lm:reply` 按鈕會回對應內容；舊的標籤按鈕仍能貼標籤；聊天室不再出現「已收到您的操作」。
+- **實作紀錄**
+  - 解析：`worker_src/lib/postback_route.js`(純函式，回傳值不含原始 data)。重複的 query key 視為格式不合(`duplicate_param`)。
+  - `lm:reply` 的 key 用和打字相同的比對(`findMatchingKeyword`：逗號別名、不分大小寫)；組訊息抽成 `composeKeywordReply`，打字與按鈕共用(變數替換、Quick Reply 都有)。按鈕觸發**不套用**關鍵字的自動標籤，只計入回覆與關鍵字統計。
+  - `lm:menu` 的 `tab` 必須是合法 alias id(`[A-Za-z0-9_-]{1,32}`)，經 `GET /v2/bot/richmenu/alias/{id}` 查 richMenuId 後連給該使用者。注意：4R 上線後「重新計算」可能蓋掉這個個人選單，4R 時要決定兩者關係。
+  - `px:` 目前一律不回覆(備用內容的設定在 4B 才有)。
+  - 稽核：`logger.warn('POSTBACK_AUDIT', 'reason=<碼>', {kind, productKey?, action?})`；不含 userId、原始 data、query 值。原因碼：`empty`、`too_long`、`unknown_prefix`、`bad_product_key`、`bad_action`、`too_many_params`、`bad_param_key`、`param_value_too_long`、`duplicate_param`、`missing_param`、`lm_unknown_action`、`lm_reply_key_not_found`、`lm_reply_empty`、`lm_menu_bad_alias`、`lm_menu_alias_not_found`、`lm_menu_link_failed`、`not_forwarded`。
+  - 無 D1 遷移、不動 `bridge-v1.yaml`(postback 不是 Bridge 端點)。
 
 ### LM-4R　Rich Menu 規則統一
 - **問題**：現在有兩套機制都會呼叫 `linkRichMenuToUser`：`segmented_richmenu_logic.js` 的標籤規則，和 `tier_system.js` 的 `applyTierRichMenu`(由 `member.js`、`tier.js`、等級自動升級觸發)。後執行的蓋掉先執行的。

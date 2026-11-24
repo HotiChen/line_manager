@@ -206,6 +206,28 @@ export async function linkRichMenuToUser(lineUserId, richMenuId, accessToken) {
 }
 
 /**
+ * 用 Rich Menu alias 查出 richMenuId。
+ * @returns {Promise<string|null>} 找不到、失敗或參數不全時回 null
+ */
+export async function getRichMenuIdByAlias(aliasId, accessToken) {
+    if (!aliasId || !accessToken) return null;
+    try {
+        const res = await fetch(`https://api.line.me/v2/bot/richmenu/alias/${encodeURIComponent(aliasId)}`, {
+            headers: { 'Authorization': `Bearer ${accessToken}` }
+        });
+        if (!res.ok) {
+            if (res.status !== 404) logger.error('LINE_API', `查詢 Rich Menu alias 失敗: ${res.status}`);
+            return null;
+        }
+        const body = await res.json();
+        return typeof body.richMenuId === 'string' && body.richMenuId ? body.richMenuId : null;
+    } catch (err) {
+        logger.error('LINE_API', `查詢 Rich Menu alias 發生網路錯誤: ${err && err.message}`);
+        return null;
+    }
+}
+
+/**
  * 取消使用者的特定 Rich Menu 綁定
  * @param {string} lineUserId LINE 使用者 ID
  * @param {string} accessToken LINE Access Token
