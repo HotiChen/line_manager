@@ -38,12 +38,12 @@ beforeEach(() => {
 afterEach(() => { globalThis.fetch = originalFetch; });
 
 describe('介面形狀', () => {
-    it('只匯出約定的十個名字（LM-2A 刻意新增 getOwnedBot、listOwnedBots、getBotDisplayName；LM-3A 新增 getBotBasicId；LM-4D 新增 applyProductSegments）', () => {
+    it('只匯出約定的十二個名字（LM-2A 刻意新增 getOwnedBot、listOwnedBots、getBotDisplayName；LM-3A 新增 getBotBasicId；LM-4D 新增 applyProductSegments；LM-4B 新增 sealSecret、openSecret）', () => {
         assert.deepEqual(
             Object.keys(lmService).sort(),
             [
                 'applyProductSegments', 'authenticateUser', 'getBotAccessToken', 'getBotBasicId', 'getBotDisplayName', 'getOwnedBot',
-                'hasMember', 'listOwnedBots', 'markMemberInactive', 'withPermission',
+                'hasMember', 'listOwnedBots', 'markMemberInactive', 'openSecret', 'sealSecret', 'withPermission',
             ]
         );
     });

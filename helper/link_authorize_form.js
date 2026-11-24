@@ -17,6 +17,7 @@ const SCOPE_TEXT = Object.freeze({
   'link:manage': { long: '管理這個連結（查看狀態、解除、更換金鑰）', short: '管理連結' },
   'contacts:bind': { long: '為你的客戶產生綁定碼', short: '產生綁定碼' },
   'messages:send': { long: '向已綁定的客戶發送通知', short: '發送通知' },
+  'events:receive': { long: '在客戶按下選單按鈕時，把事件轉給你的系統並由你回覆', short: '接收選單事件' },
   'segments:write': { long: '標記客戶的分眾（例如 VIP），讓官方帳號顯示對應的選單', short: '設定客戶分眾' },
 });
 
@@ -277,7 +278,7 @@ export function describeLinkError(status, body, context = 'authorize') {
 /**
  * 整理 GET /admin/links 的回應。壞資料列直接略過；排序：使用中在前，其次依連結時間新到舊。
  *
- * @returns {Array<{linkId: string, productName: string, status: 'active'|'revoked', scopes: string[], createdAt: string|null, revokedAt: string|null}>}
+ * @returns {Array<{linkId: string, productName: string, productKey: string|null, status: 'active'|'revoked', scopes: string[], createdAt: string|null, revokedAt: string|null}>}
  */
 export function normalizeLinks(data) {
   const rows = data && Array.isArray(data.links) ? data.links : [];
@@ -288,6 +289,7 @@ export function normalizeLinks(data) {
     out.push({
       linkId: r.link_id,
       productName: typeof r.product_name === 'string' && r.product_name !== '' ? r.product_name : '（未命名產品）',
+      productKey: typeof r.product_key === 'string' && /^[a-z][a-z0-9]{1,15}$/.test(r.product_key) ? r.product_key : null,
       status: r.status,
       scopes: Array.isArray(r.scopes) ? r.scopes : [],
       createdAt: typeof r.created_at === 'string' ? r.created_at : null,
@@ -306,4 +308,42 @@ export function formatIsoTime(iso) {
   const t = typeof iso === 'string' ? Date.parse(iso) : NaN;
   if (!Number.isFinite(t)) return '—';
   return new Date(t).toLocaleString('zh-TW', { hour12: false });
+}
+
+// ── 事件備用內容（LM-4B）──
+
+const FALLBACK_ACTION_RE = /^[a-z][a-z0-9_.-]{0,31}$/;
+
+/**
+ * 備用訊息表單 → PUT /admin/event-fallbacks 的本文。只做基本檢查（伺服器才是最後一道：長度、連結文字、網址白名單）。
+ *
+ * @param {{productKey: string, action: string, title: string, body: string, label?: string, url?: string}} form
+ * @returns {{error: string} | {payload: {product_key: string, action: string, content: {title: string, body: string, action?: {label: string, url: string}}}}}
+ */
+export function buildFallbackPayload(form) {
+  const f = form || {};
+  const action = typeof f.action === 'string' ? f.action.trim() : '';
+  const title = typeof f.title === 'string' ? f.title.trim() : '';
+  const body = typeof f.body === 'string' ? f.body.trim() : '';
+  const label = typeof f.label === 'string' ? f.label.trim() : '';
+  const url = typeof f.url === 'string' ? f.url.trim() : '';
+  if (typeof f.productKey !== 'string' || f.productKey === '') return { error: '缺少產品代號' };
+  if (!FALLBACK_ACTION_RE.test(action)) return { error: '動作名稱只能用小寫英文、數字、底線、點與連字號，且以英文字母開頭（最長 32 字）' };
+  if (title === '' || Array.from(title).length > 40) return { error: '標題必填，最多 40 字' };
+  if (body === '' || Array.from(body).length > 300) return { error: '內文必填，最多 300 字' };
+  if ((label === '') !== (url === '')) return { error: '按鈕文字與網址要一起填，或都不填' };
+  if (label !== '' && Array.from(label).length > 20) return { error: '按鈕文字最多 20 字' };
+  if (url !== '' && !/^https:\/\//i.test(url)) return { error: '按鈕網址必須是 https' };
+  const content = { title, body, ...(label !== '' ? { action: { label, url } } : {}) };
+  return { payload: { product_key: f.productKey, action, content } };
+}
+
+/** 後端錯誤 → 給人看的字（備用內容端點） */
+export function describeFallbackError(status, data) {
+  const message = data && data.error && typeof data.error.message === 'string' ? data.error.message : '';
+  if (status === 400 && message !== '') return message.slice(0, 200);
+  if (status === 401 || status === 403) return '沒有權限，請重新登入';
+  if (status === 404) return '找不到這個產品或專案';
+  if (status === 503) return '服務尚未完成設定，請聯絡營運';
+  return '儲存失敗，請稍後再試';
 }

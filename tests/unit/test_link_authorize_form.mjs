@@ -7,7 +7,7 @@ import {
   describeScopes, scopeShortLabel, UNKNOWN_SCOPE_TEXT,
   readAuthParams, saveAuthParams, restoreAuthParams, clearAuthParams, resolveAuthParams, AUTH_STORAGE_KEY,
   validateRedirectTarget, parsePreview, buildApprovePayload, describeLinkError, normalizeLinks, formatIsoTime,
-  redirectHostLabel, consentNotice, MAX_HOST_DISPLAY, MAX_OA_NAME_DISPLAY,
+  redirectHostLabel, consentNotice, MAX_HOST_DISPLAY, MAX_OA_NAME_DISPLAY, buildFallbackPayload, describeFallbackError,
 } from '../../helper/link_authorize_form.js';
 import { LINK_SCOPES } from '../../worker_src/bridge/scopes.js';
 
@@ -374,5 +374,42 @@ describe('M-03：同意頁顯示回調主機與授權效果', () => {
     const o2 = consentNotice(emoji).replace('授權後，你的客戶可綁定並收到來自 ', '').replace(' 的通知', '');
     assert.equal(Array.from(o2).length, MAX_OA_NAME_DISPLAY);
     assert.doesNotMatch(o2, /[\ud800-\udbff](?![\udc00-\udfff])/); // 沒有被切斷的 surrogate
+  });
+});
+
+describe('LM-4B 備用訊息表單', () => {
+  const form = (over = {}) => ({ productKey: 'ip', action: 'plans', title: '暫時無法顯示', body: '請稍後再試', label: '', url: '', ...over });
+
+  it('只有標題與內文 → 沒有 action 欄位；有按鈕 → 一起帶上；前後空白去掉', () => {
+    assert.deepEqual(buildFallbackPayload(form()), { payload: { product_key: 'ip', action: 'plans', content: { title: '暫時無法顯示', body: '請稍後再試' } } });
+    assert.deepEqual(buildFallbackPayload(form({ label: ' 官網 ', url: ' https://picker.example.com/ ', title: ' t ' })).payload.content,
+      { title: 't', body: '請稍後再試', action: { label: '官網', url: 'https://picker.example.com/' } });
+  });
+
+  it('基本檢查：動作名稱、標題、內文、按鈕成對、https', () => {
+    const bad = [
+      form({ action: 'Plans' }), form({ action: '' }), form({ action: 'a'.repeat(33) }),
+      form({ title: '' }), form({ title: 't'.repeat(41) }), form({ body: '' }), form({ body: 'b'.repeat(301) }),
+      form({ label: '官網' }), form({ url: 'https://x.example.com/' }),
+      form({ label: 'l'.repeat(21), url: 'https://x.example.com/' }), form({ label: 'go', url: 'http://x.example.com/' }),
+      form({ productKey: '' }), null, undefined,
+    ];
+    for (const f of bad) assert.ok(buildFallbackPayload(f).error, JSON.stringify(f));
+  });
+
+  it('describeFallbackError：400 帶伺服器訊息（截斷），401／403／404／503 各有說明，其餘通用', () => {
+    assert.equal(describeFallbackError(400, { error: { message: 'title must be 1-40 characters' } }), 'title must be 1-40 characters');
+    assert.equal(describeFallbackError(400, { error: { message: 'x'.repeat(500) } }).length, 200);
+    for (const s of [401, 403, 404, 503, 500, 0]) assert.ok(describeFallbackError(s, null).length > 0);
+  });
+
+  it('normalizeLinks 帶出合法的 product_key，不合法就是 null', () => {
+    const rows = [
+      { link_id: 'lnk_a', status: 'active', product_key: 'ip', scopes: [] },
+      { link_id: 'lnk_b', status: 'active', product_key: 'IP!', scopes: [] },
+      { link_id: 'lnk_c', status: 'active', scopes: [] },
+    ];
+    const keys = Object.fromEntries(normalizeLinks({ links: rows }).map((l) => [l.linkId, l.productKey]));
+    assert.deepEqual(keys, { lnk_a: 'ip', lnk_b: null, lnk_c: null });
   });
 });

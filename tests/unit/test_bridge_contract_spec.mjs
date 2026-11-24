@@ -16,6 +16,7 @@ import { LINK_SCOPES, FORBIDDEN_LINK_SCOPES } from '../../worker_src/bridge/scop
 import { CONTACT_REF_RE } from '../../worker_src/bridge/contacts.js';
 import { generateBindCode, formatBindCode, normalizeBindCode, BIND_CODE_TTL_MS } from '../../worker_src/bridge/binding.js';
 import { validateNotification } from '../../worker_src/bridge/notify.js';
+import { signEvent } from '../../worker_src/bridge/events.js';
 import { handleBridge } from '../../worker_src/bridge/index.js';
 
 const spec = loadSpec();
@@ -264,5 +265,34 @@ describe('x-status 與 conformance 登記', () => {
         for (const { key, op } of ops.filter((o) => o.op['x-status'] === 'partial')) {
             assert.ok(typeof op.description === 'string' && op.description.length > 0, `${key} 是 partial，要說明缺什麼`);
         }
+    });
+});
+
+describe('LM-4B 事件轉發（x-lm-events）', () => {
+    const ev = spec['x-lm-events'];
+
+    it('規格內的簽章範例與 events.js 的 signEvent 演算法一致（產品端照規格實作就會驗過）', async () => {
+        const ex = ev['signature-example'];
+        assert.equal(await signEvent(ex.event_signing_secret, ex.timestamp, ex.raw_body), ex.signature);
+        assert.match(ex.signature, /^v1=[0-9a-f]{64}$/);
+    });
+
+    it('範例本文的欄位恰為 EventRequest 的必填欄位；schema 沒有 userId、replyToken、data', () => {
+        const body = JSON.parse(ev['signature-example'].raw_body);
+        const req = schemas.EventRequest;
+        assert.deepEqual(sorted(Object.keys(body)), sorted(req.required));
+        assert.deepEqual(sorted(Object.keys(req.properties)), sorted(req.required));
+        assert.ok(!/userId|replyToken|"data"/.test(JSON.stringify(req.properties)));
+    });
+
+    it('EventResponse 的上限與 Notification 驗證一致（標題 40、內文 300、按鈕文字 20）', () => {
+        const reply = schemas.EventResponse.properties.reply.properties;
+        assert.equal(reply.title.maxLength, 40);
+        assert.equal(reply.body.maxLength, 300);
+        assert.equal(reply.action.properties.label.maxLength, 20);
+        const base = { external_contact_ref: 'customer-0001', event_type: 'x.y' };
+        const ok = validateNotification({ ...base, title: 't'.repeat(40), body: 'b'.repeat(300), action: { label: 'l'.repeat(20), url: 'https://picker.example.com/' } });
+        assert.equal(ok.error, undefined);
+        assert.ok(validateNotification({ ...base, title: 't'.repeat(41), body: 'b' }).error);
     });
 });

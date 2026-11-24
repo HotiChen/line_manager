@@ -69,14 +69,14 @@ export default [
         },
     },
     {
-        // (i-b) LM-3A 接縫：lib/event_handler.js 只准 import bridge/binding.js（tests/helpers/import_boundary.mjs 的 LM_SIDE_BRIDGE_ALLOWED）
+        // (i-b) LM-3A／LM-4B 接縫：lib/event_handler.js 只准 import bridge/binding.js 與 bridge/events.js（tests/helpers/import_boundary.mjs 的 LM_SIDE_BRIDGE_ALLOWED）
         files: ['worker_src/lib/event_handler.js'],
         rules: {
             'no-restricted-imports': ['error', {
                 patterns: [{
                     // 指到 bridge/ 的 specifier，但排除 ../bridge/binding.js（gitignore 風格的 negation 不處理 ../，所以用 regex）
-                    regex: '^(?!\\.\\./bridge/binding\\.js$)(.*/)?bridge(/|$)',
-                    message: 'event_handler.js 只能 import bridge/binding.js（LM-3A 的 webhook 接縫）。',
+                    regex: '^(?!\\.\\./bridge/(binding|events)\\.js$)(.*/)?bridge(/|$)',
+                    message: 'event_handler.js 只能 import bridge/binding.js 與 bridge/events.js（LM-3A、LM-4B 的 webhook 接縫）。',
                 }],
             }],
         },

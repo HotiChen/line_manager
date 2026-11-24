@@ -37,9 +37,12 @@ import { withLink } from "./auth.js";
 import { LINK_SCOPES, onlyLinkScopes } from "./scopes.js";
 import {
   BridgeDbError, createProduct, getProduct, createAuthCode, consumeAuthCode, createLinkWithKey, getLink,
-  listLinksForBot, revokeLink, rotateLinkKey, writeAudit, updateProduct,
+  listLinksForBot, revokeLink, rotateLinkKey, writeAudit, updateProduct, getProductByKey,
+  listEventFallbacks, putEventFallback, deleteEventFallback,
 } from "./db.js";
 import { defer, captureLinkRecipients, captureReplacedRecipients, refreshRecipients } from "./segments.js";
+import { generateEventSecret, sealEventSecret, checkEventUrl } from "./events.js";
+import { validateContent, checkActionUrl } from "./content.js";
 
 export const AUTH_CODE_TTL_MS = 5 * 60 * 1000;
 const MAX_STATE_LENGTH = 256;
@@ -200,7 +203,19 @@ function parseProductInput(body, env) {
     }
     productKey = body.product_key;
   }
-  return { value: { name, redirectUris, urlDomains, scopes: onlyLinkScopes(body.scopes), productKey } };
+
+  // LM-4B：events:receive 需要 product_key 與 event_url；沒有這個 scope 就不接受 event_url
+  const wantsEvents = body.scopes.includes("events:receive");
+  let eventUrl = null;
+  if (wantsEvents) {
+    if (!productKey) return { error: "events:receive requires product_key" };
+    const checked = checkEventUrl(body.event_url, urlDomains);
+    if (!checked.ok) return { error: "event_url must be an https URL whose host is in url_domains" };
+    eventUrl = checked.url;
+  } else if (body.event_url !== undefined) {
+    return { error: "event_url requires the events:receive scope" };
+  }
+  return { value: { name, redirectUris, urlDomains, scopes: onlyLinkScopes(body.scopes), productKey, eventUrl } };
 }
 
 /**
@@ -230,13 +245,24 @@ async function handleRegisterProduct(request, env) {
   if (!body) return invalidRequest("Invalid JSON body");
   const parsed = parseProductInput(body, env);
   if (parsed.error) return invalidRequest(parsed.error);
-  const { name, redirectUris, urlDomains, scopes, productKey } = parsed.value;
+  const { name, redirectUris, urlDomains, scopes, productKey, eventUrl } = parsed.value;
 
   const idPart = randomHex(6);
   const productId = `prd_${idPart}`;
   const productSecret = `bps_${idPart}_${randomToken()}`;
+  // LM-4B：事件簽章密鑰只在登記時回一次；缺 TOKEN_ENCRYPTION_KEY → 503（不降級存明文）
+  let eventSecret = null;
+  let eventSecretEnc = null;
+  if (eventUrl) {
+    eventSecret = generateEventSecret();
+    try {
+      eventSecretEnc = await sealEventSecret(env, eventSecret);
+    } catch {
+      return bridgeError("INTERNAL", "event_secret_not_configured", { status: 503 });
+    }
+  }
   const created = await createProduct(env, {
-    productId, name, secretHash: await sha256Hex(productSecret), redirectUris, urlDomains, scopes, productKey,
+    productId, name, secretHash: await sha256Hex(productSecret), redirectUris, urlDomains, scopes, productKey, eventUrl, eventSecretEnc,
   });
   if (created.keyTaken) return invalidRequest("product_key is already in use");
   if (created.conflict) return bridgeError("INTERNAL", "Please retry");
@@ -245,6 +271,7 @@ async function handleRegisterProduct(request, env) {
   return json({
     product_id: productId, product_secret: productSecret, name,
     redirect_uris: redirectUris, url_domains: urlDomains, scopes, product_key: productKey,
+    ...(eventUrl ? { event_url: eventUrl, event_signing_secret: eventSecret } : {}),
   }, 201);
 }
 
@@ -280,9 +307,41 @@ async function handleUpdateProduct(request, env, productId) {
     if (!product.scopes.every((x) => body.scopes.includes(x))) return invalidRequest("scopes can only be added, not removed");
     scopes = onlyLinkScopes(body.scopes);
   }
-  if (productKey === null && scopes === null) return invalidRequest("Nothing to update (product_key or scopes)");
 
-  const updated = await updateProduct(env, { productId, productKey, scopes });
+  // LM-4B：event_url（https、主機在 url_domains 內）與簽章密鑰（登記／輪替時回一次）
+  let eventUrl = null;
+  if (body.event_url !== undefined) {
+    const checked = checkEventUrl(body.event_url, product.urlDomains);
+    if (!checked.ok) return invalidRequest("event_url must be an https URL whose host is in url_domains");
+    eventUrl = checked.url;
+  }
+  if (body.rotate_event_secret !== undefined && typeof body.rotate_event_secret !== "boolean") {
+    return invalidRequest("rotate_event_secret must be a boolean");
+  }
+  const finalScopes = scopes ?? product.scopes;
+  const finalKey = product.productKey ?? productKey;
+  const finalEventUrl = eventUrl ?? product.eventUrl;
+  const wantsEvents = finalScopes.includes("events:receive");
+  if (wantsEvents && !finalKey) return invalidRequest("events:receive requires product_key");
+  if (wantsEvents && !finalEventUrl) return invalidRequest("events:receive requires event_url");
+  if (!wantsEvents && eventUrl) return invalidRequest("event_url requires the events:receive scope");
+
+  let eventSecret = null;
+  let eventSecretEnc = null;
+  if (body.rotate_event_secret === true || (wantsEvents && !product.eventSecretEnc)) {
+    if (!wantsEvents) return invalidRequest("rotate_event_secret requires the events:receive scope");
+    eventSecret = generateEventSecret();
+    try {
+      eventSecretEnc = await sealEventSecret(env, eventSecret);
+    } catch {
+      return bridgeError("INTERNAL", "event_secret_not_configured", { status: 503 });
+    }
+  }
+  if (productKey === null && scopes === null && eventUrl === null && eventSecretEnc === null) {
+    return invalidRequest("Nothing to update (product_key, scopes, event_url or rotate_event_secret)");
+  }
+
+  const updated = await updateProduct(env, { productId, productKey, scopes, eventUrl, eventSecretEnc });
   if (updated.keyTaken) return invalidRequest("product_key is already in use");
   if (updated.keyLocked) return invalidRequest("product_key cannot be changed once set");
   if (updated.notFound) return notFound("Product not found");
@@ -292,7 +351,10 @@ async function handleUpdateProduct(request, env, productId) {
     detail: { product_id: productId, scopes: scopes ?? product.scopes },
   });
   const fresh = await getProduct(env, productId);
-  return json({ product_id: productId, name: fresh.name, product_key: fresh.productKey, scopes: fresh.scopes });
+  return json({
+    product_id: productId, name: fresh.name, product_key: fresh.productKey, scopes: fresh.scopes, event_url: fresh.eventUrl,
+    ...(eventSecret ? { event_signing_secret: eventSecret } : {}),
+  });
 }
 
 // ── 授權參數驗證（authorize／preview／approve 共用）──
@@ -571,6 +633,69 @@ async function handleAdminRevoke(request, env, linkId, ctx) {
   return noContent(); // 已撤銷的再撤銷一次也是 204（冪等）
 }
 
+// ── 事件備用內容（LM-4B；人主體 + owner）──
+
+const FALLBACK_ACTION_RE = /^[a-z][a-z0-9_.-]{0,31}$/;
+
+/** 備用內容的共同前置：人主體、owner 的 bot、product_key 對應的產品 */
+async function resolveFallbackScope(request, env, productKey) {
+  const user = await requireUser(request, env);
+  if (user.response) return { response: user.response };
+  const resolved = await resolveOwnedBot(request, env, user.userId);
+  if (resolved.response) return { response: resolved.response };
+  if (typeof productKey !== "string" || !PRODUCT_KEY_RE.test(productKey)) return { response: invalidRequest("product_key is required") };
+  const product = await getProductByKey(env, productKey);
+  if (!product) return { response: notFound("Product not found") };
+  return { user, bot: resolved.bot, product };
+}
+
+async function handleFallbackList(request, env) {
+  const url = new URL(request.url);
+  const scope = await resolveFallbackScope(request, env, url.searchParams.get("product_key"));
+  if (scope.response) return scope.response;
+  const rows = await listEventFallbacks(env, { botId: scope.bot.botId, productKey: scope.product.productKey });
+  return json({ product_key: scope.product.productKey, fallbacks: rows.map((r) => ({ action: r.action, content: r.content })) });
+}
+
+async function handleFallbackPut(request, env) {
+  const body = await readJsonBody(request);
+  if (!body) return invalidRequest("Invalid JSON body");
+  const scope = await resolveFallbackScope(request, env, body.product_key);
+  if (scope.response) return scope.response;
+  if (typeof body.action !== "string" || !FALLBACK_ACTION_RE.test(body.action)) return invalidRequest("action must match ^[a-z][a-z0-9_.-]{0,31}$");
+  const checked = validateContent(body.content);
+  if (checked.error) return invalidRequest(checked.error);
+  const content = checked.value;
+  if (content.action) {
+    const url = checkActionUrl(content.action.url, scope.product.urlDomains);
+    if (!url.ok) return invalidRequest("action.url must be https and its host must be in the product's url_domains");
+    content.action = { label: content.action.label, url: url.url };
+  }
+  const stored = { title: content.title, body: content.body, ...(content.action ? { action: content.action } : {}) };
+  await putEventFallback(env, { botId: scope.bot.botId, productKey: scope.product.productKey, action: body.action, content: stored });
+  await audit(env, {
+    actorType: "user", actorId: scope.user.userId, botId: scope.bot.botId, action: "event_fallback_set",
+    detail: { product_id: scope.product.productId, event_action: body.action },
+  });
+  return json({ product_key: scope.product.productKey, action: body.action, content: stored });
+}
+
+async function handleFallbackDelete(request, env) {
+  const url = new URL(request.url);
+  const scope = await resolveFallbackScope(request, env, url.searchParams.get("product_key"));
+  if (scope.response) return scope.response;
+  const action = url.searchParams.get("action");
+  if (typeof action !== "string" || !FALLBACK_ACTION_RE.test(action)) return invalidRequest("action must match ^[a-z][a-z0-9_.-]{0,31}$");
+  const removed = await deleteEventFallback(env, { botId: scope.bot.botId, productKey: scope.product.productKey, action });
+  if (removed) {
+    await audit(env, {
+      actorType: "user", actorId: scope.user.userId, botId: scope.bot.botId, action: "event_fallback_deleted",
+      detail: { product_id: scope.product.productId, event_action: action },
+    });
+  }
+  return noContent(); // 本來就沒有也是 204（冪等）
+}
+
 // ── 路由 ──
 
 function decodeSegment(raw) {
@@ -594,6 +719,12 @@ async function dispatch(request, env, pathname, ctx) {
       return productId === null ? notFound() : handleUpdateProduct(request, env, productId);
     }
     if (n === 4 && a === "links" && method === "GET") return handleAdminList(request, env);
+    if (n === 4 && a === "event-fallbacks") {
+      if (method === "GET") return handleFallbackList(request, env);
+      if (method === "PUT") return handleFallbackPut(request, env);
+      if (method === "DELETE") return handleFallbackDelete(request, env);
+      return notFound();
+    }
     if (n === 5 && a === "links" && method === "DELETE") {
       const linkId = decodeSegment(b);
       return linkId === null ? notFound() : handleAdminRevoke(request, env, linkId, ctx);
