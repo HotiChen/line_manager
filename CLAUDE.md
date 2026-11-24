@@ -46,6 +46,7 @@ npm run deploy:check && npm run deploy
 - 認證一律走 `withAuth`，授權一律走 `withPermission`（見 `team.js` 的用法），新 handler 不可直接信任 body/query 中的 userId/ownerId。
 - HTTP 回應**不可**包含 `err.stack`。
 - 前端不可新增裸 `innerHTML` 賦值（用 `helper/security.js` 的 `setInnerHTML`）。
+- LM 與產品的分工以 `docs/integration/adr-001-lm-product-boundary.md` 為準（LM 管 LINE 管道，CRM 只在產品；契約只增不改）；不要提議在 LM 重做客人 CRM。下一版契約草案：`docs/integration/bridge-v1.1-draft.md`。
 - Bridge 邊界：只經 `worker_src/lm_service.js` 使用 LM；SQL 只寫在 `bridge/db.js`；LINE userId 不進任何回應、稽核或 log。測試（`test_import_boundary`、`test_bridge_db_boundary`）會擋。
 
 ## 已知狀態與陷阱
