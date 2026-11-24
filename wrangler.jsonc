@@ -44,7 +44,11 @@
     // Channel ID 就是 LIFF_ID 的前半段，前端 env/config.js 也會送到瀏覽器，
     // 本身不是機密；放在 vars 讓 authenticate() 能比對 token 的 client_id。
     "LIFF_CHANNEL_ID": "1653928585",
-    "AUTH_MODE": "liff"
+    "AUTH_MODE": "liff",
+    // webhook 簽章只用「每個 bot 自己登記的 channel secret」驗，不再退回全域 LINE_CHANNEL_SECRET。
+    // 沒登記自己 secret 的 OA，webhook 會回 401 —— 部署前確認每個 OA 都已在後台「專案設定」登記。
+    // 字串 "1" 才生效（webhook.js 用 === '1' 判斷）。tests/unit/test_wrangler_config.mjs 會檢查。
+    "WEBHOOK_GLOBAL_SECRET_DISABLED": "1"
   },
   // 以下 secrets 需透過 `wrangler secret put` 設定，不要寫在這裡：
   // - MIGRATION_SECRET: migration API 的驗證金鑰

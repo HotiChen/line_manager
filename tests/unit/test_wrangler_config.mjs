@@ -90,6 +90,14 @@ describe('wrangler.jsonc — AUTH_MODE', () => {
     });
 });
 
+describe('wrangler.jsonc — WEBHOOK_GLOBAL_SECRET_DISABLED', () => {
+    it('prod 必須是字串 "1"（webhook 只認每個 bot 自己登記的 channel secret，不退回全域密鑰）', () => {
+        const cfg = readWranglerConfig();
+        // webhook.js 用 === '1' 判斷：數字 1、true、"true" 都不會生效
+        assert.strictEqual(cfg.vars.WEBHOOK_GLOBAL_SECRET_DISABLED, '1');
+    });
+});
+
 describe('wrangler.jsonc — MOUNT_PATH 與 routes 必須一致', () => {
     // 這兩個分開設定，但必須講同一件事。不一致時每個請求都會 404 —— route
     // 把 /lm/x 送進來，worker 卻以為自己掛在別的地方、切不掉前綴，於是
