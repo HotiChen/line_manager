@@ -303,6 +303,7 @@ async function handleRegisterProduct(request, env) {
  * PATCH /bridge/v1/admin/products/{product_id}（LM-4D，營運）：
  *   - product_key：只能從 NULL 設一次（同值冪等），全域唯一
  *   - scopes：只能增加（新集合必須包含舊的），限 LINK_SCOPES；既有連結不會自動取得新 scope（要重新授權）
+ *   - url_domains：只能增加（新集合必須包含舊的）；同一個請求內的 event_url 可以用新增的網域
  */
 async function handleUpdateProduct(request, env, productId) {
   const denied = await requireAdmin(request, env, "PATCH");
@@ -332,10 +333,23 @@ async function handleUpdateProduct(request, env, productId) {
     scopes = onlyLinkScopes(body.scopes);
   }
 
+  // url_domains 只能增加（新集合必須包含舊的）：它同時是通知按鈕網址與 event_url 的白名單，縮小會讓既有設定失效；
+  // 增加的網域同一個請求內的 event_url 就可以用
+  let urlDomains = null;
+  if (body.url_domains !== undefined) {
+    if (!Array.isArray(body.url_domains) || body.url_domains.length > MAX_URL_DOMAINS
+      || !body.url_domains.every((d) => typeof d === "string" && DOMAIN_RE.test(d))) {
+      return invalidRequest("url_domains must be an array of lowercase host names (no scheme, port or wildcard)");
+    }
+    if (!product.urlDomains.every((d) => body.url_domains.includes(d))) return invalidRequest("url_domains can only be added, not removed");
+    urlDomains = [...new Set(body.url_domains)];
+  }
+  const finalUrlDomains = urlDomains ?? product.urlDomains;
+
   // LM-4B：event_url（https、主機在 url_domains 內）與簽章密鑰（登記／輪替時回一次）
   let eventUrl = null;
   if (body.event_url !== undefined) {
-    const checked = checkEventUrl(body.event_url, product.urlDomains);
+    const checked = checkEventUrl(body.event_url, finalUrlDomains);
     if (!checked.ok) return invalidRequest("event_url must be an https URL whose host is in url_domains");
     eventUrl = checked.url;
   }
@@ -371,11 +385,11 @@ async function handleUpdateProduct(request, env, productId) {
       return bridgeError("INTERNAL", "event_secret_not_configured", { status: 503 });
     }
   }
-  if (productKey === null && scopes === null && eventUrl === null && eventSecretEnc === null && identityReturnUris === null) {
-    return invalidRequest("Nothing to update (product_key, scopes, event_url, identity_return_uris or rotate_event_secret)");
+  if (productKey === null && scopes === null && urlDomains === null && eventUrl === null && eventSecretEnc === null && identityReturnUris === null) {
+    return invalidRequest("Nothing to update (product_key, scopes, url_domains, event_url, identity_return_uris or rotate_event_secret)");
   }
 
-  const updated = await updateProduct(env, { productId, productKey, scopes, eventUrl, eventSecretEnc, identityReturnUris });
+  const updated = await updateProduct(env, { productId, productKey, scopes, urlDomains, eventUrl, eventSecretEnc, identityReturnUris });
   if (updated.keyTaken) return invalidRequest("product_key is already in use");
   if (updated.keyLocked) return invalidRequest("product_key cannot be changed once set");
   if (updated.notFound) return notFound("Product not found");
@@ -387,7 +401,7 @@ async function handleUpdateProduct(request, env, productId) {
   const fresh = await getProduct(env, productId);
   return json({
     product_id: productId, name: fresh.name, product_key: fresh.productKey, scopes: fresh.scopes, event_url: fresh.eventUrl,
-    identity_return_uris: fresh.identityReturnUris,
+    identity_return_uris: fresh.identityReturnUris, url_domains: fresh.urlDomains,
     ...(eventSecret ? { event_signing_secret: eventSecret } : {}),
   });
 }

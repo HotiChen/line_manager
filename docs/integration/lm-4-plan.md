@@ -102,6 +102,7 @@
   - 產品登記：`identity:read` 需要 `product_key` 與 `identity_return_uris`(規則同 redirect_uris)；`PATCH` 可補。導回網址一律取第一個登記值。
   - 後台：「已連結的產品」頁下方新增「LINE 身分(我的相片)」區塊。
   - **獨立安全審查後的修正**：(1) 同 Provider 驗證改用 `lm_service.hasWebhookMember`(要求會員資料的 `botIds` 含這個 bot——只有 webhook 會寫，`/member/save` 不接受 body 的 botIds 且編輯時保留)，擋掉「團隊成員手動寫入會員名單」的污染；(2) 公開端點在 ID token 無效時也回 404(與未設定同一個回應)；(3) 公開端點與 `/identity/token` 的限流改用 D1 原子計數，每 bot 的桶只在 ID token 驗證成功後才計。已知不處理：ID token 無 nonce、audit 的 `actorId` 記後台操作員的 userId(沿用 LM-2A 慣例)。
+  - **`PATCH /admin/products/{id}` 可增加 `url_domains`**(只增不減；同一個請求的 `event_url` 可用新網域)。原因：產品登記時的網域可能和事件接收網址不同(例如 IP 登記 `imhoti.tw`，Worker 在 `workers.dev`)。新增的網域同時成為通知按鈕網址的白名單。
   - **營運提醒**：所有 OA 都登記自己的 channel secret 後，設 `WEBHOOK_GLOBAL_SECRET_DISABLED=1`(否則持有全域密鑰的人可偽造尚未登記的 OA 的事件，包含 `px:`)。
 
 ## 2. Tim 要做的
