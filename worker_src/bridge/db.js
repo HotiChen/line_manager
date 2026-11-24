@@ -298,6 +298,7 @@ function rowToProduct(row) {
     scopes: asList(row.scopes),
     disabled: row.disabled === 1,
     createdAt: row.created_at,
+    productKey: row.product_key ?? null,
   };
 }
 
@@ -306,28 +307,57 @@ function rowToProduct(row) {
  *
  * @returns {Promise<{created: true} | {created: false, conflict: true}>}
  */
-export async function createProduct(env, { productId, name, secretHash, redirectUris, urlDomains, scopes, now = Date.now() }) {
+export async function createProduct(env, { productId, name, secretHash, redirectUris, urlDomains, scopes, productKey = null, now = Date.now() }) {
   return withDb(env, async (db) => {
     try {
       await db
         .prepare(
-          `INSERT INTO products (product_id, name, secret_hash, redirect_uris, url_domains, scopes, disabled, created_at)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7)`
+          `INSERT INTO products (product_id, name, secret_hash, redirect_uris, url_domains, scopes, disabled, created_at, product_key)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8)`
         )
-        .bind(productId, name, secretHash, JSON.stringify(redirectUris), JSON.stringify(urlDomains ?? []), JSON.stringify(scopes), now)
+        .bind(productId, name, secretHash, JSON.stringify(redirectUris), JSON.stringify(urlDomains ?? []), JSON.stringify(scopes), now, productKey)
         .run();
     } catch (err) {
-      if (/UNIQUE constraint failed/i.test(String(err && err.message))) return { created: false, conflict: true };
+      const msg = String(err && err.message);
+      if (/UNIQUE constraint failed: products\.product_key/i.test(msg)) return { created: false, keyTaken: true };
+      if (/UNIQUE constraint failed/i.test(msg)) return { created: false, conflict: true };
       throw err;
     }
     return { created: true };
   });
 }
 
+/**
+ * 營運更新產品（LM-4D）：product_key 只能從 NULL 設一次（同值視為冪等），scopes 由呼叫端確保只增不減。
+ * product_key 撞到別的產品 → {updated:false, keyTaken:true}；已有不同的 product_key → {updated:false, keyLocked:true}。
+ *
+ * @returns {Promise<{updated: true} | {updated: false, keyTaken?: true, keyLocked?: true, notFound?: true}>}
+ */
+export async function updateProduct(env, { productId, productKey, scopes }) {
+  return withDb(env, async (db) => {
+    let res;
+    try {
+      res = await db
+        .prepare(
+          `UPDATE products SET product_key = COALESCE(product_key, ?2), scopes = COALESCE(?3, scopes)
+            WHERE product_id = ?1 AND (?2 IS NULL OR product_key IS NULL OR product_key = ?2)`
+        )
+        .bind(productId, productKey ?? null, scopes ? JSON.stringify(scopes) : null)
+        .run();
+    } catch (err) {
+      if (/UNIQUE constraint failed/i.test(String(err && err.message))) return { updated: false, keyTaken: true };
+      throw err;
+    }
+    if (res.meta.changes === 1) return { updated: true };
+    const exists = await db.prepare("SELECT 1 AS x FROM products WHERE product_id = ?1").bind(productId).first();
+    return exists ? { updated: false, keyLocked: true } : { updated: false, notFound: true };
+  });
+}
+
 /** @returns {Promise<null | {productId: string, name: string, secretHash: string, redirectUris: string[], urlDomains: string[], scopes: string[], disabled: boolean, createdAt: number}>} */
 export async function getProduct(env, productId) {
   return withDb(env, async (db) => {
-    const row = await db.prepare("SELECT product_id, name, secret_hash, redirect_uris, url_domains, scopes, disabled, created_at FROM products WHERE product_id = ?1").bind(productId).first();
+    const row = await db.prepare("SELECT product_id, name, secret_hash, redirect_uris, url_domains, scopes, disabled, created_at, product_key FROM products WHERE product_id = ?1").bind(productId).first();
     return row ? rowToProduct(row) : null;
   });
 }
@@ -394,6 +424,7 @@ function rowToLink(row) {
     createdBy: row.created_by,
     createdAt: row.created_at,
     revokedAt: row.revoked_at ?? null,
+    productKey: row.product_key ?? null,
   };
 }
 
@@ -413,11 +444,12 @@ export async function createLinkWithKey(env, { linkId, productId, botId, scopes,
     const results = await db.batch([
       db.prepare("SELECT link_id FROM links WHERE product_id = ?1 AND bot_id = ?2 AND status = 'active'").bind(productId, botId),
       // LM-3A：重新授權（取代 active 連結）時，綁定與「未用且未過期」的綁定碼跟著搬到新連結。
+      // LM-4D：搬家時分眾清掉（新連結的 scope 可能不同，由產品重新設定）。
       // 放在撤銷之前，這樣「這次被取代的連結」就是此刻 status = 'active' 的那些，不會碰到更早被明確撤銷的連結
       // （撤銷即切斷）。新連結剛建、沒有任何列，不會有主鍵衝突。
       db
         .prepare(
-          `UPDATE contacts SET link_id = ?3
+          `UPDATE contacts SET link_id = ?3, segment = NULL
             WHERE link_id IN (SELECT link_id FROM links WHERE product_id = ?1 AND bot_id = ?2 AND status = 'active')`
         )
         .bind(productId, botId, linkId),
@@ -471,7 +503,7 @@ export async function listLinksForBot(env, botId, limit = 200) {
   return withDb(env, async (db) => {
     const { results } = await db
       .prepare(
-        `SELECT l.link_id AS link_id, l.product_id AS product_id, l.bot_id AS bot_id, l.scopes AS scopes, l.status AS status, l.created_by AS created_by, l.created_at AS created_at, l.revoked_at AS revoked_at, p.name AS product_name FROM links l LEFT JOIN products p ON p.product_id = l.product_id
+        `SELECT l.link_id AS link_id, l.product_id AS product_id, l.bot_id AS bot_id, l.scopes AS scopes, l.status AS status, l.created_by AS created_by, l.created_at AS created_at, l.revoked_at AS revoked_at, p.name AS product_name, p.product_key AS product_key FROM links l LEFT JOIN products p ON p.product_id = l.product_id
           WHERE l.bot_id = ?1 ORDER BY l.created_at DESC, l.link_id LIMIT ?2`
       )
       .bind(botId, limit)
@@ -488,6 +520,14 @@ export async function listLinksForBot(env, botId, limit = 200) {
 export async function revokeLink(env, { linkId, botId, now = Date.now() }) {
   return withDb(env, async (db) => {
     const results = await db.batch([
+      // LM-4D：撤銷即清掉這條連結下的分眾（放在改 status 之前，EXISTS 才看得到 active）
+      db
+        .prepare(
+          `UPDATE contacts SET segment = NULL
+            WHERE link_id = ?1 AND segment IS NOT NULL
+              AND EXISTS (SELECT 1 FROM links WHERE link_id = ?1 AND bot_id = ?2 AND status = 'active')`
+        )
+        .bind(linkId, botId),
       db
         .prepare(
           `UPDATE service_keys SET revoked_at = ?3
@@ -499,7 +539,7 @@ export async function revokeLink(env, { linkId, botId, now = Date.now() }) {
         .prepare("UPDATE links SET status = 'revoked', revoked_at = ?3 WHERE link_id = ?1 AND bot_id = ?2 AND status = 'active'")
         .bind(linkId, botId, now),
     ]);
-    return results[1].meta.changes === 1;
+    return results[2].meta.changes === 1;
   });
 }
 
@@ -666,7 +706,9 @@ export async function consumeBindCode(env, { codeHash, botId, lineUserId, now = 
           `SELECT b.link_id AS link_id, b.external_contact_ref AS ref, b.bot_id AS bot_id, b.used_at AS used_at,
                   b.expires_at AS expires_at, l.status AS link_status, l.product_id AS product_id,
                   (SELECT c.line_user_id FROM contacts c
-                    WHERE c.link_id = b.link_id AND c.external_contact_ref = b.external_contact_ref) AS prev_user
+                    WHERE c.link_id = b.link_id AND c.external_contact_ref = b.external_contact_ref) AS prev_user,
+                  (SELECT c2.segment FROM contacts c2
+                    WHERE c2.link_id = b.link_id AND c2.external_contact_ref = b.external_contact_ref) AS prev_segment
              FROM bind_codes b JOIN links l ON l.link_id = b.link_id WHERE b.code_hash = ?1`
         )
         .bind(codeHash),
@@ -692,7 +734,7 @@ export async function consumeBindCode(env, { codeHash, botId, lineUserId, now = 
       return stillValid ? { rejected: true, linkId: row.link_id, productId: row.product_id } : null;
     }
     const previousUserId = row.prev_user && row.prev_user !== lineUserId ? row.prev_user : null;
-    return { rejected: false, linkId: row.link_id, productId: row.product_id, ref: row.ref, previousUserId };
+    return { rejected: false, linkId: row.link_id, productId: row.product_id, ref: row.ref, previousUserId, hasSegment: row.prev_segment !== null && row.prev_segment !== undefined };
   });
 }
 
@@ -733,7 +775,7 @@ export async function getContactSnapshot(env, { linkId, ref, now = Date.now() })
     const row = await db
       .prepare(
         `SELECT l.status AS link_status, p.disabled AS product_disabled,
-                c.status AS contact_status, c.bound_at AS bound_at,
+                c.status AS contact_status, c.bound_at AS bound_at, c.segment AS segment,
                 EXISTS (SELECT 1 FROM bind_codes b
                          WHERE b.link_id = ?1 AND b.external_contact_ref = ?2 AND b.used_at IS NULL AND b.expires_at > ?3) AS pending
            FROM links l
@@ -748,7 +790,7 @@ export async function getContactSnapshot(env, { linkId, ref, now = Date.now() })
       linkStatus: row.link_status,
       // 產品列不存在視同停用（與 authenticateLink 一致）
       productDisabled: row.product_disabled === null || row.product_disabled === undefined ? true : row.product_disabled === 1,
-      contact: row.contact_status ? { status: row.contact_status, boundAt: row.bound_at } : null,
+      contact: row.contact_status ? { status: row.contact_status, boundAt: row.bound_at, segment: row.segment ?? null } : null,
       hasPendingCode: row.pending === 1,
     };
   });
@@ -793,7 +835,7 @@ export async function deleteContact(env, { linkId, ref }) {
 export async function markContactsBlockedByUser(env, { botId, lineUserId, now = Date.now() }) {
   return withDb(env, async (db) => {
     const res = await db
-      .prepare("UPDATE contacts SET status = 'blocked', updated_at = ?3 WHERE bot_id = ?1 AND line_user_id = ?2 AND status = 'bound'")
+      .prepare("UPDATE contacts SET status = 'blocked', segment = NULL, updated_at = ?3 WHERE bot_id = ?1 AND line_user_id = ?2 AND status = 'bound'")
       .bind(botId, lineUserId, now)
       .run();
     return res.meta.changes;
@@ -812,6 +854,75 @@ export async function restoreContactsByUser(env, { botId, lineUserId, now = Date
       .bind(botId, lineUserId, now)
       .run();
     return res.meta.changes;
+  });
+}
+
+// ── 客人分眾（LM-4D，migration 0005）──
+
+/**
+ * 設定（或清除）這條連結下某個 ref 的分眾。只動 bound 的列；值沒變不寫。
+ * 不回 line_user_id。
+ *
+ * @returns {Promise<{found: false} | {found: true, status: string, changed: boolean}>}
+ */
+export async function setContactSegment(env, { linkId, ref, segment, now = Date.now() }) {
+  return withDb(env, async (db) => {
+    const [selected, updated] = await db.batch([
+      db.prepare("SELECT status FROM contacts WHERE link_id = ?1 AND external_contact_ref = ?2").bind(linkId, ref),
+      db
+        .prepare(
+          `UPDATE contacts SET segment = ?3, updated_at = ?4
+            WHERE link_id = ?1 AND external_contact_ref = ?2 AND status = 'bound' AND segment IS NOT ?3`
+        )
+        .bind(linkId, ref, segment, now),
+    ]);
+    const row = selected.results[0];
+    if (!row) return { found: false };
+    return { found: true, status: row.status, changed: updated.meta.changes === 1 };
+  });
+}
+
+/**
+ * 需要重新計算 Rich Menu 的對象：這條連結下（可限定一個 ref）的 (bot_id, line_user_id)。
+ * onlySegmented = true 時只取目前有分眾的列（撤銷、取代前用）。
+ * 回傳值只能交給 bridge/segments.js 轉給 lm_service；不得放進回應、audit 或 log。
+ *
+ * @returns {Promise<{botId: string, lineUserId: string}[]>}
+ */
+export async function listSegmentRecipients(env, { linkId, ref = null, onlySegmented = false, limit = 201 }) {
+  return withDb(env, async (db) => {
+    const { results } = await db
+      .prepare(
+        `SELECT DISTINCT bot_id, line_user_id FROM contacts
+          WHERE link_id = ?1 AND (?2 IS NULL OR external_contact_ref = ?2) AND (?3 = 0 OR segment IS NOT NULL)
+          LIMIT ?4`
+      )
+      .bind(linkId, ref, onlySegmented ? 1 : 0, limit)
+      .all();
+    return results.map((r) => ({ botId: r.bot_id, lineUserId: r.line_user_id }));
+  });
+}
+
+/**
+ * 這位 LINE 使用者在這個 bot 上目前有效的分眾：`<product_key>:<segment>`。
+ * 只算 bound、連結 active、產品未停用且有 product_key 的列。line_user_id 只當 WHERE 條件。
+ *
+ * @returns {Promise<string[]>} 排序過、去重
+ */
+export async function listUserSegments(env, { botId, lineUserId }) {
+  return withDb(env, async (db) => {
+    const { results } = await db
+      .prepare(
+        `SELECT DISTINCT p.product_key AS product_key, c.segment AS segment
+           FROM contacts c
+           JOIN links l ON l.link_id = c.link_id
+           JOIN products p ON p.product_id = l.product_id
+          WHERE c.bot_id = ?1 AND c.line_user_id = ?2 AND c.status = 'bound' AND c.segment IS NOT NULL
+            AND l.status = 'active' AND p.disabled = 0 AND p.product_key IS NOT NULL`
+      )
+      .bind(botId, lineUserId)
+      .all();
+    return [...new Set(results.map((r) => `${r.product_key}:${r.segment}`))].sort();
   });
 }
 
@@ -1002,7 +1113,7 @@ export async function releaseIdempotency(env, { botId, system, keyHash }) {
 
 // ── 稽核 ──
 
-const COUNT_FIELDS = ["recipients", "messages", "cost", "status"];
+const COUNT_FIELDS = ["recipients", "messages", "cost", "status", "count"];
 const CODE_RE = /^[a-z0-9_]{1,64}$/;
 const NAME_RE = /^[A-Za-z]{1,32}$/;
 const SCOPE_RE = /^[a-z]{1,32}:[a-z]{1,32}$/;
@@ -1027,6 +1138,7 @@ function sanitizeDetail(detail) {
   }
   if (typeof detail.error === "string" && CODE_RE.test(detail.error)) out.error = detail.error;
   if (typeof detail.disabled === "boolean") out.disabled = detail.disabled;
+  if (typeof detail.cleared === "boolean") out.cleared = detail.cleared;
   for (const [k, re] of [["product_id", PRODUCT_ID_RE], ["link_id", LINK_ID_RE], ["error_code", ERROR_CODE_RE], ["message_id", MESSAGE_ID_RE]]) {
     const v = detail[k];
     if (typeof v === "string" && re.test(v)) out[k] = v;

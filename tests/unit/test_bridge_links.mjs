@@ -1217,7 +1217,7 @@ describe('GET /admin/links 與 DELETE /admin/links/{id}', () => {
         assert.equal(r.res.status, 200);
         assert.deepEqual(r.body.links.map((l) => [l.link_id, l.status]), [[second.link_id, 'active'], [first.link.link_id, 'revoked']]);
         const l = r.body.links[0];
-        assert.deepEqual(Object.keys(l).sort(), ['created_at', 'link_id', 'product_id', 'product_name', 'revoked_at', 'scopes', 'status']);
+        assert.deepEqual(Object.keys(l).sort(), ['created_at', 'link_id', 'product_id', 'product_key', 'product_name', 'revoked_at', 'scopes', 'status']);
         assert.equal(l.product_name, 'Image Picker');
         assert.deepEqual(l.scopes, ALL_SCOPES);
         assert.doesNotMatch(r.text, /brk_|lmc_|bps_|key_hash|secret/);

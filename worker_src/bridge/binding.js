@@ -27,6 +27,7 @@ import {
   consumeBindCode, markContactsBlockedByUser, restoreContactsByUser, writeAudit,
   takeToken, giveBackTokens, getFlag, setFlag, claimFlag,
 } from "./db.js";
+import { defer, refreshUserSegments, blockAndClearSegments } from "./segments.js";
 
 export const BIND_CODE_TTL_MS = 48 * 60 * 60 * 1000;
 export const BIND_CONFIRM_TEXT = "已完成綁定，之後會在這裡通知你";
@@ -106,10 +107,11 @@ async function pauseBot(env, botId, now) {
  * 嘗試把這則文字訊息當作綁定碼消耗。
  *
  * @param {Object} env
- * @param {{botId: string, lineUserId: string, text: string}} input botId 是 webhook 的 destination
+ * @param {{botId: string, lineUserId: string, text: string, ctx?: {waitUntil?: Function}}} input botId 是 webhook 的 destination；
+ *   ctx 有給時，LM-4D 的分眾重新計算放進 waitUntil（不拖慢確認訊息）
  * @returns {Promise<{handled: false} | {handled: true, replyText: string}>} 絕不丟錯
  */
-export async function tryConsumeBindCode(env, { botId, lineUserId, text } = {}) {
+export async function tryConsumeBindCode(env, { botId, lineUserId, text, ctx } = {}) {
   try {
     if (!enabled(env)) return { handled: false };
     const code = normalizeBindCode(text);
@@ -154,6 +156,14 @@ export async function tryConsumeBindCode(env, { botId, lineUserId, text } = {}) 
       detail: { product_id: consumed.productId, link_id: consumed.linkId },
     });
     if (consumed.previousUserId) await notifyPreviousBinder(env, botId, consumed.previousUserId);
+    // LM-4D：這個 ref 有分眾 → 新綁定者套用、被覆蓋的原綁定者重新計算
+    if (consumed.hasSegment) {
+      const prev = consumed.previousUserId;
+      await defer(ctx, (async () => {
+        await refreshUserSegments(env, botId, lineUserId);
+        if (prev) await refreshUserSegments(env, botId, prev);
+      })());
+    }
     return { handled: true, replyText: BIND_CONFIRM_TEXT };
   } catch (err) {
     // 只記 message：不記碼、不記 userId、不記 stack
@@ -170,7 +180,8 @@ export async function tryConsumeBindCode(env, { botId, lineUserId, text } = {}) 
 export async function markBlocked(env, { botId, lineUserId } = {}) {
   try {
     if (!enabled(env) || !validId(botId) || !validId(lineUserId)) return 0;
-    return await markContactsBlockedByUser(env, { botId, lineUserId });
+    // LM-4D：封鎖時分眾在同一句 UPDATE 清掉；原本有分眾才更新 LM 的副本（不呼叫 LINE）
+    return await blockAndClearSegments(env, botId, lineUserId, () => markContactsBlockedByUser(env, { botId, lineUserId }));
   } catch (err) {
     console.error("[Binding] markBlocked failed:", err && err.message);
     return 0;

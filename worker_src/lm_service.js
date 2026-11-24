@@ -17,6 +17,7 @@ import { openBotStoreForBot } from "./lib/bot_store.js";
 import { authenticate } from "./middleware/auth.js";
 import { rateLimitMiddleware } from "./middleware/rate_limiter.js";
 import { BotKeys, UserKeys } from "./lib/kv_schema.js";
+import { syncMemberRichMenu } from "./lib/segmented_richmenu_logic.js";
 
 /** owner-only 路由用的權限包裝（原樣轉出 middleware/permission.js 的實作） */
 export { withPermission } from "./middleware/permission.js";
@@ -71,6 +72,35 @@ export async function markMemberInactive(env, botId, lineUserId) {
   } catch (err) {
     // 標記是盡力而為，不可讓它把 409 變成 500
     console.error("[lm_service] markMemberInactive failed:", err && err.message);
+  }
+}
+
+/**
+ * LM-4D：寫入這位會員的產品分眾副本（KV member.productSegments），並依 4R 的規則重新計算 Rich Menu。
+ *
+ * 分眾的真相在 Bridge 的 D1；這裡只存一份副本，讓 LM 端其他觸發點（標籤變更、加好友）重新計算時也看得到。
+ * 會員不存在 → 什麼都不做（回 true：沒有要切換的對象）。
+ *
+ * @param {Object} env
+ * @param {string} botId
+ * @param {string} lineUserId
+ * @param {string[]} segments `<product_key>:<segment>` 清單
+ * @param {{sync?: boolean}} [opts] sync = false 只寫副本、不呼叫 LINE（例如封鎖時）
+ * @returns {Promise<boolean>} false = 需要重試（LINE 或 token 失敗）
+ */
+export async function applyProductSegments(env, botId, lineUserId, segments, { sync = true } = {}) {
+  try {
+    const store = await openBotStoreForBot(env, botId);
+    const member = await store.get("member", lineUserId);
+    if (!member) return true;
+    await store.put("member", { ...member, productSegments: [...segments] }, lineUserId);
+    if (!sync) return true;
+    const token = await getBotAccessToken(env, botId);
+    if (!token) return false;
+    return await syncMemberRichMenu(store, lineUserId, { accessToken: token, segments });
+  } catch (err) {
+    console.error("[lm_service] applyProductSegments failed:", err && err.message);
+    return false;
   }
 }
 

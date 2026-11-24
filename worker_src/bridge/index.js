@@ -53,7 +53,7 @@ function notFound() {
   return jsonResponse({ success: false, error: "Not Found" }, 404);
 }
 
-async function dispatch(request, env, pathname) {
+async function dispatch(request, env, pathname, ctx) {
   if (pathname === HEALTH_PATH) {
     if (request.method !== "GET") {
       const res = jsonResponse({ success: false, error: "Method not allowed" }, 405);
@@ -82,12 +82,12 @@ async function dispatch(request, env, pathname) {
 
   // 連結流程（LM-2A）：各端點自己認證（營運密鑰／瀏覽器／LIFF／產品密鑰／連結金鑰），回應一律用 bridgeError 格式
   if (isLinkRoute(pathname)) {
-    return LinksHandler.route(request, env, pathname);
+    return LinksHandler.route(request, env, pathname, ctx);
   }
 
   // 聯絡人綁定（LM-3A）：連結金鑰＋contacts:bind，回應一律用 bridgeError 格式
   if (isContactsRoute(pathname)) {
-    return ContactsHandler.route(request, env, pathname);
+    return ContactsHandler.route(request, env, pathname, ctx);
   }
 
   // 受限通知（LM-3B）：連結金鑰＋messages:send，回應一律用 bridgeError 格式
@@ -108,12 +108,13 @@ async function dispatch(request, env, pathname) {
  * @param {Request} request
  * @param {Object} env
  * @param {string} pathname 已去掉掛載前綴的路徑
+ * @param {{waitUntil?: Function}} [ctx] Worker 的 ExecutionContext（LM-4D 分眾重新計算放進 waitUntil）
  * @returns {Promise<Response>}
  */
-export async function handleBridge(request, env, pathname) {
+export async function handleBridge(request, env, pathname, ctx) {
   if (!isBridgeEnabled(env)) return notFound();
   try {
-    return await dispatch(request, env, pathname);
+    return await dispatch(request, env, pathname, ctx);
   } catch (err) {
     if (err instanceof BridgeDbError) return bridgeUnavailable();
     // 只記訊息，不記 stack，也不回給呼叫端

@@ -158,6 +158,8 @@ LIFF App 只能掛在 **LINE Login channel**(或 LINE MINI App channel)底下，
 
 ## D. 客人分眾(產品決定「誰是 VIP」，LM 決定「VIP 看哪個 Rich Menu」)
 
+> **狀態：已實作(LM-4D)，規格已搬進 `bridge-v1.yaml`(1.1.0)。** 產品的 `product_key` 由營運端點 `PATCH /bridge/v1/admin/products/{id}` 補上(只能設一次)。
+
 ### D.1 為什麼
 「誰是 VIP」是業務判斷(拍過幾次、訂過相本……)，依 ADR 歸產品；「VIP 看到哪一版 Rich Menu」是 OA 設定，歸 LM。產品只告訴 LM 分眾名稱，**不知道** Rich Menu 的 id；LM **不知道**分眾的判定規則。
 

@@ -193,7 +193,7 @@ describe('tryConsumeBindCode：成功', () => {
         const h = await sha256Hex(code);
         const rs = await Promise.all(Array.from({ length: 8 }, (_, i) => bdb.consumeBindCode(env, { codeHash: h, botId: BOT, lineUserId: `Urace${String(i).padStart(28, '0')}` })));
         assert.equal(rs.filter(Boolean).length, 1);
-        assert.deepEqual(rs.find(Boolean), { rejected: false, linkId: LNK, productId: PRD, ref: REF, previousUserId: null });
+        assert.deepEqual(rs.find(Boolean), { rejected: false, linkId: LNK, productId: PRD, ref: REF, previousUserId: null, hasSegment: false });
         assert.equal(await count(d1.db, 'contacts'), 1);
     });
 });

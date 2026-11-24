@@ -1,10 +1,10 @@
 /**
  * 連結（link）流程的 scope 常數（LM-2A）
  *
- * 連結流程只可能發出這三種 scope。`raw:push`（以及過渡期的舊名 `messages:push`）屬於 owner 手動發放的
+ * 連結流程只可能發出這幾種 scope（LM-4D 加了 segments:write）。`raw:push`（以及過渡期的舊名 `messages:push`）屬於 owner 手動發放的
  * 信任金鑰，連結流程永遠不能發出，也不能被登記進產品（見 links.js 的產品登記驗證與 auth.js 的 principal 過濾）。
  */
-export const LINK_SCOPES = Object.freeze(["link:manage", "contacts:bind", "messages:send"]);
+export const LINK_SCOPES = Object.freeze(["link:manage", "contacts:bind", "messages:send", "segments:write"]);
 
 /** 連結流程絕不可出現的 scope（測試用來斷言） */
 export const FORBIDDEN_LINK_SCOPES = Object.freeze(["raw:push", "messages:push"]);

@@ -1,7 +1,7 @@
 /**
  * 分眾圖文選單管理邏輯
  */
-import { api } from '../helper/api.client.js';
+import { api, ApiClient } from '../helper/api.client.js';
 import { toast } from '../helper/toast.js';
 import { setInnerHTML } from '../helper/security.js';
 
@@ -32,6 +32,38 @@ function matchKey(match) {
 export async function pageInit(pageData = {}) {
     await loadInitialData();
     initEventListeners();
+    loadProductKeys(); // 不等：只是輸入提示，失敗不影響頁面
+}
+
+/**
+ * LM-4D：列出這個官方帳號已連結（使用中）產品的 product_key，當作「產品分眾」輸入框的提示。
+ * 需要 Bridge 開啟；任何失敗都安靜略過。
+ */
+async function loadProductKeys() {
+    try {
+        const get = async (path, headers) => {
+            const res = await ApiClient.request('GET', path, null, { rawResponse: true, showErrorToast: false, customHeaders: headers });
+            return res.ok ? res.json() : null;
+        };
+        const team = await get('/team/members');
+        const botId = team && typeof team.botId === 'string' ? team.botId : null;
+        if (!botId) return;
+        const data = await get('/bridge/v1/admin/links', { 'X-Bot-Id': botId });
+        const keys = [...new Set((data?.links || [])
+            .filter(l => l && l.status === 'active' && typeof l.product_key === 'string' && /^[a-z][a-z0-9]{1,15}$/.test(l.product_key))
+            .map(l => l.product_key))];
+        const list = document.getElementById('productKeyList');
+        const hint = document.getElementById('productKeyHint');
+        if (!list || keys.length === 0) return;
+        list.replaceChildren(...keys.map(k => {
+            const opt = document.createElement('option');
+            opt.value = `${k}:`;
+            return opt;
+        }));
+        if (hint) hint.textContent = `已連結的產品：${keys.join('、')}（分眾名稱由產品決定，例如 ${keys[0]}:vip）`;
+    } catch {
+        // 提示而已，略過
+    }
 }
 
 /**

@@ -76,19 +76,25 @@ describe('db.js 的 SQL 只用 bound parameter', () => {
 });
 
 describe('LM-3A：LINE userId 不外流', () => {
-    it('db.js 只有兩句 SELECT 讀出 line_user_id：getContactForSend（LM-3B 送訊息用）與 consumeBindCode 的「原綁定者」子查詢（M-02 覆蓋通知用）；其餘只寫入、或當 WHERE 條件', () => {
+    it('db.js 只有三句 SELECT 讀出 line_user_id：getContactForSend（LM-3B 送訊息用）、consumeBindCode 的「原綁定者」子查詢（M-02 覆蓋通知用）、listSegmentRecipients（LM-4D 重新計算 Rich Menu 用）；其餘只寫入、或當 WHERE 條件', () => {
         const src = readFileSync(join(SRC, 'bridge', 'db.js'), 'utf8');
         const statements = [...src.matchAll(/\.prepare\(\s*(`[^`]*`|"[^"\n]*")/g)].map((m) => m[1]);
         assert.ok(statements.length > 20);
-        const readers = statements.filter((x) => /^[`"]\s*SELECT/i.test(x) && /line_user_id/.test(x));
-        assert.equal(readers.length, 2, readers.join('\n'));
+        // 「讀出」= line_user_id 出現在第一個 FROM 之前（選取清單或其子查詢）；只出現在 WHERE 的不算
+        const readers = statements.filter((x) => /^[`"]\s*SELECT/i.test(x) && /line_user_id/.test(x.slice(0, x.search(/\bFROM\b/))));
+        assert.equal(readers.length, 3, readers.join('\n'));
         const send = '"SELECT status, line_user_id FROM contacts WHERE link_id = ?1 AND external_contact_ref = ?2 AND bot_id = ?3"';
         assert.ok(readers.includes(send));
         // getContactForSend 的那句在函式之內
         const fn = src.slice(src.indexOf('export async function getContactForSend'), src.indexOf('export async function deleteContact'));
         assert.ok(fn.includes(send));
+        // LM-4D：listSegmentRecipients 的那句在函式之內，只讀某條連結範圍內的列
+        const segFn = src.slice(src.indexOf('export async function listSegmentRecipients'), src.indexOf('export async function listUserSegments'));
+        const seg = readers.find((x) => segFn.includes(x));
+        assert.ok(seg, 'listSegmentRecipients 沒有讀 line_user_id 的 SELECT');
+        assert.match(seg, /WHERE link_id = \?1/);
         // 另一句只能在 consumeBindCode 之內，而且只讀「同一個 (連結, ref)」的那一列
-        const other = readers.find((x) => x !== send);
+        const other = readers.find((x) => x !== send && x !== seg);
         const consumeFn = src.slice(src.indexOf('export async function consumeBindCode'), src.indexOf('export async function upsertContactBinding'));
         assert.ok(consumeFn.includes(other));
         assert.match(other, /WHERE c\.link_id = b\.link_id AND c\.external_contact_ref = b\.external_contact_ref\)/);
@@ -103,6 +109,14 @@ describe('LM-3A：LINE userId 不外流', () => {
             assert.doesNotMatch(code(f), /consumeBindCode|previousUserId/, relative(ROOT, f));
         }
         assert.match(code(join(SRC, 'bridge', 'binding.js')), /consumeBindCode/);
+    });
+
+    it('listSegmentRecipients（會回傳 LINE userId）只有 segments.js 在用', () => {
+        for (const f of walk(SRC)) {
+            if (f.endsWith('/bridge/db.js') || f.endsWith('/bridge/segments.js')) continue;
+            assert.doesNotMatch(code(f), /listSegmentRecipients/, relative(ROOT, f));
+        }
+        assert.match(code(join(SRC, 'bridge', 'segments.js')), /listSegmentRecipients/);
     });
 
     it('getContactForSend 只有 notify.js 在用（其他 bridge 檔案與 LM 核心都不用）', () => {

@@ -6,7 +6,7 @@
  *    { match: { segment: "ip:vip" },   priority: 3, richMenuId: "richmenu-…" }]
  *
  * - tag：LM 的會員標籤
- * - segment：產品分眾 `<product_key>:<segment>`（4D 由產品寫入，草案 §D）
+ * - segment：產品分眾 `<product_key>:<segment>`（4D 由產品寫入 D1，Bridge 同步一份到會員資料的 productSegments）
  * - priority 數字愈小愈優先；同分依清單順序
  * - 沒有符合任何規則 → 解除個人選單，回到 OA 預設選單
  *
@@ -73,33 +73,36 @@ export function resolveRichMenuId(rules, { tags = [], segments = [] } = {}) {
  * @param {string} memberId - LINE userId
  * @param {{accessToken?: string, segments?: string[]}} [opts]
  *   accessToken：webhook 有事件所屬 OA 的 token 時傳進來；沒有就用 owner 目前的 token。
- *   segments：產品分眾（4D 接上前為空）。
+ *   segments：產品分眾；沒給就用會員資料的 productSegments（4D 由 Bridge 寫入的副本）。
+ * @returns {Promise<boolean>} true = 已套用或不需要動；false = LINE 呼叫或 token 失敗（呼叫端可重試）
  */
-export async function syncMemberRichMenu(store, memberId, { accessToken, segments = [] } = {}) {
+export async function syncMemberRichMenu(store, memberId, { accessToken, segments } = {}) {
     try {
         const rules = await store.getOr('segmentedRichMenuRules', []);
-        if (!Array.isArray(rules) || rules.length === 0) return;
+        if (!Array.isArray(rules) || rules.length === 0) return true;
 
         const profile = await store.get('member', memberId);
         if (!profile) {
             logger.warn('SEGMENTED_RM', '找不到會員資料，無法進行選單同步');
-            return;
+            return true;
         }
 
-        const target = resolveRichMenuId(rules, { tags: profile.tags || [], segments });
+        const productSegments = Array.isArray(segments)
+            ? segments
+            : (Array.isArray(profile.productSegments) ? profile.productSegments : []);
+        const target = resolveRichMenuId(rules, { tags: profile.tags || [], segments: productSegments });
 
         const token = accessToken || await getAccessToken(store.env, store.userId);
         if (!token) {
             logger.error('SEGMENTED_RM', '找不到 Access Token');
-            return;
+            return false;
         }
 
-        if (target) {
-            await linkRichMenuToUser(memberId, target, token);
-        } else {
-            await unlinkRichMenuFromUser(memberId, token);
-        }
+        return target
+            ? await linkRichMenuToUser(memberId, target, token)
+            : await unlinkRichMenuFromUser(memberId, token);
     } catch (error) {
         logger.error('SEGMENTED_RM', `同步過程發生錯誤: ${error && error.message}`);
+        return false;
     }
 }

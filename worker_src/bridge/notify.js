@@ -42,6 +42,7 @@ import {
   claimIdempotency, completeIdempotency, releaseIdempotency, writeAudit,
   takeToken, giveBackTokens, claimFlag,
 } from "./db.js";
+import { blockAndClearSegments } from "./segments.js";
 
 export const LINK_RATE_LIMIT = { limit: 60, windowSec: 60 };
 export const CONTACT_RATE_LIMIT = { limit: 10, windowSec: 3600 };
@@ -355,7 +356,8 @@ async function mapLineError(err, { env, botId, lineUserId }) {
   switch (err.status) {
     case 403:
       // 客戶封鎖了這個官方帳號：把同一個 LINE 使用者的聯絡人都標成 blocked、會員標成 inactive
-      await markContactsBlockedByUser(env, { botId, lineUserId });
+      // LM-4D：分眾在同一句清掉，原本有分眾才更新 LM 的副本
+      await blockAndClearSegments(env, botId, lineUserId, () => markContactsBlockedByUser(env, { botId, lineUserId }));
       await markMemberInactive(env, botId, lineUserId);
       return failure("RECIPIENT_BLOCKED", "Recipient has blocked the account");
     case 429: {

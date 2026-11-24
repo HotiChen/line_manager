@@ -9,6 +9,7 @@ import {
   validateRedirectTarget, parsePreview, buildApprovePayload, describeLinkError, normalizeLinks, formatIsoTime,
   redirectHostLabel, consentNotice, MAX_HOST_DISPLAY, MAX_OA_NAME_DISPLAY,
 } from '../../helper/link_authorize_form.js';
+import { LINK_SCOPES } from '../../worker_src/bridge/scopes.js';
 
 function memStorage(initial = {}) {
   const m = new Map(Object.entries(initial));
@@ -29,6 +30,13 @@ const P = { product_id: 'prd_abcdef123456', state: 'st-1', redirect_uri: 'https:
 const qs = (o) => `?${new URLSearchParams(o).toString()}`;
 
 describe('scope → 中文', () => {
+  it('後端 LINK_SCOPES 的每一個都有說明（同意頁不會出現「未知權限」）', () => {
+    for (const scope of LINK_SCOPES) {
+      assert.notEqual(scopeShortLabel(scope), UNKNOWN_SCOPE_TEXT, scope);
+      assert.equal(describeScopes([scope]).items[0].known, true, scope);
+    }
+  });
+
   it('三個已知 scope 的長版說明', () => {
     const d = describeScopes(['link:manage', 'contacts:bind', 'messages:send']);
     assert.deepEqual(d.items.map((i) => i.text), [

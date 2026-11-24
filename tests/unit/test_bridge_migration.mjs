@@ -41,7 +41,7 @@ describe('遷移檔', () => {
         for (const i of [
             'idx_audit_log_bot_at', 'idx_idempotency_expiry', 'idx_service_keys_system',
             'uq_links_active', 'idx_links_bot', 'idx_auth_codes_expiry', 'idx_service_keys_link',
-            'idx_bind_codes_ref', 'idx_bind_codes_expiry', 'idx_contacts_user', 'idx_counters_window',
+            'idx_bind_codes_ref', 'idx_bind_codes_expiry', 'idx_contacts_user', 'idx_counters_window', 'uq_products_key',
         ]) {
             assert.ok(idx.includes(i), `缺索引 ${i}`);
         }
@@ -228,6 +228,46 @@ describe('0004 遷移（M-01／M-02）', () => {
             assert.ok(!have.includes('counters') && !have.includes('flags'));
             const cols = (await old.db.prepare('PRAGMA table_info(bind_codes)').all()).results.map((c) => c.name);
             assert.ok(!cols.includes('allow_rebind'));
+        } finally {
+            await old.dispose();
+        }
+    });
+});
+
+describe('0005 遷移（LM-4D 分眾、product_key）', () => {
+    const file = () => readMigrations().find((m) => m.name === '0005_bridge_segments.sql');
+
+    it('存在、沒有 IF NOT EXISTS；重複套用每一句都失敗且不影響資料', async () => {
+        assert.ok(file(), '缺 0005_bridge_segments.sql');
+        assert.doesNotMatch(file().sql, /IF NOT EXISTS/i);
+        await d1.db.prepare("INSERT INTO products (product_id, name, secret_hash, redirect_uris, scopes, created_at, product_key) VALUES ('p','n','h','[]','[]',1,'ip')").run();
+        const stmts = splitStatements(file().sql);
+        assert.equal(stmts.length, 3);
+        for (const stmt of stmts) {
+            await assert.rejects(() => d1.db.prepare(stmt).run(), /already exists|duplicate column/i, stmt.slice(0, 40));
+        }
+        assert.equal((await d1.db.prepare('SELECT product_key AS k FROM products').first()).k, 'ip');
+    });
+
+    it('contacts.segment 可為 NULL、預設 NULL', async () => {
+        await d1.db.prepare("INSERT INTO contacts (link_id, external_contact_ref, bot_id, line_user_id, status, bound_at, updated_at) VALUES ('l','r','b','u','bound',1,1)").run();
+        assert.equal((await d1.db.prepare('SELECT segment FROM contacts').first()).segment, null);
+    });
+
+    it('products.product_key：非 NULL 時唯一；多個 NULL 可以並存', async () => {
+        const ins = (id, key) => d1.db.prepare("INSERT INTO products (product_id, name, secret_hash, redirect_uris, scopes, created_at, product_key) VALUES (?1,'n','h','[]','[]',1,?2)").bind(id, key).run();
+        await ins('p1', null);
+        await ins('p2', null);
+        await ins('p3', 'ip');
+        await assert.rejects(() => ins('p4', 'ip'), /UNIQUE constraint failed/i);
+    });
+
+    it('只套用到 0004 的資料庫沒有 segment、product_key', async () => {
+        const old = await createTestD1({ upTo: '0004' });
+        try {
+            const cols = async (t) => (await old.db.prepare(`PRAGMA table_info(${t})`).all()).results.map((c) => c.name);
+            assert.ok(!(await cols('contacts')).includes('segment'));
+            assert.ok(!(await cols('products')).includes('product_key'));
         } finally {
             await old.dispose();
         }

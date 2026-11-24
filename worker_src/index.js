@@ -118,7 +118,7 @@ export default {
     // Bridge（bridge/index.js）：自己處理認證（service key 或 LIFF）、feature flag 與例外隔離，
     // 所以必須在下面的 LIFF 認證區塊之前分派。BRIDGE_ENABLED 未開時整段回 404。
     if (isBridgePath(pathname)) {
-      return handleBridge(request, env, pathname);
+      return handleBridge(request, env, pathname, ctx);
     }
 
     // 2️⃣ API 請求處理 — 使用 auth middleware 驗證身份

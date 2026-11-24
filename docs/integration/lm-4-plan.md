@@ -18,7 +18,7 @@
 |---|---|---|---|---|
 | **LM-4A** | postback 分流(`lm:`／`px:`／無前綴)、拿掉原始字串回覆 | 低 | 無 | ✅ 已實作，待真機驗收 |
 | **LM-4R** | Rich Menu 規則統一(標籤規則＋產品分眾，`tier` 不再綁 Rich Menu) | 中 | 無 | ✅(要先確認正式資料，見 4R) |
-| **LM-4D** | 客人分眾 API(`PUT /contacts/{ref}/segment`) | 中 | 4R | ✅ |
+| **LM-4D** | 客人分眾 API(`PUT /contacts/{ref}/segment`) | 中 | 4R | ✅ 已實作 |
 | **LM-4B** | 事件轉發(同步回覆、簽章、備用內容) | 高 | 4A | ✅(預設值見草案 Q2–Q5) |
 | **LM-4C** | LINE Login channel 設定、LIFF 自動建立、身分換 ref | 高 | 無 | ⚠️ 先查證 LINE 文件(草案 §C.4 標為未驗證) |
 
@@ -59,6 +59,14 @@
 - **行為**：見草案 §D.2–D.3；分眾變更後呼叫 4R 的重新計算(在 `ctx.waitUntil` 裡做，LINE API 失敗要重試，不讓 `PUT` 失敗)。解除綁定、封鎖、連結撤銷或被取代時清除分眾並重新計算。
 - **後台**：對應表設定 UI(OA × product_key × segment → Rich Menu)；前端不新增裸 `innerHTML`。
 - **測試**：冪等；未綁定／封鎖／不存在的 ref；scope 不足；限流；清除時機；回應與稽核不含 userId、Rich Menu id。契約：搬進 `bridge-v1.yaml`，並在 `GET /contacts/{ref}` 加 `segment` 欄位。
+- **實作紀錄**
+  - 遷移 `0005_bridge_segments.sql`：`contacts.segment`、`products.product_key`(部分唯一索引)。**要在部署新程式之前套用**(純新增欄位，舊程式不受影響；新程式沒有這兩欄會 503)。
+  - 分眾存兩份：真相在 D1；LM 讀 KV 會員資料的副本 `productSegments`(因為 LM 的 `lib/` 不能 import `bridge/`)。Bridge 每次變更後經 `lm_service.applyProductSegments` 寫副本並重新計算；LM 端既有觸發點(標籤、加好友)自動帶上分眾。
+  - `bridge/segments.js`：重新計算、重試(共 3 次，0／1／3 秒)、各清除時機的「先記下對象再清」；HTTP 檔不碰 userId。db.js 新增一句讀 `line_user_id` 的 SELECT(`listSegmentRecipients`)，只有 segments.js 使用(邊界測試把關)。
+  - 清除：解除綁定(刪除後重算)、封鎖(同一句 UPDATE 清掉，只更新副本、不呼叫 LINE；`/messages` 遇 403 也一樣)、連結撤銷(產品自己或後台)、重新授權取代(搬家時清掉)。一次最多重算 200 人，超過寫稽核 `segment_refresh_truncated`。
+  - 重新綁定：ref 有分眾時，新綁定者套用、原綁定者重算。
+  - 營運：`POST /admin/products` 可帶 `product_key`；新增 `PATCH /admin/products/{id}`(product_key 只能設一次、scopes 只增不減)。
+  - 後台：分眾頁的「產品分眾」輸入框列出已連結產品的 `product_key`；同意頁新增 `segments:write` 的說明。
 
 ### LM-4B　事件轉發
 - **範圍**：草案 §B 與 §0.2。產品登記新增 `product_key`、`event_url`、回傳一次性的 `event_signing_secret`(只存雜湊或加密，比照其他密鑰)；`events:receive` scope；轉發模組(例如 `worker_src/bridge/events.js`)；備用內容設定(資料與後台 UI，依 OA × product_key × action)；稽核。
