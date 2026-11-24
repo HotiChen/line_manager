@@ -16,6 +16,7 @@ import { withPermission as realWithPermission } from '../../worker_src/middlewar
 import {
     getBotAccessToken,
     hasMember,
+    hasWebhookMember,
     markMemberInactive,
     authenticateUser,
     withPermission,
@@ -38,12 +39,12 @@ beforeEach(() => {
 afterEach(() => { globalThis.fetch = originalFetch; });
 
 describe('介面形狀', () => {
-    it('只匯出約定的十二個名字（LM-2A 刻意新增 getOwnedBot、listOwnedBots、getBotDisplayName；LM-3A 新增 getBotBasicId；LM-4D 新增 applyProductSegments；LM-4B 新增 sealSecret、openSecret）', () => {
+    it('只匯出約定的十三個名字（LM-2A 刻意新增 getOwnedBot、listOwnedBots、getBotDisplayName；LM-3A 新增 getBotBasicId；LM-4D 新增 applyProductSegments；LM-4B 新增 sealSecret、openSecret；LM-4C 安全審查新增 hasWebhookMember）', () => {
         assert.deepEqual(
             Object.keys(lmService).sort(),
             [
                 'applyProductSegments', 'authenticateUser', 'getBotAccessToken', 'getBotBasicId', 'getBotDisplayName', 'getOwnedBot',
-                'hasMember', 'listOwnedBots', 'markMemberInactive', 'openSecret', 'sealSecret', 'withPermission',
+                'hasMember', 'hasWebhookMember', 'listOwnedBots', 'markMemberInactive', 'openSecret', 'sealSecret', 'withPermission',
             ]
         );
     });
@@ -110,6 +111,24 @@ describe('hasMember', () => {
     it('其他 bot 的會員看不到', async () => {
         await env.KV_LINE_STORAGE.put(BotKeys.member(BOT, MEMBER), JSON.stringify({ userId: MEMBER }));
         assert.equal(await hasMember(env, 'Uotherbot000000000000000000000001', MEMBER), false);
+    });
+});
+
+describe('hasWebhookMember（LM-4C：同 Provider 驗證只認 webhook 建立的會員）', () => {
+    it('botIds 含這個 bot（webhook 寫入）→ true', async () => {
+        await env.KV_LINE_STORAGE.put(BotKeys.owner(BOT), OWNER);
+        await env.KV_LINE_STORAGE.put(BotKeys.member(BOT, MEMBER), JSON.stringify({ memberId: MEMBER, botIds: [BOT] }));
+        assert.equal(await hasWebhookMember(env, BOT, MEMBER), true);
+    });
+
+    it('手動寫入的會員（沒有 botIds，或 botIds 是別的 bot、格式不對）→ false，即使 hasMember 是 true', async () => {
+        await env.KV_LINE_STORAGE.put(BotKeys.owner(BOT), OWNER);
+        for (const profile of [{ memberId: MEMBER, source: 'webhook' }, { memberId: MEMBER, botIds: ['Uotherbot000000000000000000000001'] }, { memberId: MEMBER, botIds: BOT }, { memberId: MEMBER, botIds: [] }]) {
+            await env.KV_LINE_STORAGE.put(BotKeys.member(BOT, MEMBER), JSON.stringify(profile));
+            assert.equal(await hasMember(env, BOT, MEMBER), true);
+            assert.equal(await hasWebhookMember(env, BOT, MEMBER), false, JSON.stringify(profile));
+        }
+        assert.equal(await hasWebhookMember(env, BOT, 'Unobody0000000000000000000000009'), false);
     });
 });
 

@@ -101,6 +101,8 @@
   - 公開端點的「未啟用」(OA 不存在、未驗證、產品／連結不合)回完全相同的回應；每 IP 30／分、每 bot 120／分；`/identity/token` 每連結 60／分。`to` 不可以 `//` 開頭。
   - 產品登記：`identity:read` 需要 `product_key` 與 `identity_return_uris`(規則同 redirect_uris)；`PATCH` 可補。導回網址一律取第一個登記值。
   - 後台：「已連結的產品」頁下方新增「LINE 身分(我的相片)」區塊。
+  - **獨立安全審查後的修正**：(1) 同 Provider 驗證改用 `lm_service.hasWebhookMember`(要求會員資料的 `botIds` 含這個 bot——只有 webhook 會寫，`/member/save` 不接受 body 的 botIds 且編輯時保留)，擋掉「團隊成員手動寫入會員名單」的污染；(2) 公開端點在 ID token 無效時也回 404(與未設定同一個回應)；(3) 公開端點與 `/identity/token` 的限流改用 D1 原子計數，每 bot 的桶只在 ID token 驗證成功後才計。已知不處理：ID token 無 nonce、audit 的 `actorId` 記後台操作員的 userId(沿用 LM-2A 慣例)。
+  - **營運提醒**：所有 OA 都登記自己的 channel secret 後，設 `WEBHOOK_GLOBAL_SECRET_DISABLED=1`(否則持有全域密鑰的人可偽造尚未登記的 OA 的事件，包含 `px:`)。
 
 ## 2. Tim 要做的
 - 4R 開工前：確認正式環境的 tier 是否綁了 Rich Menu。

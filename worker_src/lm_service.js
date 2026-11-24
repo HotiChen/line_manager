@@ -58,6 +58,24 @@ export async function hasMember(env, botId, lineUserId) {
 }
 
 /**
+ * 這個 LINE userId 是不是「透過這個官方帳號的 webhook 互動過」的會員（LM-4C 的同 Provider 驗證用）。
+ *
+ * 不能只看會員資料存不存在：`/member/save` 讓團隊成員手動寫入任意 memberId，名單可以被污染。
+ * webhook 建立的會員才有 `botIds`（由事件的 destination 寫入），而 `/member/save` 不接受 body 裡的 botIds，
+ * 所以 `botIds` 含這個 bot，就代表這個 userId 真的是從這個官方帳號的 webhook 來的（OA 所屬 Provider 的 userId）。
+ *
+ * @param {Object} env
+ * @param {string} botId
+ * @param {string} lineUserId
+ * @returns {Promise<boolean>}
+ */
+export async function hasWebhookMember(env, botId, lineUserId) {
+  const store = await openBotStoreForBot(env, botId);
+  const member = await store.get("member", lineUserId);
+  return Boolean(member) && Array.isArray(member.botIds) && member.botIds.includes(botId);
+}
+
+/**
  * 把會員標記為不可推播（被封鎖）。盡力而為：失敗只記 log，不丟錯；會員不存在就什麼都不做。
  *
  * @param {Object} env

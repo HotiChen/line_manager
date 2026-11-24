@@ -9,18 +9,20 @@
  *
  * 安全性質：
  *   - 身分只來自「LINE 驗證成功的 ID token 的 sub」，不信任客戶端傳來的任何 userId；本地再比對 iss、aud、exp
- *   - 同 Provider 驗證：LINE 沒有 API 可查，所以用「sub 是不是這個 OA 的會員」（lm_service.hasMember）。
- *     不同 Provider 的 sub 不會剛好等於該 OA 的某位會員，所以命中即證明相同；沒命中就不啟用
+ *   - 同 Provider 驗證：LINE 沒有 API 可查，所以用「sub 是不是『透過這個 OA 的 webhook 互動過』的會員」（lm_service.hasWebhookMember）。
+ *     不能只看會員資料存在與否：/member/save 可手動寫入任意 memberId（名單污染），所以要看 webhook 才會寫的 botIds。
+ *     不同 Provider 的 sub 不會剛好等於該 OA 的某位 webhook 會員，所以命中即證明相同；沒命中就不啟用
  *   - 身分碼 `lmi_`：32 bytes CSPRNG、60 秒、單次、只存 SHA-256；資料庫只存發碼當下的 ref／status，**不存 userId**
  *   - 導回網址只來自產品登記的 identity_return_uris（精確），請求只能決定 `to`（相對路徑）與 `s`（state），都原樣帶回
  *   - login CSRF：攻擊者可能把「自己的」導回網址（含他的身分碼）丟給受害者。產品若是從自己的網頁發起（可帶 `s`）就用 state 擋；
  *     從固定的 Rich Menu 按鈕發起時無法帶 per-session state，這是已知限制，寫在契約的產品 MUST 裡
- *   - 公開端點對「OA 不存在／未驗證／產品或連結不合」一律回同一種錯誤，不洩漏存在與否；有限流
+ *   - 公開端點對「OA 不存在／未設定／ID token 無效／未驗證／產品或連結不合」一律回同一種錯誤（404），不洩漏哪個 OA 啟用了身分功能；
+ *     LINE 暫時不可用（502）與頁面本身（有設定才 200）無法完全隱藏。有限流（D1 原子計數，見下）
  *   - LINE Login 的 channel secret 以 AES-GCM 加密存 D1；不進回應、audit、log。缺金鑰 → 503，不降級
  *   - 稽核（identity_channel_set／identity_verified／identity_issued／identity_redeemed）只有 product_id、link_id、has_contact
  *   - 缺 0007 遷移 → 503 bridge_not_configured（公開端點回「未啟用」），不放行
  */
-import { sealSecret, openSecret, hasMember } from "../lm_service.js";
+import { sealSecret, openSecret, hasWebhookMember } from "../lm_service.js";
 import { sha256Hex, randomToken } from "../lib/crypto_util.js";
 import {
   issueLoginChannelToken, listLiffApps, createLiffApp, deleteLiffApp, verifyIdToken, LineApiError,
@@ -31,7 +33,7 @@ import { withLink } from "./auth.js";
 import { json, noContent, rateLimited, readJsonBody, mountPrefix, requireUser, resolveOwnedBot } from "./links.js";
 import {
   BridgeDbError, getIdentityChannel, putIdentityChannel, setIdentityVerified, deleteIdentityChannel,
-  getIdentityTarget, getBoundContactByUser, createIdentityCode, consumeIdentityCode, writeAudit,
+  getIdentityTarget, getBoundContactByUser, createIdentityCode, consumeIdentityCode, writeAudit, takeToken,
 } from "./db.js";
 
 export const IDENTITY_ADMIN_PATH = "/bridge/v1/admin/identity";
@@ -52,9 +54,11 @@ const IDENTITY_CODE_RE = /^lmi_[A-Za-z0-9_-]{43}$/;
 const MAX_ID_TOKEN_LENGTH = 4096;
 const MAX_CODE_ATTEMPTS = 3;
 
-const PUBLIC_RATE_IP = { limit: 30, windowSec: 60 };
-const PUBLIC_RATE_BOT = { limit: 120, windowSec: 60 };
-const TOKEN_RATE_LIMIT = { limit: 60, windowSec: 60 };
+// 公開端點與產品 token 的限流用 D1 原子計數（db.js takeToken），並發請求不會超過上限；缺 counters 表 → fail-closed。
+// 每 bot 的桶只在「ID token 驗證成功之後」才計：匿名的垃圾請求不會把某個 OA 的正常客人擠掉。
+const PUBLIC_RATE_IP = { cap: 30, windowMs: 60_000 };
+const PUBLIC_RATE_BOT = { cap: 300, windowMs: 60_000 };
+const TOKEN_RATE_LIMIT = { cap: 60, windowMs: 60_000 };
 const ADMIN_RATE_LIMIT = { limit: 20, windowSec: 60 };
 
 /** LIFF 的名稱不可含 "LINE" 或類似字串 */
@@ -249,10 +253,20 @@ async function handlePage(request, env, pathname) {
 
 // ── 公開：verify 與 exchange ──
 
-/** 公開端點的共同前置：限流、解 JSON、bot_id 與 id_token 的格式、驗證 ID token。成功回 {botId, channel, sub, body} */
+/** D1 原子限流；超過 → 429 的 Response，否則 null */
+async function limitOrNull(env, key, { cap, windowMs }) {
+  const t = await takeToken(env, { key, windowMs, cap });
+  return t.allowed ? null : rateLimited(t.resetAt);
+}
+
+/**
+ * 公開端點的共同前置：限流、解 JSON、bot_id 與 id_token 的格式、驗證 ID token。成功回 {botId, channel, sub, body}。
+ * 「OA 沒設定」與「ID token 無效」回同一個 404（不洩漏哪個 OA 啟用了身分功能）；只有 LINE 暫時不可用回 502（可重試）。
+ */
 async function authenticateIdToken(request, env) {
-  const ip = await checkRateLimit(env, `idpub.ip.${clientIp(request)}`, PUBLIC_RATE_IP);
-  if (!ip.allowed) return { response: rateLimited(ip.resetAt) };
+  const ipKey = (await sha256Hex(clientIp(request))).slice(0, 32);
+  const ipLimited = await limitOrNull(env, `idpub:ip:${ipKey}`, PUBLIC_RATE_IP);
+  if (ipLimited) return { response: ipLimited };
 
   const body = await readJsonBody(request);
   if (!body) return { response: invalidRequest("Invalid JSON body") };
@@ -260,16 +274,16 @@ async function authenticateIdToken(request, env) {
   if (typeof botId !== "string" || !BOT_ID_RE.test(botId)) return { response: unavailable() };
   if (typeof idToken !== "string" || idToken === "" || idToken.length > MAX_ID_TOKEN_LENGTH) return { response: invalidRequest("id_token is required") };
 
-  const perBot = await checkRateLimit(env, `idpub.bot.${botId}`, PUBLIC_RATE_BOT);
-  if (!perBot.allowed) return { response: rateLimited(perBot.resetAt) };
-
   const channel = await getIdentityChannel(env, botId);
   if (!channel || !channel.liffId) return { response: unavailable() };
 
   const verified = await verifyIdToken(idToken, channel.channelId);
   if (!verified.ok) {
-    return { response: verified.reason === "unavailable" ? bridgeError("INTERNAL", "LINE is unreachable, retry later", { status: 502, retryable: true }) : bridgeError("INVALID_KEY", "Invalid ID token") };
+    return { response: verified.reason === "unavailable" ? bridgeError("INTERNAL", "LINE is unreachable, retry later", { status: 502, retryable: true }) : unavailable() };
   }
+  // 每 bot 的桶：驗證成功之後才計
+  const botLimited = await limitOrNull(env, `idpub:bot:${botId}`, PUBLIC_RATE_BOT);
+  if (botLimited) return { response: botLimited };
   return { botId, channel, sub: verified.sub, body };
 }
 
@@ -278,7 +292,7 @@ async function handleVerify(request, env) {
   const auth = await authenticateIdToken(request, env);
   if (auth.response) return auth.response;
   // 同 Provider 的證明：這個 sub 是不是這個 OA 的會員
-  const member = await hasMember(env, auth.botId, auth.sub).catch(() => false);
+  const member = await hasWebhookMember(env, auth.botId, auth.sub).catch(() => false);
   if (!member) {
     return invalidRequest("This LINE account is not a member of the official account yet. Add the account as a friend and send it a message, and check that the LINE Login channel and the official account are under the same Provider.");
   }
@@ -341,8 +355,8 @@ async function handleExchange(request, env) {
 // ── 產品：用身分碼換 ref ──
 
 async function handleToken(request, env, principal) {
-  const limited = await checkRateLimit(env, `idtoken.${principal.linkId}`, TOKEN_RATE_LIMIT);
-  if (!limited.allowed) return rateLimited(limited.resetAt);
+  const limited = await limitOrNull(env, `idtoken:${principal.linkId}`, TOKEN_RATE_LIMIT);
+  if (limited) return limited;
 
   const body = await readJsonBody(request);
   if (!body) return invalidRequest("Invalid JSON body");
