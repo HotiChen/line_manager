@@ -9,6 +9,15 @@ let currentRules = [];
 let allTags = [];
 let allRichMenus = [];
 
+/** 產品分眾：<product_key>:<segment>，與後端 segmented_richmenu_logic.js 相同 */
+const SEGMENT_RE = /^[a-z][a-z0-9]{1,15}:[a-z][a-z0-9_-]{0,31}$/;
+
+/** 用來比對「同一個條件」的字串 */
+function matchKey(match) {
+    if (!match) return '';
+    return match.segment !== undefined ? `segment:${match.segment}` : `tag:${match.tag}`;
+}
+
 /**
  * pageInit
  * 頁面初始化進入點 (由 main.js 調用)
@@ -53,7 +62,8 @@ async function loadInitialData() {
         }
 
         if (!rulesRes.error && rulesRes.success) {
-            currentRules = rulesRes.rules || [];
+            // 舊格式 {tag, richMenuId}（LM-4R 前）已廢除，不顯示
+            currentRules = (rulesRes.rules || []).filter(r => r && r.match);
             renderRuleList();
         }
 
@@ -97,29 +107,55 @@ function renderRichMenuSelect() {
  * 初始化事件監聽
  */
 function initEventListeners() {
+    // 條件類型切換
+    document.getElementById('matchTypeSelect')?.addEventListener('change', (e) => {
+        const isSegment = e.target.value === 'segment';
+        document.getElementById('tagGroup').style.display = isSegment ? 'none' : '';
+        document.getElementById('segmentGroup').style.display = isSegment ? '' : 'none';
+    });
+
     // 新增規則
     document.getElementById('addRuleBtn')?.addEventListener('click', () => {
-        const tag = document.getElementById('tagSelect').value;
+        const type = document.getElementById('matchTypeSelect').value;
         const richMenuId = document.getElementById('richmenuSelect').value;
-        const priority = parseInt(document.getElementById('priorityInput').value);
+        const priority = parseInt(document.getElementById('priorityInput').value, 10);
 
-        if (!tag || !richMenuId) {
-            toast.warning('請選擇標籤與對應選單');
+        let match;
+        if (type === 'segment') {
+            const segment = document.getElementById('segmentInput').value.trim();
+            if (!SEGMENT_RE.test(segment)) {
+                toast.warning('分眾格式須為 product_key:分眾，例如 ip:vip（小寫英數）');
+                return;
+            }
+            match = { segment };
+        } else {
+            const tag = document.getElementById('tagSelect').value;
+            if (!tag) {
+                toast.warning('請選擇標籤');
+                return;
+            }
+            match = { tag };
+        }
+        if (!richMenuId) {
+            toast.warning('請選擇對應選單');
+            return;
+        }
+        if (!Number.isInteger(priority) || priority < 1) {
+            toast.warning('優先級須為 1 以上的整數');
+            return;
+        }
+        if (currentRules.some(r => matchKey(r.match) === matchKey(match))) {
+            toast.warning('這個條件已經有規則了');
             return;
         }
 
-        // 檢查是否重複標籤
-        if (currentRules.some(r => r.tag === tag)) {
-            toast.warning('此標籤已存在規則中');
-            return;
-        }
-
-        currentRules.push({ tag, richMenuId, priority });
+        currentRules.push({ match, richMenuId, priority });
         currentRules.sort((a, b) => a.priority - b.priority); // 自動排序
         renderRuleList();
 
         // 重置輸入
         document.getElementById('tagSelect').value = '';
+        document.getElementById('segmentInput').value = '';
         document.getElementById('richmenuSelect').value = '';
     });
 
@@ -139,7 +175,7 @@ function initEventListeners() {
 
     // 「同步所有用戶」按鈕
     document.getElementById('syncAllBtn')?.addEventListener('click', () => {
-        toast.info('此操作將會針對現有所有用戶重新計算並同步選單，在大數據量下可能耗時較長。目前已排入背景處理。');
+        toast.info('尚未提供批次同步：規則會在好友的標籤或分眾變更、加好友時重新計算。');
     });
 }
 
@@ -179,12 +215,13 @@ function renderRuleList() {
         tagInfoDiv.className = 'rule-info';
         const tagLabel = document.createElement('span');
         tagLabel.className = 'rule-label';
-        tagLabel.textContent = '當標籤為';
+        const isSegment = rule.match.segment !== undefined;
+        tagLabel.textContent = isSegment ? '當產品分眾為' : '當標籤為';
         const tagValue = document.createElement('span');
         tagValue.className = 'rule-value';
         const tagBadge = document.createElement('span');
         tagBadge.className = 'tag-badge';
-        tagBadge.textContent = rule.tag;
+        tagBadge.textContent = isSegment ? rule.match.segment : rule.match.tag;
         tagValue.appendChild(tagBadge);
         tagInfoDiv.appendChild(tagLabel);
         tagInfoDiv.appendChild(tagValue);
@@ -209,7 +246,7 @@ function renderRuleList() {
         const delBtn = document.createElement('button');
         delBtn.className = 'delete-btn';
         delBtn.innerHTML = '<i class="fas fa-trash-alt"></i>'; // safe: static icon only
-        delBtn.onclick = () => deleteRule(index);
+        delBtn.onclick = () => window.deleteRule(index);
         actionsDiv.appendChild(delBtn);
         item.appendChild(actionsDiv);
 

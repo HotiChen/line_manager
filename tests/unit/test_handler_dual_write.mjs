@@ -260,30 +260,48 @@ describe('segmented_richmenu.js — 已切換到 bot_store', () => {
     beforeEach(async () => { env = createEnv(); await seedBot(env); });
 
     it('新 key 優先', async () => {
-        await seedRaw(env, V1Keys.segmentedRichMenuRules(USER), [{ tag: '舊', richMenuId: 'r1' }]);
-        await seedRaw(env, BotKeys.segmentedRichMenuRules(BOT), [{ tag: '新', richMenuId: 'r2' }]);
+        await seedRaw(env, V1Keys.segmentedRichMenuRules(USER), [{ match: { tag: '舊' }, priority: 1, richMenuId: 'r1' }]);
+        await seedRaw(env, BotKeys.segmentedRichMenuRules(BOT), [{ match: { tag: '新' }, priority: 1, richMenuId: 'r2' }]);
 
         const res = await segmentedHandler.route(
             get('/richmenu/segmented/list'), env, USER, '/richmenu/segmented/list'
         );
         const body = await res.json();
-        assert.equal(body.rules[0].tag, '新');
+        assert.equal(body.rules[0].match.tag, '新');
     });
 
     it('儲存時雙寫', async () => {
         await segmentedHandler.route(
-            post('/richmenu/segmented/save', { rules: [{ tag: 'VIP', richMenuId: 'r1' }] }),
+            post('/richmenu/segmented/save', { rules: [{ match: { tag: 'VIP' }, priority: 1, richMenuId: 'r1' }] }),
             env, USER, '/richmenu/segmented/save'
         );
 
-        assert.deepEqual(
-            await readRaw(env, BotKeys.segmentedRichMenuRules(BOT)),
-            [{ tag: 'VIP', richMenuId: 'r1' }]
+        const saved = [{ match: { tag: 'VIP' }, priority: 1, richMenuId: 'r1' }];
+        assert.deepEqual(await readRaw(env, BotKeys.segmentedRichMenuRules(BOT)), saved);
+        assert.deepEqual(await readRaw(env, V1Keys.segmentedRichMenuRules(USER)), saved);
+    });
+
+    it('LM-4R：舊格式 {tag, richMenuId} 與壞規則一律 400，不寫入', async () => {
+        for (const rules of [
+            [{ tag: 'VIP', richMenuId: 'r1', priority: 1 }],
+            [{ match: { segment: 'vip' }, richMenuId: 'r1', priority: 1 }],
+            [{ match: { tag: 'VIP' }, richMenuId: 'r1' }],
+        ]) {
+            const res = await segmentedHandler.route(
+                post('/richmenu/segmented/save', { rules }), env, USER, '/richmenu/segmented/save'
+            );
+            assert.equal(res.status, 400, JSON.stringify(rules));
+        }
+        assert.equal(await readRaw(env, BotKeys.segmentedRichMenuRules(BOT)), null);
+    });
+
+    it('LM-4R：儲存時只留規定的欄位', async () => {
+        await segmentedHandler.route(
+            post('/richmenu/segmented/save', { rules: [{ match: { segment: 'ip:vip', tag: undefined }, priority: 3, richMenuId: 'rA', extra: 1 }] }),
+            env, USER, '/richmenu/segmented/save'
         );
-        assert.deepEqual(
-            await readRaw(env, V1Keys.segmentedRichMenuRules(USER)),
-            [{ tag: 'VIP', richMenuId: 'r1' }]
-        );
+        assert.deepEqual(await readRaw(env, BotKeys.segmentedRichMenuRules(BOT)),
+            [{ match: { segment: 'ip:vip' }, priority: 3, richMenuId: 'rA' }]);
     });
 });
 

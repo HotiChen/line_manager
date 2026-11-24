@@ -7,7 +7,6 @@ import { setInnerHTML } from '../helper/security.js';
 
 let tierConfig = null;
 let tierStats = null;
-let richMenuList = [];
 
 /**
  * 頁面初始化
@@ -20,8 +19,7 @@ export async function pageInit(pageData) {
     try {
         await Promise.all([
             loadTierConfig(),
-            loadTierStats(),
-            loadRichMenuList()
+            loadTierStats()
         ]);
 
         renderTierRules();
@@ -69,20 +67,6 @@ async function loadTierStats() {
         }
     } catch (error) {
         console.error("❌ 載入等級統計失敗:", error);
-    }
-}
-
-/**
- * 載入 Rich Menu 列表
- */
-async function loadRichMenuList() {
-    try {
-        const result = await api.get('/richmenu/list');
-        if (result && result.richmenus) {
-            richMenuList = result.richmenus;
-        }
-    } catch (error) {
-        console.error("❌ 載入 Rich Menu 列表失敗:", error);
     }
 }
 
@@ -177,24 +161,6 @@ function renderTierRules() {
         tdDays.appendChild(daysGroup);
         tr.appendChild(tdDays);
 
-        // Richmenu select cell
-        const tdMenu = document.createElement('td');
-        const menuSelect = document.createElement('select');
-        menuSelect.className = 'form-select tier-richmenu-select';
-        const defaultOpt = document.createElement('option');
-        defaultOpt.value = '';
-        defaultOpt.textContent = '-- 不變動 / 預設 --';
-        menuSelect.appendChild(defaultOpt);
-        richMenuList.forEach(menu => {
-            const opt = document.createElement('option');
-            opt.value = menu.richMenuId;
-            opt.textContent = menu.name + (menu.richMenuAliasId ? ` (${menu.richMenuAliasId})` : '');
-            if (tier.richMenuId === menu.richMenuId) opt.selected = true;
-            menuSelect.appendChild(opt);
-        });
-        tdMenu.appendChild(menuSelect);
-        tr.appendChild(tdMenu);
-
         tbody.appendChild(tr);
     });
 
@@ -264,11 +230,9 @@ function renderBenefitSwitches() {
     const benefits = tierConfig.benefits;
     const titleEl = document.getElementById('benefit-custom-title');
     const repliesEl = document.getElementById('benefit-specific-replies');
-    const richMenuEl = document.getElementById('benefit-rich-menu');
 
     if (titleEl) titleEl.checked = benefits.customTitle?.enabled || false;
     if (repliesEl) repliesEl.checked = benefits.tierSpecificReplies?.enabled || false;
-    if (richMenuEl) richMenuEl.checked = benefits.richMenu?.enabled || false;
 }
 
 /**
@@ -316,8 +280,7 @@ function resetToDefaults() {
         },
         benefits: {
             customTitle: { enabled: true },
-            tierSpecificReplies: { enabled: true },
-            richMenu: { enabled: false }
+            tierSpecificReplies: { enabled: true }
         },
         tiers: [
             { id: 0, name: "新手", title: "親愛的", icon: "🌱", color: "#4caf50" },
@@ -361,15 +324,13 @@ async function saveAllSettings() {
             const title = row.querySelector('.tier-title-input').value.trim();
             const interactions = parseInt(row.querySelector('.tier-int-input').value) || 0;
             const days = parseInt(row.querySelector('.tier-days-input').value) || 0;
-            const richMenuId = row.querySelector('.tier-richmenu-select').value;
 
             updatedTiers.push({
                 id: tierId,
                 name,
                 title,
                 icon: getTierIcon(tierId),
-                color: getTierColor(tierId),
-                richMenuId: richMenuId || null
+                color: getTierColor(tierId)
             });
 
             intRules.push({ tier: tierId, interactions, name });
@@ -398,8 +359,7 @@ async function saveAllSettings() {
             },
             benefits: {
                 customTitle: { enabled: benefitTitleEnabled },
-                tierSpecificReplies: { enabled: benefitRepliesEnabled },
-                richMenu: { enabled: document.getElementById('benefit-rich-menu').checked }
+                tierSpecificReplies: { enabled: benefitRepliesEnabled }
             }
         };
 

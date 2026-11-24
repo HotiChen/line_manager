@@ -6,9 +6,8 @@
  */
 
 import { jsonResponse } from '../lib/utils.js';
-import { getTierConfig, updateTierConfig, setMemberTier, getTierStatistics, applyTierRichMenu } from '../lib/tier_system.js';
+import { getTierConfig, updateTierConfig, setMemberTier, getTierStatistics } from '../lib/tier_system.js';
 import * as logger from '../utils/logger.js';
-import { getCurrentAccessToken } from '../lib/token_store.js';
 import { openBotStore } from '../lib/bot_store.js';
 
 /**
@@ -70,20 +69,6 @@ export async function handleSetMemberTier(request, env, userId) {
         const result = await setMemberTier(store, lineUserId, tier);
 
         if (result.success) {
-            // 🆕 手動設定後也嘗試同步 Rich Menu
-            const config = await getTierConfig(store);
-            if (config.benefits?.richMenu?.enabled) {
-                try {
-                    const accessToken = await getCurrentAccessToken(env, userId);
-
-                    if (accessToken) {
-                        // 不需要 await，在背景執行即可
-                        applyTierRichMenu(store, lineUserId, tier, accessToken);
-                    }
-                } catch (e) {
-                    logger.error('TIER_API', '手動設定等級時切換 Rich Menu 失敗', e);
-                }
-            }
             return jsonResponse(result);
         } else {
             return jsonResponse(result, 400);

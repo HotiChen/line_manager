@@ -2,8 +2,6 @@
 import { jsonResponse } from "../lib/utils.js";
 import { addTagsToEntity, removeTagsFromEntity } from "../lib/tag_system.js";
 import { syncMemberRichMenu } from "../lib/segmented_richmenu_logic.js";
-import { applyTierRichMenu, getTierConfig } from "../lib/tier_system.js";
-import { getCurrentAccessToken } from "../lib/token_store.js";
 import { openBotStore } from "../lib/bot_store.js";
 import { withPermission } from "../middleware/permission.js";
 import { handleSeedDemoMembers, handleClearDemoMembers } from "./member_demo.js";
@@ -98,37 +96,7 @@ export async function handleSaveMember(request, env, ownerId) {
   // 同步分眾 Rich Menu
   await syncMemberRichMenu(store, memberId);
 
-  // 同步等級 Rich Menu
-  await handleTierRichMenuSync(store, memberId, profile.tier);
-
   return jsonResponse({ success: true, data: profile });
-}
-
-/**
- * handleTierRichMenuSync
- * 內部輔助函數：根據等級同步 Rich Menu
- * 
- * Pre-conditions:
- * - env, ownerId, memberId: 基礎參數
- * - tier: 會員目前的等級
- */
-async function handleTierRichMenuSync(store, memberId, tier) {
-  const tierConfig = await getTierConfig(store);
-  const isBenefitEnabled = !!tierConfig.benefits?.richMenu?.enabled;
-
-  if (!isBenefitEnabled) return;
-
-  try {
-    const accessToken = await getCurrentAccessToken(store.env, store.userId);
-
-    if (accessToken) {
-      await applyTierRichMenu(store, memberId, tier, accessToken);
-    } else {
-      console.warn(`⚠️ [Save] 無法取得有效 Access Token (owner: ${store.userId})`);
-    }
-  } catch (e) {
-    console.error("❌ [Save] 同步等級 Rich Menu 失敗:", e);
-  }
 }
 
 /**
