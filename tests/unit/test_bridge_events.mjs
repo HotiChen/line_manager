@@ -330,6 +330,20 @@ describe('轉發條件（§B.1）', () => {
         }
     });
 
+    it('縱深防禦：event_url 被改成不在 url_domains 內或不是 https → 不轉發（登記後被竄改也不外送）', async () => {
+        for (const bad of ['https://evil.example.com/steal', 'http://api.picker.example.com/lm/events', 'https://127.0.0.1/x']) {
+            await d1.db.prepare('UPDATE products SET event_url = ?2 WHERE product_id = ?1').bind(PRD, bad).run();
+            const r = await forward({ webhookEventId: `tamper-${bad.length}-0000` });
+            assert.equal(r.outcome, 'not_forwarded', bad);
+        }
+        assert.equal(productCalls.length, 0);
+    });
+
+    it('沒有對象的 px: 事件不在 D1 留下去重旗標', async () => {
+        await forward({}, { data: 'px:zz:plans' });
+        assert.equal(await count(d1.db, 'flags'), 0);
+    });
+
     it('條件不成立且這個動作有設定備用內容 → 回備用內容；沒設定 → 不回覆', async () => {
         await d1.db.prepare("UPDATE links SET status = 'revoked' WHERE link_id = ?1").bind(LNK).run();
         await putFallback('plans', { title: '服務維護中', body: '稍後再試' });

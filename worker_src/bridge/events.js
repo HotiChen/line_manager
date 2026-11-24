@@ -201,16 +201,10 @@ export async function forwardPostback(env, { botId, route, event, now = Date.now
     if (!validId(lineUserId)) return none("not_forwarded");
     const { productKey, action } = route;
 
-    // 去重（LINE 重送同一個事件）
-    const webhookEventId = event.webhookEventId;
-    if (typeof webhookEventId === "string" && WEBHOOK_EVENT_ID_RE.test(webhookEventId)) {
-      const first = await claimFlag(env, { key: `fwdevt:${botId}:${webhookEventId}`, untilAt: now + DEDUP_TTL_MS, now });
-      if (!first) return none("duplicate");
-    }
-
     const target = await getEventTarget(env, { botId, productKey });
+    // 縱深防禦：登記時已驗證過 event_url，送出前再驗一次（https、主機仍在 url_domains 內）
     const eligible = Boolean(target) && !target.productDisabled && target.linkScopes.includes("events:receive")
-      && typeof target.eventUrl === "string" && target.eventUrl !== "" && Boolean(target.eventSecretEnc);
+      && checkEventUrl(target.eventUrl, target.urlDomains).ok && Boolean(target.eventSecretEnc);
 
     const fallbackFor = (extra = {}) => fallbackMessages(env, { botId, productKey, action, urlDomains: target ? target.urlDomains : [], ...extra });
     const auditBase = { botId, productId: target ? target.productId : undefined, linkId: target ? target.linkId : undefined, action };
@@ -219,6 +213,13 @@ export async function forwardPostback(env, { botId, route, event, now = Date.now
       const messages = await fallbackFor();
       if (target) await audit(env, { ...auditBase, outcome: "not_forwarded", latencyMs: 0 });
       return { messages, outcome: "not_forwarded" };
+    }
+
+    // 去重（LINE 重送同一個事件）。只有真的要轉發時才占旗標：沒有對象的 px: 事件不該在 D1 留下任何東西
+    const webhookEventId = event.webhookEventId;
+    if (typeof webhookEventId === "string" && WEBHOOK_EVENT_ID_RE.test(webhookEventId)) {
+      const first = await claimFlag(env, { key: `fwdevt:${botId}:${webhookEventId}`, untilAt: now + DEDUP_TTL_MS, now });
+      if (!first) return none("duplicate");
     }
 
     // 限流：靜默略過
