@@ -213,8 +213,13 @@ describe('webhook 事件要寫進 destination 的命名空間，不是後台選�
     });
 
     it('訊息統計記在 BOT_EVENT 底下（LINE 的額度是 per 官方帳號）', async () => {
+        // LM-4A 起只有 lm:reply 命中才會回覆（沒有前綴的 postback 不再回覆）
+        await env.KV_LINE_STORAGE.put(
+            BotKeys.keywords(BOT_EVENT),
+            JSON.stringify([{ keyword: 'hours', replies: [{ type: 'text', text: '9-18' }] }])
+        );
         await handlePostbackEvent(
-            { type: 'postback', replyToken: 'rt', postback: { data: 'x' }, source: { userId: MEMBER } },
+            { type: 'postback', replyToken: 'rt', postback: { data: 'lm:reply?key=hours' }, source: { userId: MEMBER } },
             env, OWNER, 'tok', null, BOT_EVENT
         );
 

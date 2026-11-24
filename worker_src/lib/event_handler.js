@@ -15,7 +15,8 @@
  */
 import * as logger from '../utils/logger.js';
 import { findMatchingKeyword } from './keyword_matcher.js';
-import { formatReplyMessage, getLineUserProfile, normalizeImagemapActions, replyWithRetry } from './line_client.js';
+import { formatReplyMessage, getLineUserProfile, getRichMenuIdByAlias, linkRichMenuToUser, normalizeImagemapActions, replyWithRetry } from './line_client.js';
+import { parsePostback } from './postback_route.js';
 import { incrementMessageCount } from './message_stats.js';
 import { syncMemberRichMenu } from './segmented_richmenu_logic.js';
 import { addTagsToEntity, removeTagsFromEntity } from './tag_system.js';
@@ -180,6 +181,60 @@ async function getQuickReplyTemplate(store, qrId) {
     }
 }
 /**
+ * 把一筆關鍵字設定組成要回覆的訊息（打字觸發與 lm:reply 共用）。
+ * 格式化 → 正規化 → 變數替換（名稱、等級）→ 掛 Quick Reply。
+ *
+ * @returns {Promise<{messages: Object[], memberProfile: Object|null}|null>} 沒有有效訊息時回 null
+ */
+async function composeKeywordReply(match, { env, userId, store, lineUserId, accessToken }) {
+    const formatted = await Promise.all(
+        match.replies.map(reply => formatReplyMessage(reply, env, userId))
+    );
+    let messages = formatted
+        .filter(msg => msg !== null)
+        .map(msg => normalizeImagemapActions(msg));
+    if (messages.length === 0) {
+        logger.warn('REPLY', '沒有有效的回覆訊息');
+        return null;
+    }
+    // 取得使用者名稱與等級資訊並替換變數 (並行處理 + 逾時保護)
+    let memberProfile = null;
+    try {
+        const [storedProfile, lineProfile, tierData] = await Promise.all([
+            store.get('member', lineUserId),
+            // 為外部 API 提供 2 秒逾時保護
+            Promise.race([
+                getLineUserProfile(lineUserId, accessToken),
+                new Promise(resolve => setTimeout(() => resolve(null), 2000))
+            ]),
+            getMemberTier(store, lineUserId)
+        ]);
+
+        memberProfile = storedProfile || {};
+        const userName = lineProfile?.displayName || '用戶';
+        const tierInfo = tierData || { tierName: '新手', tierTitle: '親愛的' };
+
+        messages = replaceMessageVariables(messages, { userName, tierInfo });
+        logger.debug('REPLACE_VAR', `變數替換完成: userName=${userName}, tier=${tierInfo.tierName}`);
+    } catch (err) {
+        logger.error('REPLACE_VAR', '並行獲取變數或替換失敗', err);
+    }
+
+    // 處理 keyword-level 的 Quick Reply
+    let qrId = match.quickReplyId;
+    if (!qrId) {
+        const replyWithQR = match.replies.find(r => r.quickReplyId);
+        if (replyWithQR) qrId = replyWithQR.quickReplyId;
+    }
+    if (qrId) {
+        const quickReply = await getQuickReplyTemplate(store, qrId);
+        if (quickReply) {
+            messages[messages.length - 1].quickReply = quickReply;
+        }
+    }
+    return { messages, memberProfile };
+}
+/**
  * 處理 Message 事件
  */
 export async function handleMessageEvent(event, env, userId, accessToken, ctx, botId) {
@@ -227,54 +282,10 @@ export async function handleMessageEvent(event, env, userId, accessToken, ctx, b
         return;
     }
     logger.info('MATCH', `匹配成功！關鍵字: "${match.keyword}", 回覆數: ${match.replies.length}`);
-    // 格式化回覆訊息
-    const messages = await Promise.all(
-        match.replies.map(reply => formatReplyMessage(reply, env, userId))
-    );
-    // 過濾掉 null 值並正規化
-    let validMessages = messages
-        .filter(msg => msg !== null)
-        .map(msg => normalizeImagemapActions(msg));
-    if (validMessages.length === 0) {
-        logger.warn('REPLY', '沒有有效的回覆訊息');
-        return;
-    }
-    // 🆕 取得使用者名稱與等級資訊並替換變數 (並行處理 + 逾時保護)
-    let memberProfile = null;
-    try {
-        // 使用 Promise.all 並行獲取所需資訊
-        const [storedProfile, lineProfile, tierData] = await Promise.all([
-            store.get('member', lineUserId),
-            // 為外部 API 提供 2 秒逾時保護
-            Promise.race([
-                getLineUserProfile(lineUserId, accessToken),
-                new Promise(resolve => setTimeout(() => resolve(null), 2000))
-            ]),
-            getMemberTier(store, lineUserId)
-        ]);
-
-        memberProfile = storedProfile || {};
-        const userName = lineProfile?.displayName || '用戶';
-        const tierInfo = tierData || { tierName: '新手', tierTitle: '親愛的' };
-
-        validMessages = replaceMessageVariables(validMessages, { userName, tierInfo });
-        logger.debug('REPLACE_VAR', `變數替換完成: userName=${userName}, tier=${tierInfo.tierName}`);
-    } catch (err) {
-        logger.error('REPLACE_VAR', '並行獲取變數或替換失敗', err);
-    }
-
-    // 處理 keyword-level 的 Quick Reply
-    let qrId = match.quickReplyId;
-    if (!qrId) {
-        const replyWithQR = match.replies.find(r => r.quickReplyId);
-        if (replyWithQR) qrId = replyWithQR.quickReplyId;
-    }
-    if (qrId && validMessages.length > 0) {
-        const quickReply = await getQuickReplyTemplate(store, qrId);
-        if (quickReply) {
-            validMessages[validMessages.length - 1].quickReply = quickReply;
-        }
-    }
+    const composed = await composeKeywordReply(match, { env, userId, store, lineUserId, accessToken });
+    if (!composed) return;
+    const validMessages = composed.messages;
+    let memberProfile = composed.memberProfile;
 
     // --- [背景任務區] 使用 ctx.waitUntil 異步處理 ---
     if (ctx && ctx.waitUntil) {
@@ -413,57 +424,108 @@ export async function handleUnfollowEvent(event, env, userId, botId) {
     }
 }
 /**
- * 處理 Postback 事件
+ * Postback 稽核：只記原因碼與解析後的分類欄位。
+ * 不記 LINE userId、原始 data、query 的值（與 Bridge 稽核同一原則）。
  */
-export async function handlePostbackEvent(event, env, userId, accessToken, ctx, botId) {
-    const store = openBotStoreFor(env, userId, botId);
-    const postbackData = event.postback.data;
-    const lineUserId = event.source.userId;
-    logger.info('POSTBACK', `收到 Postback: ${postbackData}`);
+function auditPostback(reason, route = {}) {
+    logger.warn('POSTBACK_AUDIT', `reason=${reason}`, {
+        kind: route.kind,
+        ...(route.productKey ? { productKey: route.productKey } : {}),
+        ...(route.action ? { action: route.action } : {}),
+    });
+}
 
-    // 🆕 自動標籤系統 (Postback Level) - 極簡版
-    // 支援格式: tag=VIP, untag=Normal 或 URL query style
+/** LINE Rich Menu alias id：半形英數、- 和 _，1–32 字元 */
+const RICH_MENU_ALIAS_RE = /^[A-Za-z0-9_-]{1,32}$/;
+
+/**
+ * 沒有前綴的舊格式：tag=／untag= 自動標籤（極簡版）。其他內容什麼都不做。
+ */
+async function applyLegacyPostbackTags(store, postbackData, lineUserId) {
     try {
         const params = new URLSearchParams(postbackData);
         const tagToAdd = params.get('tag');
         const tagToRemove = params.get('untag');
+        if (!tagToAdd && !tagToRemove) return;
 
-        if (tagToAdd || tagToRemove) {
-            const profile = await store.getOr('member', {}, lineUserId);
+        const profile = await store.getOr('member', {}, lineUserId);
+        if (!profile || Object.keys(profile).length === 0) return;
+        profile.tags = profile.tags || [];
 
-            if (profile && Object.keys(profile).length > 0) {
-                profile.tags = profile.tags || [];
-
-                // 添加標籤
-                if (tagToAdd && tagToAdd.trim() && !profile.tags.includes(tagToAdd.trim())) {
-                    profile.tags.push(tagToAdd.trim());
-                    logger.info('AUTO_TAG', `Postback 自動添加標籤: ${tagToAdd.trim()}`);
-                }
-
-                // 移除標籤
-                if (tagToRemove && tagToRemove.trim()) {
-                    profile.tags = profile.tags.filter(t => t !== tagToRemove.trim());
-                    logger.info('AUTO_TAG', `Postback 自動移除標籤: ${tagToRemove.trim()}`);
-                }
-
-                await store.put('member', profile, lineUserId);
-                logger.info('AUTO_TAG', `Postback 標籤更新完成 (極簡模式)`, { tags: profile.tags });
-            }
+        if (tagToAdd && tagToAdd.trim() && !profile.tags.includes(tagToAdd.trim())) {
+            profile.tags.push(tagToAdd.trim());
         }
+        if (tagToRemove && tagToRemove.trim()) {
+            profile.tags = profile.tags.filter(t => t !== tagToRemove.trim());
+        }
+        await store.put('member', profile, lineUserId);
+        logger.info('AUTO_TAG', 'Postback 標籤更新完成 (極簡模式)', { tags: profile.tags });
     } catch (e) {
-        logger.error('AUTO_TAG', `Postback 標籤處理失敗: ${e.message}`, e);
-        // 解析失敗則跳過，不中斷回覆
+        logger.error('AUTO_TAG', `Postback 標籤處理失敗: ${e.message}`);
     }
+}
+
+/** lm:reply?key=<k> → 回關鍵字 <k> 的內容（與打字觸發同一份設定、同一套組訊息） */
+async function handleLmReply(route, { event, env, userId, store, lineUserId, accessToken }) {
+    const key = route.params.key;
+    if (!key) return auditPostback('missing_param', route);
+
+    const keywordList = await store.getOr('keywords', []);
+    const match = findMatchingKeyword(key, keywordList);
+    if (!match) return auditPostback('lm_reply_key_not_found', route);
+
+    const composed = await composeKeywordReply(match, { env, userId, store, lineUserId, accessToken });
+    if (!composed) return auditPostback('lm_reply_empty', route);
+
+    await replyWithRetry(event.replyToken, composed.messages, accessToken);
+    await incrementKeywordStat(store, match.keyword);
+    await incrementMessageCount(store, 'reply');
+}
+
+/** lm:menu?tab=<alias> → 用 Rich Menu alias 切換這位使用者的選單；不回覆 */
+async function handleLmMenu(route, { lineUserId, accessToken }) {
+    const tab = route.params.tab;
+    if (!tab) return auditPostback('missing_param', route);
+    if (!RICH_MENU_ALIAS_RE.test(tab)) return auditPostback('lm_menu_bad_alias', route);
+
+    const richMenuId = await getRichMenuIdByAlias(tab, accessToken);
+    if (!richMenuId) return auditPostback('lm_menu_alias_not_found', route);
+
+    const ok = await linkRichMenuToUser(lineUserId, richMenuId, accessToken);
+    if (!ok) auditPostback('lm_menu_link_failed', route);
+}
+
+/**
+ * 處理 Postback 事件（LM-4A，契約草案 §A）
+ *
+ * 分流：lm:（LM 自己處理）／px:（產品，4B 才轉發）／沒有前綴（tag=、untag=）／格式不合。
+ * 任何情況都不把原始 data 回給客人，也不寫進 log。
+ */
+export async function handlePostbackEvent(event, env, userId, accessToken, ctx, botId) {
+    const store = openBotStoreFor(env, userId, botId);
+    const postbackData = event.postback && event.postback.data;
+    const lineUserId = event.source.userId;
+    const route = parsePostback(postbackData);
+    logger.info('POSTBACK', `收到 Postback: kind=${route.kind}`);
 
     try {
-        const message = {
-            type: 'text',
-            text: `✅ 已收到您的操作：${postbackData}`
-        };
-        await replyWithRetry(event.replyToken, [message], accessToken);
-        await incrementMessageCount(store, 'reply');
+        switch (route.kind) {
+            case 'lm': {
+                const deps = { event, env, userId, store, lineUserId, accessToken };
+                if (route.action === 'reply') return await handleLmReply(route, deps);
+                if (route.action === 'menu') return await handleLmMenu(route, deps);
+                return auditPostback('lm_unknown_action', route);
+            }
+            case 'px':
+                // 轉發在 LM-4B 才接上；備用內容的設定也在 4B 才有，所以現在一律不回覆
+                return auditPostback('not_forwarded', route);
+            case 'legacy':
+                return await applyLegacyPostbackTags(store, postbackData, lineUserId);
+            default:
+                return auditPostback(route.reason, route);
+        }
     } catch (error) {
-        logger.error('POSTBACK', '處理 Postback 失敗', error);
+        logger.error('POSTBACK', `處理 Postback 失敗 (kind=${route.kind}): ${error.message}`);
     }
 }
 /**
