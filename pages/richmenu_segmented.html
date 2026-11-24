@@ -230,7 +230,7 @@
         <div class="header-section">
             <div>
                 <h1>分眾圖文選單</h1>
-                <p>根據使用者標籤自動切換適合的選單，提升轉化率與互動感。</p>
+                <p>依會員標籤或產品分眾（例如 <code>ip:vip</code>）切換個人選單。多條符合時取優先級最高的一條；都不符合就回到預設選單。</p>
             </div>
             <button class="btn btn-outline" id="syncAllBtn">
                 <i class="fas fa-sync"></i> 同步所有用戶
@@ -240,10 +240,21 @@
         <div class="card">
             <div class="rule-form">
                 <div class="form-group">
+                    <label>條件類型</label>
+                    <select id="matchTypeSelect">
+                        <option value="tag">會員標籤</option>
+                        <option value="segment">產品分眾</option>
+                    </select>
+                </div>
+                <div class="form-group" id="tagGroup">
                     <label>會員標籤</label>
                     <select id="tagSelect">
                         <option value="">載入中...</option>
                     </select>
+                </div>
+                <div class="form-group" id="segmentGroup" style="display: none;">
+                    <label>產品分眾（product_key:分眾）</label>
+                    <input type="text" id="segmentInput" placeholder="ip:vip" maxlength="48" autocomplete="off">
                 </div>
                 <div class="form-group">
                     <label>對應圖文選單</label>

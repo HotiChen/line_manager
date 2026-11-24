@@ -309,6 +309,7 @@ export async function handleMessageEvent(event, env, userId, accessToken, ctx, b
                     }
 
                     // 自動標籤
+                    let tagsChanged = false;
                     if (match.addTags || match.removeTags) {
                         const addTags = Array.isArray(match.addTags) ? match.addTags : (match.addTag ? [match.addTag] : []);
                         const removeTags = Array.isArray(match.removeTags) ? match.removeTags : [];
@@ -326,11 +327,15 @@ export async function handleMessageEvent(event, env, userId, accessToken, ctx, b
                                 }
                             }
                             profileChanged = true;
+                            tagsChanged = true;
                         }
                     }
 
                     if (profileChanged) {
                         await store.put('member', memberProfile, lineUserId);
+                    }
+                    if (tagsChanged) {
+                        await syncMemberRichMenu(store, lineUserId, { accessToken });
                     }
                 }
 
@@ -369,7 +374,7 @@ export async function handleFollowEvent(event, env, userId, accessToken, ctx, bo
 
     // 紀錄會員並同步選單
     await recordMemberInteraction(event, store, accessToken, botId);
-    await syncMemberRichMenu(store, lineUserId);
+    await syncMemberRichMenu(store, lineUserId, { accessToken });
 
     try {
         const welcomeConfig = await store.get('welcome');
@@ -441,7 +446,7 @@ const RICH_MENU_ALIAS_RE = /^[A-Za-z0-9_-]{1,32}$/;
 /**
  * 沒有前綴的舊格式：tag=／untag= 自動標籤（極簡版）。其他內容什麼都不做。
  */
-async function applyLegacyPostbackTags(store, postbackData, lineUserId) {
+async function applyLegacyPostbackTags(store, postbackData, lineUserId, accessToken) {
     try {
         const params = new URLSearchParams(postbackData);
         const tagToAdd = params.get('tag');
@@ -460,6 +465,7 @@ async function applyLegacyPostbackTags(store, postbackData, lineUserId) {
         }
         await store.put('member', profile, lineUserId);
         logger.info('AUTO_TAG', 'Postback 標籤更新完成 (極簡模式)', { tags: profile.tags });
+        await syncMemberRichMenu(store, lineUserId, { accessToken });
     } catch (e) {
         logger.error('AUTO_TAG', `Postback 標籤處理失敗: ${e.message}`);
     }
@@ -520,7 +526,7 @@ export async function handlePostbackEvent(event, env, userId, accessToken, ctx, 
                 // 轉發在 LM-4B 才接上；備用內容的設定也在 4B 才有，所以現在一律不回覆
                 return auditPostback('not_forwarded', route);
             case 'legacy':
-                return await applyLegacyPostbackTags(store, postbackData, lineUserId);
+                return await applyLegacyPostbackTags(store, postbackData, lineUserId, accessToken);
             default:
                 return auditPostback(route.reason, route);
         }

@@ -7,8 +7,6 @@
  * 「寫錯官方帳號」變成一個不會報錯的 bug。
  */
 import * as logger from '../utils/logger.js';
-import { linkRichMenuToUser, unlinkRichMenuFromUser } from './line_client.js';
-import { getCurrentAccessToken } from './token_store.js';
 
 const DEFAULT_TIER_CONFIG = {
     upgradeRules: {
@@ -38,9 +36,7 @@ const DEFAULT_TIER_CONFIG = {
         { id: 2, name: "VIP", title: "尊貴的 VIP", icon: "💎", color: "#ff9800" },
         { id: 3, name: "SVIP", title: "至尊 SVIP", icon: "👑", color: "#f44336" }
     ],
-    benefits: {
-        richMenu: { enabled: false }
-    }
+    benefits: {}
 };
 
 /**
@@ -136,7 +132,7 @@ export async function getMemberTier(store, lineUserId) {
  * 評估並執行自動升級邏輯
  * 
  * Post-conditions:
- * - 若符合條件則更新會員等級並同步選單
+ * - 若符合條件則更新會員等級（LM-4R 起等級不再切換 Rich Menu）
  */
 export async function checkTierUpgrade(store, lineUserId) {
     try {
@@ -169,10 +165,6 @@ export async function checkTierUpgrade(store, lineUserId) {
         profile.lastTierUpdate = new Date().toISOString();
         await store.put('member', profile, lineUserId);
 
-        if (config.benefits?.richMenu?.enabled) {
-            await syncTierRichMenu(store, lineUserId, newTier);
-        }
-
         return { upgraded: true, oldTier: currentTier, newTier };
     } catch (e) {
         logger.error('TIER', '升級檢查錯誤', e);
@@ -180,27 +172,7 @@ export async function checkTierUpgrade(store, lineUserId) {
     }
 }
 
-async function syncTierRichMenu(store, lineUserId, tierId) {
-    // token 的存放不在 bot_store 的管轄範圍（見 token_store.js），仍以 owner 為 key
-    const accessToken = await getCurrentAccessToken(store.env, store.userId);
-    if (accessToken) {
-        await applyTierRichMenu(store, lineUserId, tierId, accessToken);
-    }
-}
-
 function calculateDaysSince(date) {
     if (!date) return 0;
     return Math.ceil(Math.abs(new Date() - new Date(date)) / (1000 * 60 * 60 * 24));
-}
-
-export async function applyTierRichMenu(store, lineUserId, tierId, accessToken) {
-    const config = await getTierConfig(store);
-    const tier = config.tiers.find(t => t.id === tierId);
-    if (!tier) return;
-
-    if (tier.richMenuId) {
-        await linkRichMenuToUser(lineUserId, tier.richMenuId, accessToken);
-    } else {
-        await unlinkRichMenuFromUser(lineUserId, accessToken);
-    }
 }

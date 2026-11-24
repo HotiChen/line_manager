@@ -4,6 +4,7 @@
  */
 import { jsonResponse } from "../lib/utils.js";
 import { openBotStore } from "../lib/bot_store.js";
+import { validateRule } from "../lib/segmented_richmenu_logic.js";
 
 export async function handleSaveSegmentedRules(request, env, ownerId) {
     try {
@@ -12,17 +13,23 @@ export async function handleSaveSegmentedRules(request, env, ownerId) {
             return jsonResponse({ success: false, error: "Rules 必須是陣列" }, 400);
         }
 
-        // 簡單驗證結構
-        for (const rule of rules) {
-            if (!rule.tag || !rule.richMenuId) {
-                return jsonResponse({ success: false, error: "規則缺少 tag 或 richMenuId" }, 400);
+        // LM-4R 格式：{ match: { tag } | { segment }, priority, richMenuId }；舊格式 {tag, richMenuId} 不再接受
+        for (const [i, rule] of rules.entries()) {
+            const problem = validateRule(rule);
+            if (problem) {
+                return jsonResponse({ success: false, error: `第 ${i + 1} 條規則：${problem}` }, 400);
             }
         }
+        const clean = rules.map(r => ({
+            match: r.match.tag !== undefined ? { tag: r.match.tag.trim() } : { segment: r.match.segment },
+            priority: r.priority,
+            richMenuId: r.richMenuId,
+        }));
 
         const store = await openBotStore(env, ownerId);
-        await store.put('segmentedRichMenuRules', rules);
+        await store.put('segmentedRichMenuRules', clean);
 
-        return jsonResponse({ success: true, rules });
+        return jsonResponse({ success: true, rules: clean });
     } catch (error) {
         return jsonResponse({ success: false, error: error.message }, 500);
     }
