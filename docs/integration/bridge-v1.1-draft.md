@@ -1,4 +1,4 @@
-# Bridge v1.1 契約草案(新增：postback 分流、事件轉發、LINE 身分換 ref)
+# Bridge v1.1 契約草案(新增：postback 分流、事件轉發、LINE 身分換 ref、客人分眾)
 
 - 狀態：**草案，全部 `planned`，沒有任何程式碼。** 2026-11-24。
 - 依據：`adr-001-lm-product-boundary.md`
@@ -14,6 +14,7 @@
 |---|---|---|
 | `events:receive` | LM 把這條連結所屬 OA 上的 `px:<product_key>:` 事件轉給產品 | 產品登記時開放，攝影師在同意頁同意 |
 | `identity:read` | 產品用一次性的身分碼換出 `external_contact_ref` | 同上 |
+| `segments:write` | 產品替已綁定的客人設定分眾名稱(§D)，LM 依此切換他的 Rich Menu | 同上 |
 
 既有的連結**不會自動取得**新 scope：同意頁要顯示新的權限，攝影師重新授權後才生效(換碼後舊連結被新連結取代；客人綁定的處理照 v1 規則)。
 
@@ -155,11 +156,42 @@ LIFF App 只能掛在 **LINE Login channel**(或 LINE MINI App channel)底下，
 
 ---
 
-## D. 錯誤碼
+## D. 客人分眾(產品決定「誰是 VIP」，LM 決定「VIP 看哪個 Rich Menu」)
 
-不新增錯誤碼。`/identity/token` 使用 v1 既有的 `INVALID_KEY`、`LINK_REVOKED`、`SCOPE_DENIED`、`INVALID_CODE`、`INVALID_REQUEST`、`RATE_LIMITED`、`INTERNAL`。事件轉發是 LM 呼叫產品，產品不需要處理 LM 的錯誤碼。
+### D.1 為什麼
+「誰是 VIP」是業務判斷(拍過幾次、訂過相本……)，依 ADR 歸產品；「VIP 看到哪一版 Rich Menu」是 OA 設定，歸 LM。產品只告訴 LM 分眾名稱，**不知道** Rich Menu 的 id；LM **不知道**分眾的判定規則。
 
-## E. 產品端 MUST(新增部分)
+### D.2 端點
+```
+PUT /bridge/v1/contacts/{external_contact_ref}/segment
+Authorization: Bearer <連結金鑰>          (需要 segments:write)
+{"segment": "vip"}                        (或 {"segment": null} 清除)
+→ 204
+```
+- `segment`：`^[a-z][a-z0-9_-]{0,31}$` 或 `null`。每位客人在每條連結下**最多一個**分眾(要多層就用不同名稱，例如 `vip`、`vip_gold`)。
+- 冪等：同樣的值再送一次也是 `204`，不會重複觸發 LINE API。
+- 只對 `bound` 的客人有效：否則 `409 CONTACT_NOT_BOUND`(`blocked` 回 `409 RECIPIENT_BLOCKED`)。不存在的 ref 一樣回 `409 CONTACT_NOT_BOUND`，不洩漏是否存在。
+- 限流：每條連結每分鐘 60 次(和發送分開計)；超過回 `429 RATE_LIMITED`。
+- 回應與稽核都不含 LINE userId、Rich Menu id。
+- **新增欄位(只增不改)**：`GET /contacts/{ref}` 的回應多一個 `segment`(字串或 `null`)。
+
+### D.3 LM 這邊怎麼套用
+- LM 後台設定對應表：**OA × product_key × segment → Rich Menu**。沒有對應的分眾 = 不影響 Rich Menu。
+- 套用時機：分眾改變時、客人綁定或重新綁定時。
+- 清除時機：客人解除綁定、封鎖 OA、連結撤銷或被取代時，LM 把這位客人的分眾清掉並重新計算 Rich Menu。
+- 和 LM 自己的標籤規則**共用同一份優先順序**(見 `lm-4-plan.md` 的 LM-4R)：例如 `owner` 標籤 > `photographer` 標籤 > `ip:vip` 分眾 > 預設選單。
+- 切換 Rich Menu 呼叫 LINE API 失敗時，LM 自行重試；產品的 `PUT` 不因此失敗(分眾已記錄)。
+
+### D.4 不做
+- 不提供「列出某分眾的所有客人」(那是產品的 CRM)。
+- 不用分眾做群發(對特定客人群發走 `/messages`，見產品端設計)。
+- **Rich Menu 不是權限控管**：VIP 專屬內容，產品在自己那邊必須再檢查一次。
+
+## E. 錯誤碼
+
+不新增錯誤碼。`/contacts/{ref}/segment` 使用 v1 既有的 `INVALID_KEY`、`LINK_REVOKED`、`SCOPE_DENIED`、`INVALID_REQUEST`、`CONTACT_NOT_BOUND`、`RECIPIENT_BLOCKED`、`RATE_LIMITED`、`INTERNAL`。`/identity/token` 使用 v1 既有的 `INVALID_KEY`、`LINK_REVOKED`、`SCOPE_DENIED`、`INVALID_CODE`、`INVALID_REQUEST`、`RATE_LIMITED`、`INTERNAL`。事件轉發是 LM 呼叫產品，產品不需要處理 LM 的錯誤碼。
+
+## F. 產品端 MUST(新增部分)
 
 1. 驗證事件簽章與時間戳，用 `event_id` 去重；`event_signing_secret` 和其他密鑰一樣只存在伺服器端。
 2. 事件處理要快：只做查詢、不做重活，目標 p95 < 1 秒；做不完就回 `204`，或回一個連到頁面的按鈕。
@@ -167,14 +199,15 @@ LIFF App 只能掛在 **LINE Login channel**(或 LINE MINI App channel)底下，
 4. 回覆文字只放該客人本來就能看到的資訊(同 v1 §3.4)。
 5. 身分碼只在伺服器端兌換；產品自己的 session 要短效，不能把 ref 放進前端。
 
-## F. 測試計畫(實作時)
+## G. 測試計畫(實作時)
 
 - LM：A 的格式解析(合法、超長、壞格式)；B 的轉發條件逐條、簽章、逾時中止、晚到回應丟棄、`204`、驗證失敗改送備用內容、去重、限流、稽核不含個資；C 的發碼與兌換、單次使用、過期、跨連結使用、連結撤銷、`contact = null`。
 - 契約測試：每一項實作完成後搬進 `bridge-v1.yaml`，讓 `test_bridge_contract_*` 涵蓋。
-- 產品：假 LM 伺服器新增「送事件」(帶正確或錯誤簽章)與「身分碼兌換」。
-- 安全審查：B 和 C 各做一次(對外呼叫、身分)。
+- LM：D 的冪等、未綁定／封鎖、解除綁定時清除、優先順序計算、LINE API 失敗重試、回應不含 Rich Menu id。
+- 產品：假 LM 伺服器新增「送事件」(帶正確或錯誤簽章)、「身分碼兌換」與「設定分眾」。
+- 安全審查：B 和 C 各做一次(對外呼叫、身分)；D 併入 B 的審查。
 
-## G. 開放問題(★ 附建議預設)
+## H. 開放問題(★ 附建議預設)
 
 | # | 問題 | 建議 |
 |---|---|---|
@@ -185,3 +218,5 @@ LIFF App 只能掛在 **LINE Login channel**(或 LINE MINI App channel)底下，
 | Q5 | 回覆格式 | 只開放 `Notification`(文字＋最多一顆按鈕)；需要圖片的內容用網址按鈕開網頁 |
 | Q6 | 一個 OA 上有多個產品 | 由 `product_key` 分流；每個產品各自需要一條 active 連結 |
 | Q7 | 沒有前綴的 postback | 保留 `tag=`／`untag=`，拿掉原始字串回覆(A.2) |
+| Q8 | 分眾可以有幾個 | 每位客人每條連結一個；名稱由產品定 |
+| Q9 | LM 的「會員等級」(`tier`)也會切換 Rich Menu，和標籤規則互相覆蓋 | 統一由標籤規則(含產品分眾)決定 Rich Menu；`tier` 不再綁 Rich Menu(LM-4R) |
