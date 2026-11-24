@@ -5,6 +5,10 @@
  *                                                       body：external_contact_ref；選填 allow_rebind（boolean，預設 false）
  *   GET    /bridge/v1/contacts/{external_contact_ref}  連結金鑰（contacts:bind）  → 200 {external_contact_ref, status, bound_at}
  *   DELETE /bridge/v1/contacts/{external_contact_ref}  連結金鑰（contacts:bind）  解除綁定 → 204
+ *   PUT    /bridge/v1/contacts/{external_contact_ref}/segment  連結金鑰（segments:write）  設定／清除分眾 → 204（LM-4D）
+ *
+ * LM-4D 分眾：只對 bound；冪等（同值不寫、不重算）；變更後在 ctx.waitUntil 內經 segments.js 重新計算 Rich Menu，
+ * LINE 失敗不影響回應。回應與稽核不含 LINE userId、ref、分眾值、Rich Menu id。
  *
  * 安全性質：
  *   - 認證一律 withLink(…, "contacts:bind")；系統金鑰是 INVALID_KEY，撤銷連結是 LINK_REVOKED
@@ -26,10 +30,12 @@ import { bridgeError } from "./errors.js";
 import { withLink } from "./auth.js";
 import { json, noContent, rateLimited, readJsonBody, isoOrNull } from "./links.js";
 import { generateBindCode, formatBindCode, BIND_CODE_TTL_MS } from "./binding.js";
-import { BridgeDbError, createBindCode, getContactSnapshot, deleteContact, writeAudit } from "./db.js";
+import { BridgeDbError, createBindCode, getContactSnapshot, deleteContact, writeAudit, getProduct, setContactSegment } from "./db.js";
+import { SEGMENT_RE, defer, captureContactRecipients, refreshRecipients } from "./segments.js";
 
 export const CONTACT_REF_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const BIND_TOKEN_RATE_LIMIT = { limit: 30, windowSec: 60 };
+const SEGMENT_RATE_LIMIT = { limit: 60, windowSec: 60 };
 const MAX_CODE_ATTEMPTS = 3;
 /** LINE 官方帳號 basic ID：`@` 開頭的英數字（含 . _ -） */
 const BASIC_ID_RE = /^@?[A-Za-z0-9._-]{1,64}$/;
@@ -116,12 +122,16 @@ async function handleGetContact(request, env, principal, ref) {
   const showTime = status === "bound" || status === "blocked";
   return json({
     external_contact_ref: ref, status, bound_at: showTime ? isoOrNull(snapshot.contact.boundAt) : null,
+    segment: status === "bound" ? snapshot.contact.segment ?? null : null,
   });
 }
 
-async function handleDeleteContact(request, env, principal, ref) {
+async function handleDeleteContact(request, env, principal, ref, ctx) {
   if (!CONTACT_REF_RE.test(ref)) return notFound("Contact not found");
+  // LM-4D：有分眾的綁定被解除 → 刪除後重新計算（先記下對象，刪了就查不到）
+  const affected = await captureContactRecipients(env, { linkId: principal.linkId, ref, onlySegmented: true });
   const removed = await deleteContact(env, { linkId: principal.linkId, ref });
+  if (affected.recipients.length > 0) await defer(ctx, refreshRecipients(env, affected));
   if (removed.contactDeleted || removed.codesDeleted > 0) {
     await audit(env, {
       actorType: "service_key", actorId: principal.linkId, botId: principal.botId, action: "contact_unbound",
@@ -129,6 +139,35 @@ async function handleDeleteContact(request, env, principal, ref) {
     });
   }
   return noContent(); // 本來就沒有也是 204（冪等）
+}
+
+async function handlePutSegment(request, env, principal, ref, ctx) {
+  if (!CONTACT_REF_RE.test(ref)) return notFound("Contact not found");
+  const limited = await checkRateLimit(env, `segment.${principal.linkId}`, SEGMENT_RATE_LIMIT);
+  if (!limited.allowed) return rateLimited(limited.resetAt);
+
+  const body = await readJsonBody(request);
+  if (!body || !Object.hasOwn(body, "segment")) return invalidRequest("segment is required (string or null)");
+  const segment = body.segment;
+  if (segment !== null && (typeof segment !== "string" || !SEGMENT_RE.test(segment))) {
+    return invalidRequest("segment must match ^[a-z][a-z0-9_-]{0,31}$ or be null");
+  }
+
+  const product = await getProduct(env, principal.productId);
+  if (!product || !product.productKey) return invalidRequest("product has no product_key; ask the LM operator to set it");
+
+  const result = await setContactSegment(env, { linkId: principal.linkId, ref, segment });
+  if (!result.found) return bridgeError("CONTACT_NOT_BOUND", "Contact is not bound");
+  if (result.status === "blocked") return bridgeError("RECIPIENT_BLOCKED", "Recipient has blocked the account");
+  if (!result.changed) return noContent(); // 冪等：值沒變，不重算
+
+  await audit(env, {
+    actorType: "service_key", actorId: principal.linkId, botId: principal.botId, action: "contact_segment_set",
+    detail: { product_id: principal.productId, link_id: principal.linkId, cleared: segment === null },
+  });
+  const affected = await captureContactRecipients(env, { linkId: principal.linkId, ref });
+  await defer(ctx, refreshRecipients(env, affected));
+  return noContent();
 }
 
 // ── 路由 ──
@@ -141,11 +180,17 @@ function decodeSegment(raw) {
   }
 }
 
-async function dispatch(request, env, pathname) {
-  const parts = pathname.split("/").filter(Boolean); // ["bridge","v1","contacts", seg]
+async function dispatch(request, env, pathname, ctx) {
+  const parts = pathname.split("/").filter(Boolean); // ["bridge","v1","contacts", seg, ("segment")]
   const n = parts.length;
   const seg = parts[3];
   const method = request.method;
+  if (n === 5 && parts[4] === "segment") {
+    if (method !== "PUT") return notFound();
+    const ref = decodeSegment(seg);
+    if (ref === null) return notFound();
+    return withLink(handlePutSegment, "segments:write")(request, env, ref, ctx);
+  }
   if (n !== 4) return notFound();
 
   if (seg === "bind-tokens") {
@@ -155,7 +200,7 @@ async function dispatch(request, env, pathname) {
   const ref = decodeSegment(seg);
   if (ref === null) return notFound();
   const handler = method === "GET" ? handleGetContact : handleDeleteContact;
-  return withLink(handler, "contacts:bind")(request, env, ref);
+  return withLink(handler, "contacts:bind")(request, env, ref, ctx);
 }
 
 /**
@@ -164,11 +209,12 @@ async function dispatch(request, env, pathname) {
  * @param {Request} request
  * @param {Object} env
  * @param {string} pathname
+ * @param {{waitUntil?: Function}} [ctx]
  * @returns {Promise<Response>}
  */
-export async function route(request, env, pathname) {
+export async function route(request, env, pathname, ctx) {
   try {
-    return await dispatch(request, env, pathname);
+    return await dispatch(request, env, pathname, ctx);
   } catch (err) {
     if (err instanceof BridgeDbError) return bridgeError("INTERNAL", "bridge_not_configured", { status: 503 });
     // 只記訊息，不記 stack，也不回給呼叫端

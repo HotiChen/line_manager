@@ -6,7 +6,7 @@
 openapi: 3.0.3
 info:
   title: LM Bridge API
-  version: 1.0.0-draft
+  version: 1.1.0
   description: |
     LM 側的 Bridge 契約（草稿，G0 確認後凍結）。
 
@@ -28,6 +28,9 @@ info:
 
     LM-3A-1 後端已完成（程式；待部署與手動遷移 0003，見 lm-3a-plan.md 第 13 節）：`contacts/bind-tokens`（POST）、`contacts/{external_contact_ref}`（GET／DELETE）。
     綁定碼訊息只在 1 對 1 聊天室生效（群組碼路徑尚未實作）；`bind_url` 的預填連結形式尚待真實 OA 驗證（3A-2）。
+
+    v1.1（LM-4D）：新增 `PUT /contacts/{external_contact_ref}/segment`（scope `segments:write`），`GET /contacts/{external_contact_ref}` 回應多一個 `segment` 欄位（只增不改）。
+    需先套用遷移 0005（未套用時分眾端點回 503）。草案其餘項目見 `bridge-v1.1-draft.md`。
 
     LM-2A 後端已完成（程式；待部署與手動遷移，見 lm-2a-plan.md 第 14 節）：`link/authorize`、`links/token`、`links/{link_id}`（GET／DELETE）、`links/{link_id}/rotate-key`。
     這些新端點的錯誤一律用下方 `Error` 格式、欄位 snake_case。
@@ -308,6 +311,12 @@ paths:
                     type: string
                     enum: [unbound, pending, bound, blocked, disabled]
                   bound_at: { type: string, format: date-time, nullable: true, description: "只有 bound／blocked 才有值，其餘為 null" }
+                  segment:
+                    type: string
+                    nullable: true
+                    pattern: '^[a-z][a-z0-9_-]{0,31}$'
+                    description: "v1.1：目前的分眾（只有 bound 才可能有值，其餘為 null）"
+                    x-status: implemented
         '401': { $ref: '#/components/responses/InvalidKey' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -330,6 +339,49 @@ paths:
         '401': { $ref: '#/components/responses/InvalidKey' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /bridge/v1/contacts/{external_contact_ref}/segment:
+    put:
+      tags: [contacts]
+      summary: 設定客人分眾（v1.1）
+      description: |
+        產品決定「誰是 VIP」，LM 決定「VIP 看哪個 Rich Menu」。產品只送分眾名稱，不知道 Rich Menu id。
+        每位客人在每條連結下最多一個分眾；`null` 清除。冪等：同樣的值再送一次也是 204，不會重複觸發 LINE。
+        只對 `bound` 的客人有效：未綁定或不存在 → `CONTACT_NOT_BOUND`（不洩漏是否存在）；封鎖 → `RECIPIENT_BLOCKED`。
+        產品尚未設定 `product_key`（由 LM 營運設定）→ `INVALID_REQUEST`。
+        限流：每條連結每分鐘 60 次（與發送分開計）。
+        Rich Menu 的切換在回應之後進行；LINE 失敗由 LM 重試，不影響本請求（分眾已記錄）。
+        解除綁定、封鎖、連結撤銷或被取代時，LM 會清除分眾。Rich Menu 不是權限控管：VIP 內容產品端必須再檢查。
+      x-status: implemented
+      x-scope: segments:write
+      parameters:
+        - { name: external_contact_ref, in: path, required: true, schema: { $ref: '#/components/schemas/ContactRef' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [segment]
+              properties:
+                segment:
+                  type: string
+                  nullable: true
+                  pattern: '^[a-z][a-z0-9_-]{0,31}$'
+      responses:
+        '204':
+          description: 已設定（或值沒變）
+          headers:
+            Cache-Control: { $ref: '#/components/headers/NoStore' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/InvalidKey' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: "CONTACT_NOT_BOUND（沒有綁定）或 RECIPIENT_BLOCKED（客戶封鎖了官方帳號）"
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /bridge/v1/messages:
@@ -555,7 +607,7 @@ components:
   schemas:
     Scope:
       type: string
-      enum: [link:manage, contacts:bind, messages:send, raw:push]
+      enum: [link:manage, contacts:bind, messages:send, segments:write, raw:push]
     ContactRef:
       type: string
       pattern: '^[A-Za-z0-9_-]{8,64}$'

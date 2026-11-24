@@ -12,11 +12,12 @@
 
 // ── scope ──
 
-/** 連結流程的三個 scope（與後端 worker_src/bridge/scopes.js 的 LINK_SCOPES 一致） */
+/** 連結流程的 scope（與後端 worker_src/bridge/scopes.js 的 LINK_SCOPES 一致） */
 const SCOPE_TEXT = Object.freeze({
   'link:manage': { long: '管理這個連結（查看狀態、解除、更換金鑰）', short: '管理連結' },
   'contacts:bind': { long: '為你的客戶產生綁定碼', short: '產生綁定碼' },
   'messages:send': { long: '向已綁定的客戶發送通知', short: '發送通知' },
+  'segments:write': { long: '標記客戶的分眾（例如 VIP），讓官方帳號顯示對應的選單', short: '設定客戶分眾' },
 });
 
 export const UNKNOWN_SCOPE_TEXT = '未知權限';

@@ -401,7 +401,7 @@ describe('D6：覆蓋既有綁定預設拒絕', () => {
     it('db 層：被拒絕時 consumeBindCode 回 rejected 且不改任何列；成功時只在「覆蓋別人」才帶 previousUserId', async () => {
         const hash1 = await sha256Hex(await issue());
         const r1 = await bdb.consumeBindCode(env, { codeHash: hash1, botId: BOT, lineUserId: USER });
-        assert.deepEqual(r1, { rejected: false, linkId: LNK, productId: PRD, ref: REF, previousUserId: null });
+        assert.deepEqual(r1, { rejected: false, linkId: LNK, productId: PRD, ref: REF, previousUserId: null, hasSegment: false });
         const code2 = await issue();
         const hash2 = await sha256Hex(code2);
         const before = JSON.stringify(await all(d1.db, 'SELECT * FROM contacts'));
@@ -416,7 +416,7 @@ describe('D6：覆蓋既有綁定預設拒絕', () => {
         const code3 = await issue({ allowRebind: true });
         const hash3 = await sha256Hex(code3);
         assert.equal(await bdb.consumeBindCode(env, { codeHash: hash3, botId: BOT2, lineUserId: USER2 }), null);
-        assert.deepEqual(await bdb.consumeBindCode(env, { codeHash: hash3, botId: BOT, lineUserId: USER2 }), { rejected: false, linkId: LNK, productId: PRD, ref: REF, previousUserId: USER });
+        assert.deepEqual(await bdb.consumeBindCode(env, { codeHash: hash3, botId: BOT, lineUserId: USER2 }), { rejected: false, linkId: LNK, productId: PRD, ref: REF, previousUserId: USER, hasSegment: false });
     });
 
     it('db 層：被拒絕的碼若同時已過期或連結已撤銷 → null，不是 rejected（不洩漏「碼是真的」）', async () => {

@@ -58,6 +58,7 @@ const LINK_ROTATE = OP('POST', '/bridge/v1/links/{link_id}/rotate-key');
 const BIND = OP('POST', '/bridge/v1/contacts/bind-tokens');
 const CONTACT_GET = OP('GET', '/bridge/v1/contacts/{external_contact_ref}');
 const CONTACT_DELETE = OP('DELETE', '/bridge/v1/contacts/{external_contact_ref}');
+const SEGMENT_PUT = OP('PUT', '/bridge/v1/contacts/{external_contact_ref}/segment');
 const MESSAGES = OP('POST', '/bridge/v1/messages');
 const RAW_PUSH = OP('POST', '/bridge/v1/raw/push');
 const RAW_MULTICAST = OP('POST', '/bridge/v1/raw/multicast');
@@ -430,11 +431,11 @@ describe('GET /bridge/v1/contacts/{external_contact_ref}', () => {
 
     it('200 五種狀態中可由端點到達的四種：unbound、pending、bound、blocked（bound_at 只有 bound／blocked 有值）', async () => {
         let r = await get(KEY_A);
-        assert.deepEqual(r.body, { external_contact_ref: REF, status: 'unbound', bound_at: null });
+        assert.deepEqual(r.body, { external_contact_ref: REF, status: 'unbound', bound_at: null, segment: null });
 
         assert.equal((await call(BIND, 'POST', '/bridge/v1/contacts/bind-tokens', { key: KEY_A, body: { external_contact_ref: REF2 } })).res.status, 201);
         r = await get(KEY_A, REF2);
-        assert.deepEqual(r.body, { external_contact_ref: REF2, status: 'pending', bound_at: null });
+        assert.deepEqual(r.body, { external_contact_ref: REF2, status: 'pending', bound_at: null, segment: null });
 
         await bindContact(LNK_A, REF);
         r = await get(KEY_A);
@@ -476,6 +477,61 @@ describe('DELETE /bridge/v1/contacts/{external_contact_ref}', () => {
 
     it('404 NOT_FOUND：ref 格式不符', async () => {
         expectErr(await del(KEY_A, 'short'), 404, 'NOT_FOUND', false);
+    });
+});
+
+// ───────────────────────── PUT /contacts/{ref}/segment（v1.1）─────────────────────────
+
+describe('PUT /bridge/v1/contacts/{external_contact_ref}/segment', () => {
+    const put = (key, { ref = REF, body = { segment: 'vip' }, e = env } = {}) =>
+        call(SEGMENT_PUT, 'PUT', `/bridge/v1/contacts/${ref}/segment`, { key, body, e });
+    beforeEach(async () => {
+        const scopes = JSON.stringify(LINK_SCOPES);
+        await d1.db.prepare('UPDATE links SET scopes = ?2 WHERE link_id = ?1').bind(LNK_A, scopes).run();
+        await d1.db.prepare('UPDATE service_keys SET scopes = ?2 WHERE link_id = ?1').bind(LNK_A, scopes).run();
+        await d1.db.prepare("UPDATE products SET product_key = 'ip', scopes = ?2 WHERE product_id = ?1").bind(PRD_A, scopes).run();
+    });
+    sharedFailures('PUT /contacts/{ref}/segment', (key, e) => put(key, { e }), 'segments:write');
+
+    it('204 無本文（設定、同值冪等、清除）', async () => {
+        await bindContact(LNK_A, REF);
+        for (const body of [{ segment: 'vip' }, { segment: 'vip' }, { segment: null }]) {
+            const r = await put(KEY_A, { body });
+            assert.equal(r.res.status, 204, r.text);
+            assert.equal(r.text, '');
+        }
+    });
+
+    it('400 INVALID_REQUEST：格式不合、缺欄位', async () => {
+        await bindContact(LNK_A, REF);
+        expectErr(await put(KEY_A, { body: { segment: 'VIP' } }), 400, 'INVALID_REQUEST', false);
+        expectErr(await put(KEY_A, { body: {} }), 400, 'INVALID_REQUEST', false);
+    });
+
+    it('404 NOT_FOUND：ref 格式不符', async () => {
+        expectErr(await put(KEY_A, { ref: 'short' }), 404, 'NOT_FOUND', false);
+    });
+
+    it('409 CONTACT_NOT_BOUND／RECIPIENT_BLOCKED', async () => {
+        expectErr(await put(KEY_A), 409, 'CONTACT_NOT_BOUND', false);
+        await bindContact(LNK_A, REF2, { status: 'blocked' });
+        expectErr(await put(KEY_A, { ref: REF2 }), 409, 'RECIPIENT_BLOCKED', false);
+    });
+
+    it('200 GET 回應帶 segment', async () => {
+        await bindContact(LNK_A, REF);
+        await put(KEY_A);
+        const r = await call(CONTACT_GET, 'GET', `/bridge/v1/contacts/${REF}`, { key: KEY_A });
+        assert.equal(r.body.segment, 'vip');
+    });
+
+    it('429 RATE_LIMITED + Retry-After（每連結每分鐘 60 次）', async () => {
+        await withPinnedWindow(async () => {
+            let last;
+            for (let i = 0; i < 61; i++) last = await put(KEY_A, { body: {} });
+            expectErr(last, 429, 'RATE_LIMITED', true);
+            assert.match(last.res.headers.get('Retry-After'), /^[1-9]\d*$/);
+        });
     });
 });
 

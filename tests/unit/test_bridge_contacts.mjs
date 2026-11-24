@@ -348,11 +348,11 @@ describe('GET /contacts/{ref}：狀態推導', () => {
     it('unbound → pending → bound → blocked → bound（follow 還原）', async () => {
         let r = await status();
         assert.equal(r.res.status, 200);
-        assert.deepEqual(r.body, { external_contact_ref: REF, status: 'unbound', bound_at: null });
+        assert.deepEqual(r.body, { external_contact_ref: REF, status: 'unbound', bound_at: null, segment: null });
 
         const issued = await issue();
         r = await status();
-        assert.deepEqual(r.body, { external_contact_ref: REF, status: 'pending', bound_at: null });
+        assert.deepEqual(r.body, { external_contact_ref: REF, status: 'pending', bound_at: null, segment: null });
 
         const t0 = Date.now();
         assert.equal((await bindVia(issued.body.bind_code)).handled, true);

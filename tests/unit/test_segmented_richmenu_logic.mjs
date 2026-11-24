@@ -141,6 +141,20 @@ describe('syncMemberRichMenu', () => {
         assert.deepEqual(richMenuCalls(), [{ method: 'POST', url: `https://api.line.me/v2/bot/user/${USER}/richmenu/rm-A` }]);
     });
 
+    it('LM-4D：沒傳 segments 時用會員資料的 productSegments（Bridge 寫入的副本）', async () => {
+        await put(BotKeys.segmentedRichMenuRules(BOT), TIM_RULES);
+        await put(BotKeys.member(BOT, USER), { memberId: USER, tags: [], productSegments: ['ip:vip'] });
+        assert.equal(await syncMemberRichMenu(store(), USER, { accessToken: 'tok' }), true);
+        assert.deepEqual(richMenuCalls(), [{ method: 'POST', url: `https://api.line.me/v2/bot/user/${USER}/richmenu/rm-A` }]);
+    });
+
+    it('LINE 失敗 → 回 false（讓呼叫端重試）', async () => {
+        await put(BotKeys.segmentedRichMenuRules(BOT), TIM_RULES);
+        await put(BotKeys.member(BOT, USER), { memberId: USER, tags: ['owner'] });
+        globalThis.fetch = async () => new Response('{}', { status: 500 });
+        assert.equal(await syncMemberRichMenu(store(), USER, { accessToken: 'tok' }), false);
+    });
+
     it('沒有符合 → 解除個人選單（回到預設）', async () => {
         await put(BotKeys.segmentedRichMenuRules(BOT), TIM_RULES);
         await put(BotKeys.member(BOT, USER), { memberId: USER, tags: ['other'] });

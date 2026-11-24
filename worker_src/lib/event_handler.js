@@ -251,7 +251,7 @@ export async function handleMessageEvent(event, env, userId, accessToken, ctx, b
     if (event.source.type === 'user' && lineUserId) {
         let bind = { handled: false };
         try {
-            bind = await tryConsumeBindCode(env, { botId, lineUserId, text: event.message.text });
+            bind = await tryConsumeBindCode(env, { botId, lineUserId, text: event.message.text, ctx });
         } catch (err) {
             logger.error('BIND', `綁定碼處理失敗: ${err && err.message}`);
         }

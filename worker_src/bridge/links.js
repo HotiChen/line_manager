@@ -37,8 +37,9 @@ import { withLink } from "./auth.js";
 import { LINK_SCOPES, onlyLinkScopes } from "./scopes.js";
 import {
   BridgeDbError, createProduct, getProduct, createAuthCode, consumeAuthCode, createLinkWithKey, getLink,
-  listLinksForBot, revokeLink, rotateLinkKey, writeAudit,
+  listLinksForBot, revokeLink, rotateLinkKey, writeAudit, updateProduct,
 } from "./db.js";
+import { defer, captureLinkRecipients, captureReplacedRecipients, refreshRecipients } from "./segments.js";
 
 export const AUTH_CODE_TTL_MS = 5 * 60 * 1000;
 const MAX_STATE_LENGTH = 256;
@@ -50,6 +51,7 @@ const TOKEN_RATE_LIMIT = { limit: 30, windowSec: 60 };
 const ADMIN_RATE_LIMIT = { limit: 10, windowSec: 60 };
 
 const PRODUCT_ID_RE = /^prd_[a-f0-9]{12}$/;
+const PRODUCT_KEY_RE = /^[a-z][a-z0-9]{1,15}$/;
 const LINK_ID_RE = /^lnk_[a-f0-9]{16}$/;
 const PRODUCT_SECRET_RE = /^bps_([a-f0-9]{12})_[A-Za-z0-9_-]{43}$/;
 const AUTH_CODE_RE = /^lmc_[A-Za-z0-9_-]{43}$/;
@@ -191,14 +193,25 @@ function parseProductInput(body, env) {
   if (!body.scopes.every((s) => typeof s === "string" && LINK_SCOPES.includes(s))) {
     return { error: `scopes must be among: ${LINK_SCOPES.join(", ")}` };
   }
-  return { value: { name, redirectUris, urlDomains, scopes: onlyLinkScopes(body.scopes) } };
+  let productKey = null;
+  if (body.product_key !== undefined) {
+    if (typeof body.product_key !== "string" || !PRODUCT_KEY_RE.test(body.product_key)) {
+      return { error: "product_key must match ^[a-z][a-z0-9]{1,15}$" };
+    }
+    productKey = body.product_key;
+  }
+  return { value: { name, redirectUris, urlDomains, scopes: onlyLinkScopes(body.scopes), productKey } };
 }
 
-async function handleRegisterProduct(request, env) {
-  // 未設定營運密鑰（或空字串）→ 整個端點不存在（fail-closed）
+/**
+ * 營運密鑰認證（產品登記、產品更新共用）。未設定營運密鑰（或空字串）→ 整個端點不存在（fail-closed）。
+ *
+ * @returns {Promise<Response|null>} null = 通過
+ */
+async function requireAdmin(request, env, method) {
   const secret = env.BRIDGE_ADMIN_SECRET;
   if (typeof secret !== "string" || secret === "") return notFound();
-  if (request.method !== "POST") return notFound();
+  if (request.method !== method) return notFound();
 
   const limited = await checkRateLimit(env, `lnkadmin.${clientIp(request)}`, ADMIN_RATE_LIMIT);
   if (!limited.allowed) return rateLimited(limited.resetAt);
@@ -206,26 +219,80 @@ async function handleRegisterProduct(request, env) {
   const header = request.headers.get("Authorization") || "";
   const presented = header.startsWith("Bearer ") ? header.substring(7).trim() : "";
   if (presented === "" || !(await safeEqual(presented, secret))) return invalidKey("Invalid admin credential");
+  return null;
+}
+
+async function handleRegisterProduct(request, env) {
+  const denied = await requireAdmin(request, env, "POST");
+  if (denied) return denied;
 
   const body = await readJsonBody(request);
   if (!body) return invalidRequest("Invalid JSON body");
   const parsed = parseProductInput(body, env);
   if (parsed.error) return invalidRequest(parsed.error);
-  const { name, redirectUris, urlDomains, scopes } = parsed.value;
+  const { name, redirectUris, urlDomains, scopes, productKey } = parsed.value;
 
   const idPart = randomHex(6);
   const productId = `prd_${idPart}`;
   const productSecret = `bps_${idPart}_${randomToken()}`;
   const created = await createProduct(env, {
-    productId, name, secretHash: await sha256Hex(productSecret), redirectUris, urlDomains, scopes,
+    productId, name, secretHash: await sha256Hex(productSecret), redirectUris, urlDomains, scopes, productKey,
   });
+  if (created.keyTaken) return invalidRequest("product_key is already in use");
   if (created.conflict) return bridgeError("INTERNAL", "Please retry");
 
   await audit(env, { actorType: "system", actorId: "admin_endpoint", action: "product_registered", detail: { product_id: productId, scopes } });
   return json({
     product_id: productId, product_secret: productSecret, name,
-    redirect_uris: redirectUris, url_domains: urlDomains, scopes,
+    redirect_uris: redirectUris, url_domains: urlDomains, scopes, product_key: productKey,
   }, 201);
+}
+
+/**
+ * PATCH /bridge/v1/admin/products/{product_id}（LM-4D，營運）：
+ *   - product_key：只能從 NULL 設一次（同值冪等），全域唯一
+ *   - scopes：只能增加（新集合必須包含舊的），限 LINK_SCOPES；既有連結不會自動取得新 scope（要重新授權）
+ */
+async function handleUpdateProduct(request, env, productId) {
+  const denied = await requireAdmin(request, env, "PATCH");
+  if (denied) return denied;
+  if (!PRODUCT_ID_RE.test(productId)) return notFound("Product not found");
+
+  const body = await readJsonBody(request);
+  if (!body) return invalidRequest("Invalid JSON body");
+  const product = await getProduct(env, productId);
+  if (!product) return notFound("Product not found");
+
+  let productKey = null;
+  if (body.product_key !== undefined) {
+    if (typeof body.product_key !== "string" || !PRODUCT_KEY_RE.test(body.product_key)) {
+      return invalidRequest("product_key must match ^[a-z][a-z0-9]{1,15}$");
+    }
+    if (product.productKey && product.productKey !== body.product_key) return invalidRequest("product_key cannot be changed once set");
+    productKey = body.product_key;
+  }
+
+  let scopes = null;
+  if (body.scopes !== undefined) {
+    if (!Array.isArray(body.scopes) || !body.scopes.every((x) => typeof x === "string" && LINK_SCOPES.includes(x))) {
+      return invalidRequest(`scopes must be among: ${LINK_SCOPES.join(", ")}`);
+    }
+    if (!product.scopes.every((x) => body.scopes.includes(x))) return invalidRequest("scopes can only be added, not removed");
+    scopes = onlyLinkScopes(body.scopes);
+  }
+  if (productKey === null && scopes === null) return invalidRequest("Nothing to update (product_key or scopes)");
+
+  const updated = await updateProduct(env, { productId, productKey, scopes });
+  if (updated.keyTaken) return invalidRequest("product_key is already in use");
+  if (updated.keyLocked) return invalidRequest("product_key cannot be changed once set");
+  if (updated.notFound) return notFound("Product not found");
+
+  await audit(env, {
+    actorType: "system", actorId: "admin_endpoint", action: "product_updated",
+    detail: { product_id: productId, scopes: scopes ?? product.scopes },
+  });
+  const fresh = await getProduct(env, productId);
+  return json({ product_id: productId, name: fresh.name, product_key: fresh.productKey, scopes: fresh.scopes });
 }
 
 // ── 授權參數驗證（authorize／preview／approve 共用）──
@@ -341,7 +408,7 @@ async function failExchange(env, product, code, message) {
   return code === "INVALID_KEY" ? invalidKey() : bridgeError(code, message);
 }
 
-async function handleToken(request, env) {
+async function handleToken(request, env, ctx) {
   if (request.method !== "POST") return notFound();
 
   const header = request.headers.get("Authorization") || "";
@@ -382,6 +449,8 @@ async function handleToken(request, env) {
 
   const linkId = `lnk_${randomHex(8)}`;
   const serviceKey = generateBrokerKey();
+  // LM-4D：被取代的連結下有分眾的人，搬家後分眾會被清掉 → 先記下來，之後重新計算
+  const affected = await captureReplacedRecipients(env, { productId: product.productId, botId: consumed.botId });
   const { revokedLinkIds } = await createLinkWithKey(env, {
     linkId, productId: product.productId, botId: consumed.botId, scopes, createdBy: consumed.createdBy,
     keyHash: await sha256Hex(serviceKey),
@@ -397,6 +466,7 @@ async function handleToken(request, env) {
       detail: { product_id: product.productId, link_id: oldId },
     });
   }
+  if (affected.recipients.length > 0) await defer(ctx, refreshRecipients(env, affected));
 
   return json({
     link_id: linkId, service_key: serviceKey, scopes, bot_display_name: await getBotDisplayName(env, consumed.botId),
@@ -425,11 +495,13 @@ async function handleGetLink(request, env, principal, linkId) {
   });
 }
 
-async function handleDeleteOwnLink(request, env, principal, linkId) {
+async function handleDeleteOwnLink(request, env, principal, linkId, ctx) {
   if (!ownLink(principal, linkId)) return notFound("Link not found");
+  const affected = await captureLinkRecipients(env, principal.linkId, { botId: principal.botId, productId: principal.productId });
   if (!(await revokeLink(env, { linkId: principal.linkId, botId: principal.botId }))) {
     return bridgeError("LINK_REVOKED", "Link is revoked");
   }
+  if (affected.recipients.length > 0) await defer(ctx, refreshRecipients(env, affected));
   await audit(env, {
     actorType: "service_key", actorId: principal.linkId, botId: principal.botId, action: "link_revoked",
     detail: { product_id: principal.productId, link_id: principal.linkId },
@@ -472,13 +544,13 @@ async function handleAdminList(request, env) {
   const links = await listLinksForBot(env, resolved.bot.botId);
   return json({
     links: links.map((l) => ({
-      link_id: l.linkId, product_id: l.productId, product_name: l.productName, status: l.status,
+      link_id: l.linkId, product_id: l.productId, product_name: l.productName, product_key: l.productKey, status: l.status,
       scopes: onlyLinkScopes(l.scopes), created_at: isoOrNull(l.createdAt), revoked_at: isoOrNull(l.revokedAt),
     })),
   });
 }
 
-async function handleAdminRevoke(request, env, linkId) {
+async function handleAdminRevoke(request, env, linkId, ctx) {
   const user = await requireUser(request, env);
   if (user.response) return user.response;
   const resolved = await resolveOwnedBot(request, env, user.userId);
@@ -488,11 +560,13 @@ async function handleAdminRevoke(request, env, linkId) {
   // 不存在與「屬於別的 bot」回同一個 404
   if (!link || link.botId !== resolved.bot.botId) return notFound("Link not found");
 
+  const affected = await captureLinkRecipients(env, linkId, { botId: resolved.bot.botId, productId: link.productId });
   if (await revokeLink(env, { linkId, botId: resolved.bot.botId })) {
     await audit(env, {
       actorType: "user", actorId: user.userId, botId: resolved.bot.botId, action: "link_revoked",
       detail: { product_id: link.productId, link_id: linkId },
     });
+    if (affected.recipients.length > 0) await defer(ctx, refreshRecipients(env, affected));
   }
   return noContent(); // 已撤銷的再撤銷一次也是 204（冪等）
 }
@@ -507,7 +581,7 @@ function decodeSegment(raw) {
   }
 }
 
-async function dispatch(request, env, pathname) {
+async function dispatch(request, env, pathname, ctx) {
   const parts = pathname.split("/").filter(Boolean); // ["bridge","v1", root, ...]
   const [, , root, a, b] = parts;
   const method = request.method;
@@ -515,10 +589,14 @@ async function dispatch(request, env, pathname) {
 
   if (root === "admin") {
     if (n === 4 && a === "products") return handleRegisterProduct(request, env);
+    if (n === 5 && a === "products") {
+      const productId = decodeSegment(b);
+      return productId === null ? notFound() : handleUpdateProduct(request, env, productId);
+    }
     if (n === 4 && a === "links" && method === "GET") return handleAdminList(request, env);
     if (n === 5 && a === "links" && method === "DELETE") {
       const linkId = decodeSegment(b);
-      return linkId === null ? notFound() : handleAdminRevoke(request, env, linkId);
+      return linkId === null ? notFound() : handleAdminRevoke(request, env, linkId, ctx);
     }
     return notFound();
   }
@@ -531,11 +609,11 @@ async function dispatch(request, env, pathname) {
   }
 
   if (root === "links") {
-    if (n === 4 && a === "token") return handleToken(request, env);
+    if (n === 4 && a === "token") return handleToken(request, env, ctx);
     const linkId = a === undefined ? null : decodeSegment(a);
     if (linkId === null) return notFound();
     if (n === 4 && method === "GET") return withLink(handleGetLink, "link:manage")(request, env, linkId);
-    if (n === 4 && method === "DELETE") return withLink(handleDeleteOwnLink, "link:manage")(request, env, linkId);
+    if (n === 4 && method === "DELETE") return withLink(handleDeleteOwnLink, "link:manage")(request, env, linkId, ctx);
     if (n === 5 && b === "rotate-key" && method === "POST") return withLink(handleRotateOwnKey, "link:manage")(request, env, linkId);
     return notFound();
   }
@@ -552,9 +630,9 @@ async function dispatch(request, env, pathname) {
  * @param {string} pathname
  * @returns {Promise<Response>}
  */
-export async function route(request, env, pathname) {
+export async function route(request, env, pathname, ctx) {
   try {
-    return await dispatch(request, env, pathname);
+    return await dispatch(request, env, pathname, ctx);
   } catch (err) {
     if (err instanceof BridgeDbError) return unavailable();
     // 只記訊息，不記 stack，也不回給呼叫端
