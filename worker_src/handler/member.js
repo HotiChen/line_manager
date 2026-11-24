@@ -62,6 +62,8 @@ export async function handleSaveMember(request, env, ownerId) {
     phone,
     gender,
     birthday,
+    // webhook 才會寫入的歸屬（見 lib/event_handler.js 的 withBotId）；手動編輯要保留，但絕不接受 body 裡的值
+    ...(Array.isArray(existingProfile.botIds) ? { botIds: existingProfile.botIds } : {}),
     joinedAt: existingProfile.joinedAt || new Date().toISOString(),
     lastInteraction: new Date().toISOString(),
     totalInteractions: existingProfile.totalInteractions || 0,

@@ -104,7 +104,7 @@ beforeEach(async () => {
     await kv.put(BotKeys.permissions(BOT), JSON.stringify({ users: [{ userId: OWNER, role: 'owner' }, { userId: MEMBER_USER, role: 'member' }] }));
     await kv.put(UserKeys.bots(OWNER), JSON.stringify({ bots: [{ botId: BOT, role: 'owner' }], currentBotId: BOT }));
     await kv.put(BotKeys.owner(BOT), OWNER);
-    await kv.put(BotKeys.member(BOT, CUSTOMER), JSON.stringify({ memberId: CUSTOMER, tags: [] }));
+    await kv.put(BotKeys.member(BOT, CUSTOMER), JSON.stringify({ memberId: CUSTOMER, tags: [], botIds: [BOT] })); // webhook 建立的會員才有 botIds
 });
 afterEach(() => {
     globalThis.fetch = originalFetch;
@@ -304,6 +304,17 @@ describe('POST /bridge/v1/identity/verify（確認 Login channel 與 OA 同一�
         assert.equal(new URLSearchParams(verifyCall.body).get('client_id'), CHANNEL_ID);
     });
 
+    it('名單污染：手動寫入同名會員（沒有 botIds）不能讓驗證通過；webhook 建立的才算', async () => {
+        await saveChannel();
+        // 低權限成員用 /member/save 寫進一筆「外部 Provider 的 sub」當會員 → 沒有 botIds
+        await kv.put(BotKeys.member(BOT, STRANGER), JSON.stringify({ memberId: STRANGER, source: 'webhook', tags: [] }));
+        const poisoned = await verifyAs(STRANGER);
+        assert.equal(poisoned.res.status, 400);
+        assert.equal((await asOwner('GET', '/bridge/v1/admin/identity')).body.verified, false);
+        await kv.put(BotKeys.member(BOT, STRANGER), JSON.stringify({ memberId: STRANGER, botIds: [BOT2] }));
+        assert.equal((await verifyAs(STRANGER)).res.status, 400, '別的 OA 的 botIds 不算');
+    });
+
     it('不是會員（可能是不同 Provider）→ 400 說明怎麼處理，不記錄驗證', async () => {
         await saveChannel();
         const r = await verifyAs(STRANGER);
@@ -313,12 +324,13 @@ describe('POST /bridge/v1/identity/verify（確認 Login channel 與 OA 同一�
         assert.equal((await asOwner('GET', '/bridge/v1/admin/identity')).body.verified, false);
     });
 
-    it('ID token 無效／過期／aud 不符 → 401 INVALID_KEY；LINE 暫時掛了 → 502', async () => {
+    it('ID token 無效／過期／aud 不符 → 404（與「未設定」同一個回應，不洩漏這個 OA 有設定）；LINE 暫時掛了 → 502', async () => {
+        const unconfigured = await call('POST', '/bridge/v1/identity/verify', { body: { bot_id: BOT, id_token: 'tok:bad' } });
         await saveChannel();
         for (const t of ['tok:bad', 'tok:expired', 'tok:wrongaud', 'garbage']) {
             const r = await call('POST', '/bridge/v1/identity/verify', { body: { bot_id: BOT, id_token: t } });
-            assert.equal(r.res.status, 401, t);
-            assert.equal(errCode(r), 'INVALID_KEY');
+            assert.equal(r.res.status, 404, t);
+            assert.equal(r.text, unconfigured.text, '已設定與未設定的回應必須相同');
         }
         lineFail = { verify: 503 };
         assert.equal((await verifyAs(CUSTOMER)).res.status, 502);
@@ -428,15 +440,48 @@ describe('POST /bridge/v1/identity/exchange', () => {
         assert.equal(await count(d1.db, 'identity_codes'), 0);
     });
 
-    it('ID token 無效／過期／aud 不符 → 401（不發碼）；LINE 暫時掛了 → 502', async () => {
+    it('ID token 無效／過期／aud 不符 → 404（不發碼，與未啟用同一個回應）；LINE 暫時掛了 → 502', async () => {
         await ready();
+        const baseline = await exchange({ p: 'zz' });
         for (const t of ['tok:bad', 'tok:expired', 'tok:wrongaud']) {
             const r = await call('POST', '/bridge/v1/identity/exchange', { body: { bot_id: BOT, id_token: t, p: 'ip' } });
-            assert.equal(r.res.status, 401, t);
+            assert.equal(r.res.status, 404, t);
+            assert.equal(r.text, baseline.text);
         }
         lineFail = { verify: 500 };
         assert.equal((await exchange()).res.status, 502);
         assert.equal(await count(d1.db, 'identity_codes'), 0);
+    });
+
+    it('每 bot 的桶只在 ID token 驗證成功後才計：垃圾請求擠不掉正常客人；限流計數在 D1（原子）', async () => {
+        await ready(); // 內含一次成功的 verify，會先計一格
+        const botCount = async () => (await all(d1.db, "SELECT n FROM counters WHERE scope_key LIKE 'idpub:bot:%'")).reduce((sum, r) => sum + r.n, 0);
+        const baseline = await botCount();
+        for (let i = 0; i < 5; i++) {
+            await call('POST', '/bridge/v1/identity/exchange', { headers: { 'CF-Connecting-IP': `203.0.113.${i + 1}` }, body: { bot_id: BOT, id_token: 'tok:bad', p: 'ip' } });
+        }
+        assert.equal(await botCount(), baseline, '垃圾請求不該計入每 bot 的桶');
+        assert.equal((await exchange()).res.status, 200);
+        assert.equal(await botCount(), baseline + 1);
+        const ipRows = await all(d1.db, "SELECT scope_key FROM counters WHERE scope_key LIKE 'idpub:ip:%'");
+        assert.ok(ipRows.length >= 5);
+        assert.ok(ipRows.every((r) => !r.scope_key.includes('203.0.113')), 'IP 只以雜湊進計數鍵');
+    });
+
+    it('並發：同時送出遠超過上限的請求，放行數不超過上限（D1 原子計數）', async () => {
+        await ready();
+        const realNow = Date.now;
+        const pinned = Math.floor(realNow() / 60000) * 60000 + 20000;
+        Date.now = () => pinned;
+        try {
+            const results = await Promise.all(Array.from({ length: 45 }, () =>
+                call('POST', '/bridge/v1/identity/exchange', { body: { bot_id: BOT, id_token: 'tok:bad', p: 'ip' } })));
+            const limited = results.filter((r) => r.res.status === 429).length;
+            assert.ok(results.length - limited <= 30, `放行 ${results.length - limited} 次，超過每 IP 每分鐘 30 次的上限`);
+            assert.ok(limited >= 15);
+        } finally {
+            Date.now = realNow;
+        }
     });
 
     it('限流：每 IP 每分鐘 30 次，超過 → 429 + Retry-After', async () => {
