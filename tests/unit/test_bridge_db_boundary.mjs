@@ -119,6 +119,32 @@ describe('LM-3A：LINE userId 不外流', () => {
         assert.match(code(join(SRC, 'bridge', 'segments.js')), /listSegmentRecipients/);
     });
 
+    it('LM-4B：getBoundContactByUser、getEventTarget（含密文密鑰）只有 events.js 在用；event_secret_enc 只在 db.js 與 events 相關檔案出現', () => {
+        for (const f of walk(SRC)) {
+            if (f.endsWith('/bridge/db.js') || f.endsWith('/bridge/events.js')) continue;
+            assert.doesNotMatch(code(f), /getBoundContactByUser|getEventTarget/, relative(ROOT, f));
+        }
+        assert.match(code(join(SRC, 'bridge', 'events.js')), /getBoundContactByUser/);
+        // 密文密鑰的欄位名只准出現在 db.js；links.js 只經 sealEventSecret 寫入，不讀出
+        for (const f of walk(SRC)) {
+            if (f.endsWith('/bridge/db.js')) continue;
+            assert.doesNotMatch(code(f), /event_secret_enc/, relative(ROOT, f));
+        }
+    });
+
+    it('LM-4B：events.js 把 LINE userId 只用在 WHERE／限流雜湊，不放進請求、稽核或 log', () => {
+        const src = code(join(SRC, 'bridge', 'events.js'));
+        // 送出去的本文由固定欄位組成
+        const bodyStart = src.indexOf('const body = JSON.stringify({');
+        const bodyEnd = src.indexOf('});', bodyStart);
+        assert.doesNotMatch(src.slice(bodyStart, bodyEnd), /lineUserId|userId|replyToken|webhookEventId/);
+        // audit() 與 console.* 的呼叫都不帶 userId／replyToken
+        for (const m of src.matchAll(/(?:audit\(env, \{|console\.\w+\()[^;]*;/g)) {
+            assert.doesNotMatch(m[0], /lineUserId|replyToken/, m[0]);
+        }
+        assert.doesNotMatch(src, /replyToken/);
+    });
+
     it('getContactForSend 只有 notify.js 在用（其他 bridge 檔案與 LM 核心都不用）', () => {
         for (const f of walk(SRC)) {
             if (f.endsWith('/bridge/db.js') || f.endsWith('/bridge/notify.js')) continue;

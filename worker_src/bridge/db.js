@@ -299,6 +299,8 @@ function rowToProduct(row) {
     disabled: row.disabled === 1,
     createdAt: row.created_at,
     productKey: row.product_key ?? null,
+    eventUrl: row.event_url ?? null,
+    eventSecretEnc: row.event_secret_enc ?? null,
   };
 }
 
@@ -307,15 +309,15 @@ function rowToProduct(row) {
  *
  * @returns {Promise<{created: true} | {created: false, conflict: true}>}
  */
-export async function createProduct(env, { productId, name, secretHash, redirectUris, urlDomains, scopes, productKey = null, now = Date.now() }) {
+export async function createProduct(env, { productId, name, secretHash, redirectUris, urlDomains, scopes, productKey = null, eventUrl = null, eventSecretEnc = null, now = Date.now() }) {
   return withDb(env, async (db) => {
     try {
       await db
         .prepare(
-          `INSERT INTO products (product_id, name, secret_hash, redirect_uris, url_domains, scopes, disabled, created_at, product_key)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8)`
+          `INSERT INTO products (product_id, name, secret_hash, redirect_uris, url_domains, scopes, disabled, created_at, product_key, event_url, event_secret_enc)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, ?9, ?10)`
         )
-        .bind(productId, name, secretHash, JSON.stringify(redirectUris), JSON.stringify(urlDomains ?? []), JSON.stringify(scopes), now, productKey)
+        .bind(productId, name, secretHash, JSON.stringify(redirectUris), JSON.stringify(urlDomains ?? []), JSON.stringify(scopes), now, productKey, eventUrl, eventSecretEnc)
         .run();
     } catch (err) {
       const msg = String(err && err.message);
@@ -328,21 +330,22 @@ export async function createProduct(env, { productId, name, secretHash, redirect
 }
 
 /**
- * 營運更新產品（LM-4D）：product_key 只能從 NULL 設一次（同值視為冪等），scopes 由呼叫端確保只增不減。
+ * 營運更新產品（LM-4D；LM-4B 加 event_url 與 event_secret_enc，只覆蓋有給的欄位）：product_key 只能從 NULL 設一次（同值視為冪等），scopes 由呼叫端確保只增不減。
  * product_key 撞到別的產品 → {updated:false, keyTaken:true}；已有不同的 product_key → {updated:false, keyLocked:true}。
  *
  * @returns {Promise<{updated: true} | {updated: false, keyTaken?: true, keyLocked?: true, notFound?: true}>}
  */
-export async function updateProduct(env, { productId, productKey, scopes }) {
+export async function updateProduct(env, { productId, productKey, scopes, eventUrl, eventSecretEnc }) {
   return withDb(env, async (db) => {
     let res;
     try {
       res = await db
         .prepare(
-          `UPDATE products SET product_key = COALESCE(product_key, ?2), scopes = COALESCE(?3, scopes)
+          `UPDATE products SET product_key = COALESCE(product_key, ?2), scopes = COALESCE(?3, scopes),
+                 event_url = COALESCE(?4, event_url), event_secret_enc = COALESCE(?5, event_secret_enc)
             WHERE product_id = ?1 AND (?2 IS NULL OR product_key IS NULL OR product_key = ?2)`
         )
-        .bind(productId, productKey ?? null, scopes ? JSON.stringify(scopes) : null)
+        .bind(productId, productKey ?? null, scopes ? JSON.stringify(scopes) : null, eventUrl ?? null, eventSecretEnc ?? null)
         .run();
     } catch (err) {
       if (/UNIQUE constraint failed/i.test(String(err && err.message))) return { updated: false, keyTaken: true };
@@ -354,10 +357,18 @@ export async function updateProduct(env, { productId, productKey, scopes }) {
   });
 }
 
-/** @returns {Promise<null | {productId: string, name: string, secretHash: string, redirectUris: string[], urlDomains: string[], scopes: string[], disabled: boolean, createdAt: number}>} */
+/** @returns {Promise<null | {productId: string, name: string, secretHash: string, redirectUris: string[], urlDomains: string[], scopes: string[], disabled: boolean, createdAt: number, productKey: string|null, eventUrl: string|null, eventSecretEnc: string|null}>} */
 export async function getProduct(env, productId) {
   return withDb(env, async (db) => {
-    const row = await db.prepare("SELECT product_id, name, secret_hash, redirect_uris, url_domains, scopes, disabled, created_at, product_key FROM products WHERE product_id = ?1").bind(productId).first();
+    const row = await db.prepare("SELECT product_id, name, secret_hash, redirect_uris, url_domains, scopes, disabled, created_at, product_key, event_url, event_secret_enc FROM products WHERE product_id = ?1").bind(productId).first();
+    return row ? rowToProduct(row) : null;
+  });
+}
+
+/** @returns {Promise<null | object>} 同 getProduct，以 product_key 查 */
+export async function getProductByKey(env, productKey) {
+  return withDb(env, async (db) => {
+    const row = await db.prepare("SELECT product_id, name, secret_hash, redirect_uris, url_domains, scopes, disabled, created_at, product_key, event_url, event_secret_enc FROM products WHERE product_key = ?1").bind(productKey).first();
     return row ? rowToProduct(row) : null;
   });
 }
@@ -926,6 +937,107 @@ export async function listUserSegments(env, { botId, lineUserId }) {
   });
 }
 
+// ── 事件轉發（LM-4B，migration 0006）──
+
+/**
+ * 這個 bot 上、product_key 對應的 active 連結與產品（轉發的對象）。找不到 → null。
+ * 回傳含密文的簽章密鑰，只給 events.js 解開使用，不得放進回應、audit 或 log。
+ *
+ * @returns {Promise<null | {linkId: string, productId: string, linkScopes: string[], productDisabled: boolean, urlDomains: string[], eventUrl: string|null, eventSecretEnc: string|null}>}
+ */
+export async function getEventTarget(env, { botId, productKey }) {
+  return withDb(env, async (db) => {
+    const row = await db
+      .prepare(
+        `SELECT l.link_id AS link_id, l.scopes AS link_scopes, p.product_id AS product_id, p.disabled AS disabled,
+                p.url_domains AS url_domains, p.event_url AS event_url, p.event_secret_enc AS event_secret_enc
+           FROM links l JOIN products p ON p.product_id = l.product_id
+          WHERE l.bot_id = ?1 AND l.status = 'active' AND p.product_key = ?2
+          LIMIT 1`
+      )
+      .bind(botId, productKey)
+      .first();
+    if (!row) return null;
+    const list = (t) => { const v = parseJson(t, []); return Array.isArray(v) ? v : []; };
+    return {
+      linkId: row.link_id,
+      productId: row.product_id,
+      linkScopes: list(row.link_scopes),
+      productDisabled: row.disabled === 1,
+      urlDomains: list(row.url_domains),
+      eventUrl: row.event_url ?? null,
+      eventSecretEnc: row.event_secret_enc ?? null,
+    };
+  });
+}
+
+/**
+ * 這位 LINE 使用者在「這條連結」下已綁定的聯絡人（轉發時帶 contact 用）。
+ * line_user_id 只當 WHERE 條件；回傳只有 ref 與狀態。
+ *
+ * @returns {Promise<null | {ref: string, status: string}>}
+ */
+export async function getBoundContactByUser(env, { linkId, botId, lineUserId }) {
+  return withDb(env, async (db) => {
+    const row = await db
+      .prepare(
+        `SELECT external_contact_ref AS ref, status FROM contacts
+          WHERE link_id = ?1 AND bot_id = ?2 AND line_user_id = ?3 AND status = 'bound'
+          ORDER BY bound_at DESC LIMIT 1`
+      )
+      .bind(linkId, botId, lineUserId)
+      .first();
+    return row ? { ref: row.ref, status: row.status } : null;
+  });
+}
+
+/** @returns {Promise<null | object>} 備用內容（已解析的 Notification）；沒有或壞掉 → null */
+export async function getEventFallback(env, { botId, productKey, action }) {
+  return withDb(env, async (db) => {
+    const row = await db
+      .prepare("SELECT content FROM event_fallbacks WHERE bot_id = ?1 AND product_key = ?2 AND action = ?3")
+      .bind(botId, productKey, action)
+      .first();
+    if (!row) return null;
+    const v = parseJson(row.content, null);
+    return v && typeof v === "object" ? v : null;
+  });
+}
+
+/** @returns {Promise<{action: string, content: object}[]>} */
+export async function listEventFallbacks(env, { botId, productKey }) {
+  return withDb(env, async (db) => {
+    const { results } = await db
+      .prepare("SELECT action, content FROM event_fallbacks WHERE bot_id = ?1 AND product_key = ?2 ORDER BY action LIMIT 200")
+      .bind(botId, productKey)
+      .all();
+    return results.map((r) => ({ action: r.action, content: parseJson(r.content, null) })).filter((r) => r.content);
+  });
+}
+
+export async function putEventFallback(env, { botId, productKey, action, content, now = Date.now() }) {
+  return withDb(env, async (db) => {
+    await db
+      .prepare(
+        `INSERT INTO event_fallbacks (bot_id, product_key, action, content, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT (bot_id, product_key, action) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`
+      )
+      .bind(botId, productKey, action, JSON.stringify(content), now)
+      .run();
+  });
+}
+
+/** @returns {Promise<boolean>} 有刪到 → true */
+export async function deleteEventFallback(env, { botId, productKey, action }) {
+  return withDb(env, async (db) => {
+    const res = await db
+      .prepare("DELETE FROM event_fallbacks WHERE bot_id = ?1 AND product_key = ?2 AND action = ?3")
+      .bind(botId, productKey, action)
+      .run();
+    return res.meta.changes > 0;
+  });
+}
+
 // ── 原子計數與旗標（M-01／M-02，migration 0004）──
 //
 // 缺 counters／flags 表（只套用到 0003）→ 查詢失敗 → BridgeDbError，呼叫端 fail-closed（不放行）。
@@ -1113,7 +1225,7 @@ export async function releaseIdempotency(env, { botId, system, keyHash }) {
 
 // ── 稽核 ──
 
-const COUNT_FIELDS = ["recipients", "messages", "cost", "status", "count"];
+const COUNT_FIELDS = ["recipients", "messages", "cost", "status", "count", "latency_ms"];
 const CODE_RE = /^[a-z0-9_]{1,64}$/;
 const NAME_RE = /^[A-Za-z]{1,32}$/;
 const SCOPE_RE = /^[a-z]{1,32}:[a-z]{1,32}$/;
@@ -1139,6 +1251,9 @@ function sanitizeDetail(detail) {
   if (typeof detail.error === "string" && CODE_RE.test(detail.error)) out.error = detail.error;
   if (typeof detail.disabled === "boolean") out.disabled = detail.disabled;
   if (typeof detail.cleared === "boolean") out.cleared = detail.cleared;
+  if (typeof detail.outcome === "string" && CODE_RE.test(detail.outcome)) out.outcome = detail.outcome;
+  if (typeof detail.event_id === "string" && /^evt_[0-9a-f]{32}$/.test(detail.event_id)) out.event_id = detail.event_id;
+  if (typeof detail.event_action === "string" && /^[a-z][a-z0-9_.-]{0,31}$/.test(detail.event_action)) out.event_action = detail.event_action;
   for (const [k, re] of [["product_id", PRODUCT_ID_RE], ["link_id", LINK_ID_RE], ["error_code", ERROR_CODE_RE], ["message_id", MESSAGE_ID_RE]]) {
     const v = detail[k];
     if (typeof v === "string" && re.test(v)) out[k] = v;

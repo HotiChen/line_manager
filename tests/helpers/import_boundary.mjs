@@ -20,9 +20,9 @@ import path from 'node:path';
 export const BRIDGE_DIR = 'worker_src/bridge';
 export const COMPOSITION_ROOT = 'worker_src/index.js';
 
-/** LM 側檔案中，獲准 import 的 bridge 模組（LM-3A：webhook 事件處理單向呼叫 binding.js；eslint.config.js 有同一份清單） */
+/** LM 側檔案中，獲准 import 的 bridge 模組（LM-3A：webhook 事件處理單向呼叫 binding.js；LM-4B：再加 events.js；eslint.config.js 有同一份清單） */
 export const LM_SIDE_BRIDGE_ALLOWED = {
-    'worker_src/lib/event_handler.js': ['worker_src/bridge/binding.js'],
+    'worker_src/lib/event_handler.js': ['worker_src/bridge/binding.js', 'worker_src/bridge/events.js'],
 };
 
 /** Bridge 可以 import 的非兄弟檔（相對 repo 根目錄） */

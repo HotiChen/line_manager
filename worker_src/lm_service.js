@@ -18,6 +18,7 @@ import { authenticate } from "./middleware/auth.js";
 import { rateLimitMiddleware } from "./middleware/rate_limiter.js";
 import { BotKeys, UserKeys } from "./lib/kv_schema.js";
 import { syncMemberRichMenu } from "./lib/segmented_richmenu_logic.js";
+import { encryptToken, decryptToken, isEncrypted } from "./lib/token_crypto.js";
 
 /** owner-only 路由用的權限包裝（原樣轉出 middleware/permission.js 的實作） */
 export { withPermission } from "./middleware/permission.js";
@@ -72,6 +73,35 @@ export async function markMemberInactive(env, botId, lineUserId) {
   } catch (err) {
     // 標記是盡力而為，不可讓它把 409 變成 500
     console.error("[lm_service] markMemberInactive failed:", err && err.message);
+  }
+}
+
+/**
+ * LM-4B：加密一個需要日後取回明文的密鑰（事件簽章密鑰）。用 LM 保存 OA token 的同一把金鑰（TOKEN_ENCRYPTION_KEY）。
+ * 缺金鑰時丟錯（呼叫端 fail-closed），絕不降級存明文。
+ *
+ * @param {Object} env
+ * @param {string} plaintext
+ * @returns {Promise<string>} `enc.v1.…`
+ */
+export async function sealSecret(env, plaintext) {
+  return encryptToken(env, plaintext);
+}
+
+/**
+ * LM-4B：解開 sealSecret 的密文。不是密文（明文、空值、壞資料）、缺金鑰、驗證失敗一律回 null —— 不放行明文。
+ *
+ * @param {Object} env
+ * @param {unknown} stored
+ * @returns {Promise<string|null>}
+ */
+export async function openSecret(env, stored) {
+  try {
+    if (!isEncrypted(stored)) return null;
+    return await decryptToken(env, stored);
+  } catch (err) {
+    console.error("[lm_service] openSecret failed:", err && err.message);
+    return null;
   }
 }
 

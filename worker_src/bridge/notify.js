@@ -36,13 +36,17 @@ import { json, rateLimited, isoOrNull } from "./links.js";
 import { NOTIFY_PATH } from "./routes.js";
 import { retryKeyFor } from "./retry_key.js";
 import { checkQuota, recordUsage, markExhausted } from "./quota.js";
-import { CONTACT_REF_RE } from "./contacts.js";
+import { checkActionUrl, validateNotification, buildFlexMessage } from "./content.js";
+
 import {
   BridgeDbError, getProduct, getContactForSend, markContactsBlockedByUser,
   claimIdempotency, completeIdempotency, releaseIdempotency, writeAudit,
   takeToken, giveBackTokens, claimFlag,
 } from "./db.js";
 import { blockAndClearSegments } from "./segments.js";
+
+// 驗證與組裝已搬到 content.js（LM-4B 的事件回覆共用）；這裡轉出，既有的 import 與測試不變
+export { checkActionUrl, validateNotification, buildFlexMessage };
 
 export const LINK_RATE_LIMIT = { limit: 60, windowSec: 60 };
 export const CONTACT_RATE_LIMIT = { limit: 10, windowSec: 3600 };
@@ -53,29 +57,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const MAX_BODY_CHARS = 20_000;
 const MAX_IDEM_KEY_LENGTH = 128;
-const MAX_TITLE = 40;
-const MAX_BODY = 300;
-const MAX_LABEL = 20;
-const MAX_URL = 1000;
-const ALT_TEXT_MAX = 400;
-const EVENT_TYPE_RE = /^[a-z][a-z0-9_.]{0,63}$/;
-const HOSTNAME_RE = /^[a-z0-9-]+(?:\.[a-z0-9-]+)*$/;
-const IPV4_RE = /^\d{1,3}(?:\.\d{1,3}){3}$/;
-const ALLOWED_FIELDS = ["external_contact_ref", "event_type", "title", "body", "action"];
-const REQUIRED_FIELDS = ["external_contact_ref", "event_type", "title", "body"];
-// eslint-disable-next-line no-control-regex
-const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
-// eslint-disable-next-line no-control-regex
-const CONTROL_EXCEPT_NEWLINE_RE = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u2028\u2029]/;
-// eslint-disable-next-line no-control-regex
-const URL_FORBIDDEN_RE = /[\s\u0000-\u001f\u007f-\u009f]/;
-
 const invalidRequest = (message) => bridgeError("INVALID_REQUEST", message);
 const unavailable = () => bridgeError("INTERNAL", "bridge_not_configured", { status: 503 });
-
-const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
-/** 以 code point 計長度（emoji 算 1 個字元，與 LINE 的計法一致） */
-const charLength = (s) => Array.from(s).length;
 
 // ── 發送預算 ──
 
@@ -145,134 +128,6 @@ async function noteUsageHigh(env, principal, t) {
   } catch (err) {
     console.error("[Notify] usage_high failed:", err && err.message);
   }
-}
-
-// ── 驗證 ──
-
-/**
- * action.url 白名單。通過條件全部成立：https、無帳號密碼、長度 ≤ 1000、無空白與控制字元、埠為空或 443、
- * 主機名稱不是 IP／localhost，且（小寫、去尾端點後）等於某個登記網域或是它的子網域。
- *
- * @param {unknown} raw
- * @param {unknown} urlDomains 產品登記的 url_domains
- * @returns {{ok: true, url: string} | {ok: false}} ok 時 url 是正規化後的網址（真正送給 LINE 的就是它）
- */
-export function checkActionUrl(raw, urlDomains) {
-  const fail = { ok: false };
-  if (typeof raw !== "string" || raw === "" || raw.length > MAX_URL || URL_FORBIDDEN_RE.test(raw)) return fail;
-  let u;
-  try {
-    u = new URL(raw);
-  } catch {
-    return fail;
-  }
-  if (u.protocol !== "https:" || u.username !== "" || u.password !== "") return fail;
-  if (u.port !== "" && u.port !== "443") return fail;
-  if (u.href.length > MAX_URL) return fail;
-
-  let host = u.hostname.toLowerCase();
-  if (host.endsWith(".")) host = host.slice(0, -1);
-  if (host === "" || host.startsWith("[") || !HOSTNAME_RE.test(host)) return fail; // IPv6、空標籤
-  if (IPV4_RE.test(host) || /^\d+$/.test(host.split(".").pop())) return fail; // IPv4（含 URL 正規化後的怪寫法）
-  if (host === "localhost" || host.endsWith(".localhost")) return fail;
-
-  const domains = Array.isArray(urlDomains) ? urlDomains : [];
-  const matched = domains.some((d) => {
-    if (typeof d !== "string") return false;
-    const domain = d.toLowerCase().replace(/\.$/, "");
-    return domain !== "" && (host === domain || host.endsWith(`.${domain}`));
-  });
-  return matched ? { ok: true, url: u.href } : fail;
-}
-
-const hasLink = (s) => {
-  const lower = s.toLowerCase();
-  return lower.includes("http://") || lower.includes("https://");
-};
-
-function validateText(name, value, max, { allowNewline = false } = {}) {
-  if (typeof value !== "string") return `${name} must be a string`;
-  const len = charLength(value);
-  if (len < 1 || len > max) return `${name} must be 1-${max} characters`;
-  if (value.trim() === "") return `${name} must not be blank`;
-  if ((allowNewline ? CONTROL_EXCEPT_NEWLINE_RE : CONTROL_RE).test(value)) return `${name} must not contain control characters`;
-  if (hasLink(value)) return `${name} must not contain links; put the URL in action.url`;
-  return null;
-}
-
-/**
- * 驗證請求本體（不含網址白名單）。
- *
- * @param {unknown} body
- * @returns {{error: string} | {value: {ref: string, eventType: string, title: string, body: string, action: null | {label: string, url: string}}}}
- */
-export function validateNotification(body) {
-  if (!isPlainObject(body)) return { error: "Body must be a JSON object" };
-  for (const k of Object.keys(body)) {
-    if (!ALLOWED_FIELDS.includes(k)) return { error: `Unknown field: ${k.slice(0, 40)}` };
-  }
-  for (const k of REQUIRED_FIELDS) {
-    if (body[k] === undefined) return { error: `${k} is required` };
-  }
-  if (typeof body.external_contact_ref !== "string" || !CONTACT_REF_RE.test(body.external_contact_ref)) {
-    return { error: "external_contact_ref must match ^[A-Za-z0-9_-]{8,64}$" };
-  }
-  if (typeof body.event_type !== "string" || !EVENT_TYPE_RE.test(body.event_type)) {
-    return { error: "event_type must match ^[a-z][a-z0-9_.]{0,63}$" };
-  }
-  const titleErr = validateText("title", body.title, MAX_TITLE);
-  if (titleErr) return { error: titleErr };
-  const bodyErr = validateText("body", body.body, MAX_BODY, { allowNewline: true });
-  if (bodyErr) return { error: bodyErr };
-
-  let action = null;
-  if (body.action !== undefined) {
-    const a = body.action;
-    if (!isPlainObject(a)) return { error: "action must be an object" };
-    for (const k of Object.keys(a)) {
-      if (k !== "label" && k !== "url") return { error: `Unknown field: action.${k.slice(0, 40)}` };
-    }
-    const labelErr = validateText("action.label", a.label, MAX_LABEL);
-    if (labelErr) return { error: labelErr };
-    if (typeof a.url !== "string" || a.url === "") return { error: "action.url must be a non-empty string" };
-    action = { label: a.label, url: a.url };
-  }
-
-  return { value: { ref: body.external_contact_ref, eventType: body.event_type, title: body.title, body: body.body, action } };
-}
-
-// ── 訊息組裝（LM 專屬，產品不能帶 message object）──
-
-/**
- * 固定外觀的 Flex bubble：標題（粗體）、內文、（有 action 時）一顆按鈕。
- * 使用者文字只進 `text`／`label`（LINE 不解析成標記）與 altText（= 標題）；網址只進 uri action。
- *
- * @param {{title: string, body: string, action: null | {label: string, url: string}}} content url 必須已通過 checkActionUrl
- * @returns {object} LINE flex message object
- */
-export function buildFlexMessage({ title, body, action }) {
-  const bubble = {
-    type: "bubble",
-    body: {
-      type: "box",
-      layout: "vertical",
-      spacing: "md",
-      contents: [
-        { type: "text", text: title, weight: "bold", size: "lg", wrap: true },
-        { type: "text", text: body, size: "md", wrap: true },
-      ],
-    },
-  };
-  if (action) {
-    bubble.footer = {
-      type: "box",
-      layout: "vertical",
-      contents: [
-        { type: "button", style: "primary", height: "sm", action: { type: "uri", label: action.label, uri: action.url } },
-      ],
-    };
-  }
-  return { type: "flex", altText: title.slice(0, ALT_TEXT_MAX), contents: bubble };
 }
 
 // ── 小工具 ──

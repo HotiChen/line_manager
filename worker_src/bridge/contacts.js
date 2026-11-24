@@ -31,9 +31,10 @@ import { withLink } from "./auth.js";
 import { json, noContent, rateLimited, readJsonBody, isoOrNull } from "./links.js";
 import { generateBindCode, formatBindCode, BIND_CODE_TTL_MS } from "./binding.js";
 import { BridgeDbError, createBindCode, getContactSnapshot, deleteContact, writeAudit, getProduct, setContactSegment } from "./db.js";
+import { CONTACT_REF_RE } from "./content.js";
 import { SEGMENT_RE, defer, captureContactRecipients, refreshRecipients } from "./segments.js";
 
-export const CONTACT_REF_RE = /^[A-Za-z0-9_-]{8,64}$/;
+export { CONTACT_REF_RE };
 const BIND_TOKEN_RATE_LIMIT = { limit: 30, windowSec: 60 };
 const SEGMENT_RATE_LIMIT = { limit: 60, windowSec: 60 };
 const MAX_CODE_ATTEMPTS = 3;

@@ -10,7 +10,7 @@ import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTestD1, readMigrations, splitStatements } from '../helpers/mock_d1.mjs';
 
-const ALL_TABLES = ['audit_log', 'auth_codes', 'bind_codes', 'contacts', 'counters', 'flags', 'idempotency', 'links', 'products', 'service_keys', 'systems'];
+const ALL_TABLES = ['audit_log', 'auth_codes', 'bind_codes', 'contacts', 'counters', 'event_fallbacks', 'flags', 'idempotency', 'links', 'products', 'service_keys', 'systems'];
 
 let d1;
 before(async () => { d1 = await createTestD1(); });
@@ -32,7 +32,7 @@ describe('遷移檔', () => {
         assert.deepEqual(files, [...files].sort());
     });
 
-    it('建立計畫書的十一張表（0001 的四張＋0002 的 products、links、auth_codes＋0003 的 bind_codes、contacts＋0004 的 counters、flags）', async () => {
+    it('建立計畫書的十二張表（0001 的四張＋0002 的 products、links、auth_codes＋0003 的 bind_codes、contacts＋0004 的 counters、flags＋0006 的 event_fallbacks）', async () => {
         assert.deepEqual(await names('table'), ALL_TABLES);
     });
 
@@ -268,6 +268,49 @@ describe('0005 遷移（LM-4D 分眾、product_key）', () => {
             const cols = async (t) => (await old.db.prepare(`PRAGMA table_info(${t})`).all()).results.map((c) => c.name);
             assert.ok(!(await cols('contacts')).includes('segment'));
             assert.ok(!(await cols('products')).includes('product_key'));
+        } finally {
+            await old.dispose();
+        }
+    });
+});
+
+describe('0006 遷移（LM-4B 事件轉發）', () => {
+    const file = () => readMigrations().find((m) => m.name === '0006_bridge_events.sql');
+
+    it('存在、沒有 IF NOT EXISTS；重複套用每一句都失敗且不影響資料', async () => {
+        assert.ok(file(), '缺 0006_bridge_events.sql');
+        assert.doesNotMatch(file().sql, /IF NOT EXISTS/i);
+        await d1.db.prepare("INSERT INTO event_fallbacks (bot_id, product_key, action, content, updated_at) VALUES ('b','ip','plans','{}',1)").run();
+        const stmts = splitStatements(file().sql);
+        assert.equal(stmts.length, 3);
+        for (const stmt of stmts) {
+            await assert.rejects(() => d1.db.prepare(stmt).run(), /already exists|duplicate column/i, stmt.slice(0, 40));
+        }
+        assert.equal((await d1.db.prepare('SELECT COUNT(*) AS n FROM event_fallbacks').first()).n, 1);
+    });
+
+    it('products.event_url、event_secret_enc 可為 NULL、預設 NULL', async () => {
+        await d1.db.prepare("INSERT INTO products (product_id, name, secret_hash, redirect_uris, scopes, created_at) VALUES ('p','n','h','[]','[]',1)").run();
+        const row = await d1.db.prepare('SELECT event_url, event_secret_enc FROM products').first();
+        assert.equal(row.event_url, null);
+        assert.equal(row.event_secret_enc, null);
+    });
+
+    it('event_fallbacks：(bot_id, product_key, action) 是主鍵；content、updated_at 不可為 NULL', async () => {
+        const ins = (a) => d1.db.prepare("INSERT INTO event_fallbacks (bot_id, product_key, action, content, updated_at) VALUES ('b','ip',?1,'{}',1)").bind(a).run();
+        await ins('plans');
+        await assert.rejects(() => ins('plans'), /UNIQUE constraint failed/i);
+        await ins('status');
+        await assert.rejects(() => d1.db.prepare("INSERT INTO event_fallbacks (bot_id, product_key, action) VALUES ('b','ip','x')").run(), /NOT NULL/i);
+    });
+
+    it('只套用到 0005 的資料庫沒有 event_url、event_fallbacks', async () => {
+        const old = await createTestD1({ upTo: '0005' });
+        try {
+            const cols = (await old.db.prepare('PRAGMA table_info(products)').all()).results.map((c) => c.name);
+            assert.ok(!cols.includes('event_url') && !cols.includes('event_secret_enc'));
+            const t = (await old.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = 'event_fallbacks'").all()).results;
+            assert.equal(t.length, 0);
         } finally {
             await old.dispose();
         }

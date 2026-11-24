@@ -24,6 +24,8 @@ import { getMemberTier, checkTierUpgrade } from './tier_system.js';
 import { openBotStoreFor } from './bot_store.js';
 // LM-3A 聯絡人綁定：單向呼叫 Bridge 的 binding.js（BRIDGE_ENABLED 不是 "1" 時它什麼都不做）
 import { tryConsumeBindCode, markBlocked, restoreFollow } from '../bridge/binding.js';
+// LM-4B 事件轉發：px: postback 單向呼叫 Bridge 的 events.js（BRIDGE_ENABLED 不是 "1" 時它什麼都不做）
+import { forwardPostback } from '../bridge/events.js';
 
 /**
  * 把 botId 併進會員的 botIds。
@@ -522,9 +524,18 @@ export async function handlePostbackEvent(event, env, userId, accessToken, ctx, 
                 if (route.action === 'menu') return await handleLmMenu(route, deps);
                 return auditPostback('lm_unknown_action', route);
             }
-            case 'px':
-                // 轉發在 LM-4B 才接上；備用內容的設定也在 4B 才有，所以現在一律不回覆
-                return auditPostback('not_forwarded', route);
+            case 'px': {
+                // LM-4B：轉給產品並同步 reply。replyToken 只在這裡用，不進 Bridge；forwardPostback 絕不丟錯
+                const forwarded = await forwardPostback(env, { botId, route, event });
+                if (forwarded.messages && forwarded.messages.length > 0) {
+                    await replyWithRetry(event.replyToken, forwarded.messages, accessToken);
+                    await incrementMessageCount(store, 'reply');
+                }
+                if (forwarded.outcome === 'not_forwarded' || forwarded.outcome === 'duplicate' || forwarded.outcome === 'rate_limited') {
+                    return auditPostback(forwarded.outcome, route);
+                }
+                return;
+            }
             case 'legacy':
                 return await applyLegacyPostbackTags(store, postbackData, lineUserId, accessToken);
             default:

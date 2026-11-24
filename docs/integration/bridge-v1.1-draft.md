@@ -51,6 +51,8 @@ LINE postback 的 `data` 上限為 300 字元。
 
 ## B. 事件轉發(同步回覆)
 
+> **狀態：已實作(LM-4B)，規格已搬進 `bridge-v1.yaml` 的 `x-lm-events`(1.1.0)。** 產品登記帶 `product_key`、`event_url`，簽章密鑰 `event_signing_secret` 只在登記或輪替時回一次；既有產品用 `PATCH /bridge/v1/admin/products/{id}` 補。備用內容用 `/bridge/v1/admin/event-fallbacks` 或後台「已連結的產品」頁設定。
+
 ### B.1 何時轉發(全部條件都要成立)
 1. 事件是 `postback`，`data` 符合 `px:<product_key>:…`；
 2. 來源是 1 對 1 聊天(`source.type = user`)；

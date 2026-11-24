@@ -19,7 +19,7 @@
 | **LM-4A** | postback 分流(`lm:`／`px:`／無前綴)、拿掉原始字串回覆 | 低 | 無 | ✅ 已實作，待真機驗收 |
 | **LM-4R** | Rich Menu 規則統一(標籤規則＋產品分眾，`tier` 不再綁 Rich Menu) | 中 | 無 | ✅(要先確認正式資料，見 4R) |
 | **LM-4D** | 客人分眾 API(`PUT /contacts/{ref}/segment`) | 中 | 4R | ✅ 已實作 |
-| **LM-4B** | 事件轉發(同步回覆、簽章、備用內容) | 高 | 4A | ✅(預設值見草案 Q2–Q5) |
+| **LM-4B** | 事件轉發(同步回覆、簽章、備用內容) | 高 | 4A | ✅ 已實作 |
 | **LM-4C** | LINE Login channel 設定、LIFF 自動建立、身分換 ref | 高 | 無 | ⚠️ 先查證 LINE 文件(草案 §C.4 標為未驗證) |
 
 建議順序：4A → 4R → 4D → 4B → 4C。每張工單一個分支、一個 PR。
@@ -73,6 +73,17 @@
 - **行為重點**：先回 LINE webhook `200`，轉發與 reply 在 `ctx.waitUntil` 內；`AbortController` 實作 2500 毫秒逾時(`BRIDGE_EVENT_TIMEOUT_MS`，500–5000)，逾時後丟棄晚到的回應、絕不 push 補送；依 `webhookEventId` 去重；每位使用者每條連結每分鐘 10 次；產品回應用 `/messages` 相同的驗證與 Flex 範本。
 - **測試**：轉發條件逐條；簽章格式與時間戳；逾時中止；`204`；非 JSON、超過 4 KB、驗證失敗都改送備用內容；`contact` 只在已綁定時出現；去重；限流；送給產品的本文和稽核都不含 userId、replyToken、原始 data。
 - **安全審查**：上線前做一次(對外呼叫、新密鑰)。
+- **實作紀錄**
+  - 遷移 `0006_bridge_events.sql`：`products.event_url`、`products.event_secret_enc`、新表 `event_fallbacks`。**先套用，再部署**；未套用時不轉發、營運端點回 503。
+  - 接縫：`lib/event_handler.js` 的 `px:` 分支呼叫 `bridge/events.js: forwardPostback`(邊界放行清單 +1)，回傳要 reply 的訊息，由 event_handler 用 replyToken 回覆(replyToken 不進 Bridge、不進稽核)。
+  - 簽章密鑰：`pes_` + 32 bytes，HMAC 需要明文 → AES-GCM 加密存 D1(`lm_service.sealSecret`／`openSecret`，用 `TOKEN_ENCRYPTION_KEY`)；缺金鑰或解不開 → 不轉發、不降級。
+  - 對外請求：只送 `event_url`(登記時驗證 https、主機在 `url_domains` 內)；`redirect: manual`(3xx 視為失敗)；回應 ≤ 4 KB；`BRIDGE_EVENT_TIMEOUT_MS`(500–5000，預設 2500)到時主動中止，晚到的回應丟棄、不 push 補送。
+  - 去重(`webhookEventId`，D1 旗標 10 分鐘)、限流(每連結每使用者每分鐘 10 次，靜默略過且不寫稽核)。
+  - 驗證抽成 `bridge/content.js`(`notify.js` 轉出，既有 import 不變)；reply 與備用內容共用，網址受 `url_domains` 限制。
+  - 備用內容：`/bridge/v1/admin/event-fallbacks`(GET／PUT／DELETE，LIFF＋owner)＋後台「已連結的產品」每個產品的「備用訊息」編輯器。
+  - 營運：`POST /admin/products` 可帶 `event_url`；`PATCH /admin/products/{id}` 可設 `event_url`、`rotate_event_secret`；`events:receive` 只增不減。
+  - 稽核 `event_forwarded`：outcome(replied／no_reply／fallback_timeout／fallback_error／fallback_invalid／not_forwarded)、event_id、link_id、product_id、動作名稱、延遲毫秒。
+  - 同一個 webhook 批次內事件依序處理：一個慢產品最多拖後面事件 2.5 秒。
 
 ### LM-4C　LINE 身分換 ref
 - **開工前**：查證 LINE 官方文件：LINE Login channel 的 access token API、LIFF Server API(`/liff/v1/apps`)、所需權限、每個 channel 的 LIFF 數量上限、如何確認 channel 和 OA 屬於同一個 Provider。結果寫回草案 §C.4，拿掉「未驗證」標記。

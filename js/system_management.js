@@ -15,7 +15,7 @@ import { toast } from '../helper/toast.js';
 import { showConfirm } from '../helper/modal.helper.js';
 import { apiBase } from '../helper/state.js';
 import { SCOPES, validateSystemId, buildCreatePayload, buildCurlExample, describeError } from '../helper/system_form.js';
-import { normalizeLinks, scopeShortLabel, formatIsoTime, describeLinkError } from '../helper/link_authorize_form.js';
+import { normalizeLinks, scopeShortLabel, formatIsoTime, describeLinkError, buildFallbackPayload, describeFallbackError } from '../helper/link_authorize_form.js';
 
 let botId = null;
 let busy = false;
@@ -183,33 +183,120 @@ async function loadSystems() {
 
 function renderLinkCard(link) {
   const active = link.status === 'active';
-  return h(
-    'div',
-    { class: 'col-12 col-lg-6' },
+  const body = h('div', { class: 'card-body' });
+  const root = h('div', { class: 'col-12 col-lg-6' }, h('div', { class: 'card shadow-sm border-0 h-100' }, body));
+  const canEditFallback = active && link.productKey && link.scopes.includes('events:receive');
+  body.append(
     h(
       'div',
-      { class: 'card shadow-sm border-0 h-100' },
-      h(
-        'div',
-        { class: 'card-body' },
-        h(
+      { class: 'd-flex justify-content-between align-items-start gap-2 mb-2' },
+      h('h5', { class: 'mb-0 text-break', style: 'min-width:0', text: link.productName }),
+      h('span', { class: `badge flex-shrink-0 ${active ? 'bg-success' : 'bg-secondary'}`, text: active ? '使用中' : '已撤銷' })
+    ),
+    h('div', { class: 'mb-2' }, link.scopes.map((s) => h('span', { class: 'badge bg-light text-dark border me-1 mb-1', text: scopeShortLabel(s) }))),
+    h('div', { class: 'text-muted small', text: `連結時間：${formatIsoTime(link.createdAt)}` }),
+    active ? null : h('div', { class: 'text-muted small', text: `撤銷時間：${formatIsoTime(link.revokedAt)}` }),
+    active
+      ? h(
           'div',
-          { class: 'd-flex justify-content-between align-items-start gap-2 mb-2' },
-          h('h5', { class: 'mb-0 text-break', style: 'min-width:0', text: link.productName }),
-          h('span', { class: `badge flex-shrink-0 ${active ? 'bg-success' : 'bg-secondary'}`, text: active ? '使用中' : '已撤銷' })
-        ),
-        h('div', { class: 'mb-2' }, link.scopes.map((s) => h('span', { class: 'badge bg-light text-dark border me-1 mb-1', text: scopeShortLabel(s) }))),
-        h('div', { class: 'text-muted small', text: `連結時間：${formatIsoTime(link.createdAt)}` }),
-        active ? null : h('div', { class: 'text-muted small', text: `撤銷時間：${formatIsoTime(link.revokedAt)}` }),
-        active
-          ? h(
-              'div',
-              { class: 'd-flex flex-wrap gap-2 mt-3' },
-              h('button', { type: 'button', class: 'btn btn-sm btn-outline-danger', text: '撤銷', onclick: (e) => revokeLink(link, e.currentTarget) })
+          { class: 'd-flex flex-wrap gap-2 mt-3' },
+          h('button', { type: 'button', class: 'btn btn-sm btn-outline-danger', text: '撤銷', onclick: (e) => revokeLink(link, e.currentTarget) }),
+          canEditFallback
+            ? h('button', { type: 'button', class: 'btn btn-sm btn-outline-secondary', text: '備用訊息', onclick: () => toggleFallbackEditor(link, body) })
+            : null
+        )
+      : null
+  );
+  return root;
+}
+
+// ── 事件備用訊息（LM-4B）──
+// 產品無法即時回應（逾時、錯誤、回應不合規定）時，LM 改送這裡設定的訊息；沒設定的動作送「目前無法查詢，請稍後再試」。
+// 只列出這個產品的 product_key 下已設定的動作；內容的最終驗證在伺服器端。
+
+async function loadFallbacks(link) {
+  const res = await call('GET', `/bridge/v1/admin/event-fallbacks?product_key=${encodeURIComponent(link.productKey)}`, null, { 'X-Bot-Id': botId });
+  if (!res.ok) return { error: describeFallbackError(res.status, res.data) };
+  const rows = res.data && Array.isArray(res.data.fallbacks) ? res.data.fallbacks : [];
+  return { rows: rows.filter((r) => r && typeof r.action === 'string' && r.content && typeof r.content === 'object') };
+}
+
+function toggleFallbackEditor(link, container) {
+  const existing = container.querySelector('[data-fallback-editor]');
+  if (existing) {
+    existing.remove();
+    return;
+  }
+  const editor = h('div', { class: 'border-top mt-3 pt-3', 'data-fallback-editor': '1' });
+  container.append(editor);
+  renderFallbackEditor(link, editor);
+}
+
+async function renderFallbackEditor(link, editor) {
+  editor.replaceChildren(h('div', { class: 'text-muted small', text: '載入中…' }));
+  const loaded = await loadFallbacks(link);
+  const field = (label, input) => h('div', { class: 'mb-2' }, h('label', { class: 'form-label small mb-1', text: label }), input);
+  const action = h('input', { class: 'form-control form-control-sm', placeholder: 'plans', maxlength: '32', autocomplete: 'off' });
+  const title = h('input', { class: 'form-control form-control-sm', maxlength: '40' });
+  const text = h('textarea', { class: 'form-control form-control-sm', rows: '3', maxlength: '300' });
+  const label = h('input', { class: 'form-control form-control-sm', maxlength: '20', placeholder: '（選填）按鈕文字' });
+  const url = h('input', { class: 'form-control form-control-sm', placeholder: '（選填）https://… 必須在產品登記的網域內', autocomplete: 'off' });
+  const fill = (row) => {
+    action.value = row.action;
+    title.value = row.content.title || '';
+    text.value = row.content.body || '';
+    label.value = (row.content.action && row.content.action.label) || '';
+    url.value = (row.content.action && row.content.action.url) || '';
+  };
+  const list = loaded.error
+    ? h('div', { class: 'text-danger small', text: loaded.error })
+    : h(
+        'div',
+        { class: 'mb-3' },
+        loaded.rows.length === 0 ? h('div', { class: 'text-muted small', text: '尚未設定。沒設定的動作會送「目前無法查詢，請稍後再試」。' }) : null,
+        loaded.rows.map((row) =>
+          h(
+            'div',
+            { class: 'd-flex justify-content-between align-items-center gap-2 small mb-1' },
+            h('span', { class: 'text-break', style: 'min-width:0', text: `${row.action}：${row.content.title || ''}` }),
+            h(
+              'span',
+              { class: 'flex-shrink-0' },
+              h('button', { type: 'button', class: 'btn btn-sm btn-link', text: '編輯', onclick: () => fill(row) }),
+              h('button', {
+                type: 'button', class: 'btn btn-sm btn-link text-danger', text: '刪除',
+                onclick: async () => {
+                  const res = await call('DELETE', `/bridge/v1/admin/event-fallbacks?product_key=${encodeURIComponent(link.productKey)}&action=${encodeURIComponent(row.action)}`, null, { 'X-Bot-Id': botId });
+                  if (!res.ok) return toast.error(describeFallbackError(res.status, res.data));
+                  toast.success('已刪除');
+                  renderFallbackEditor(link, editor);
+                },
+              })
             )
-          : null
-      )
-    )
+          )
+        )
+      );
+  editor.replaceChildren(
+    h('div', { class: 'fw-semibold small mb-2', text: '無法回應時的備用訊息' }),
+    list,
+    field('動作名稱（對應 Rich Menu 的 px:' + link.productKey + ':動作）', action),
+    field('標題', title),
+    field('內文', text),
+    field('按鈕文字', label),
+    field('按鈕網址', url),
+    h('button', {
+      type: 'button', class: 'btn btn-sm btn-primary', text: '儲存',
+      onclick: async (e) => {
+        const built = buildFallbackPayload({ productKey: link.productKey, action: action.value, title: title.value, body: text.value, label: label.value, url: url.value });
+        if (built.error) return toast.error(built.error);
+        e.currentTarget.disabled = true;
+        const res = await call('PUT', '/bridge/v1/admin/event-fallbacks', built.payload, { 'X-Bot-Id': botId });
+        e.currentTarget.disabled = false;
+        if (!res.ok) return toast.error(describeFallbackError(res.status, res.data));
+        toast.success('已儲存');
+        renderFallbackEditor(link, editor);
+      },
+    })
   );
 }
 

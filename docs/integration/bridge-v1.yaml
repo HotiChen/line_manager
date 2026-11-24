@@ -60,6 +60,33 @@ tags:
 security:
   - linkKey: []
 
+x-lm-events:
+  status: implemented
+  version: 1.1.0
+  description: |
+    事件轉發（v1.1，LM-4B）：這是 **LM 呼叫產品** 的介面，不是 LM 的端點，所以不在 `paths`。
+    客人按 Rich Menu 上的 `px:<product_key>:<action>[?query]` 時，若這個 OA 上有 active 連結、產品有 `events:receive` 與 `event_url`，
+    LM 對 `event_url` 發出 `POST`，產品在 `BRIDGE_EVENT_TIMEOUT_MS`（預設 2500 毫秒，範圍 500–5000）內同步回應。
+    需先套用遷移 0006（未套用時不轉發）。
+    請求標頭：`Content-Type: application/json`、`X-LM-Event-Id: evt_<32 hex>`、`X-LM-Timestamp: <unix 秒>`、
+    `X-LM-Signature: v1=<hex(HMAC-SHA256(event_signing_secret, "<timestamp>.<raw body>"))>`。
+    請求本文欄位見 `components.schemas.EventRequest`；**永遠不帶** LINE userId、顯示名稱、頭像、replyToken、原始 `data`。
+    `contact` 只在這位客人於「這條連結」已綁定時才有，否則為 `null`（只能回公開內容）。
+    產品必須：用常數時間比較驗證簽章、拒絕與現在相差超過 300 秒的 `X-LM-Timestamp`、用 `event_id` 去重。
+    LM 不跟隨轉址（3xx 視為失敗）。
+    回應：`200` + `{"reply": Notification}`（`title` ≤ 40、`body` ≤ 300、選填 `action` {`label` ≤ 20、`url`}；規則同 `POST /messages`：
+    文字不可含 `http(s)://`、`action.url` 必須是 https 且主機在產品登記的 `url_domains` 內）→ LM 以固定的 Flex 外觀回覆客人；
+    `204` → 不回覆；其他狀態碼、非 JSON、驗證不過、本文 > 4 KB、逾時、連線錯誤 → LM 改送備用內容
+    （LM 後台依 OA × product_key × action 設定；沒設定送「目前無法查詢，請稍後再試」）。
+    逾時後才到的回應一律丟棄，LM 不會用 push 補送。
+    同一事件 LINE 重送時 LM 會去重，但產品仍應以 `event_id` 去重。
+    每位客人每條連結每分鐘最多轉發 10 次，超過的事件靜默略過。
+  signature-example:
+    event_signing_secret: pes_example_secret_not_real
+    timestamp: '1795593600'
+    raw_body: '{"event_id":"evt_0123456789abcdef0123456789abcdef","type":"postback","occurred_at":"2026-11-24T08:00:00.000Z","link_id":"lnk_aaaaaaaaaaaaaaaa","action":"plans","params":{"type":"wedding"},"contact":null}'
+    signature: v1=eaa3e2c6cbcf0a999d968e0337e87c8d910aec32b036a15d24a7f9f49ac5b11f
+
 paths:
   /bridge/v1/health:
     get:
@@ -605,9 +632,49 @@ components:
       schema: { type: string, maxLength: 128 }
 
   schemas:
+    EventRequest:
+      type: object
+      description: "LM → 產品的事件本文（v1.1，見頂層 x-lm-events）。不含 LINE userId、replyToken、原始 data。"
+      required: [event_id, type, occurred_at, link_id, action, params, contact]
+      properties:
+        event_id: { type: string, pattern: '^evt_[0-9a-f]{32}$' }
+        type: { type: string, enum: [postback] }
+        occurred_at: { type: string, format: date-time }
+        link_id: { type: string, pattern: '^lnk_[a-f0-9]{16}$' }
+        action: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,31}$' }
+        params:
+          type: object
+          maxProperties: 8
+          additionalProperties: { type: string, maxLength: 64 }
+        contact:
+          type: object
+          nullable: true
+          required: [external_contact_ref, status]
+          properties:
+            external_contact_ref: { $ref: '#/components/schemas/ContactRef' }
+            status: { type: string, enum: [bound] }
+    EventResponse:
+      type: object
+      description: "產品對事件的回應本文（HTTP 200 時）。204 沒有本文。"
+      required: [reply]
+      properties:
+        reply:
+          type: object
+          required: [title, body]
+          additionalProperties: false
+          properties:
+            title: { type: string, minLength: 1, maxLength: 40 }
+            body: { type: string, minLength: 1, maxLength: 300 }
+            action:
+              type: object
+              required: [label, url]
+              additionalProperties: false
+              properties:
+                label: { type: string, minLength: 1, maxLength: 20 }
+                url: { type: string, format: uri, description: "https，主機在產品登記的 url_domains 內" }
     Scope:
       type: string
-      enum: [link:manage, contacts:bind, messages:send, segments:write, raw:push]
+      enum: [link:manage, contacts:bind, messages:send, segments:write, events:receive, raw:push]
     ContactRef:
       type: string
       pattern: '^[A-Za-z0-9_-]{8,64}$'
