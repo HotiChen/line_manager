@@ -12,7 +12,9 @@
  *   - 同 Provider 驗證：LINE 沒有 API 可查，所以用「sub 是不是這個 OA 的會員」（lm_service.hasMember）。
  *     不同 Provider 的 sub 不會剛好等於該 OA 的某位會員，所以命中即證明相同；沒命中就不啟用
  *   - 身分碼 `lmi_`：32 bytes CSPRNG、60 秒、單次、只存 SHA-256；資料庫只存發碼當下的 ref／status，**不存 userId**
- *   - 導回網址只來自產品登記的 identity_return_uris（精確），請求只能決定 `to`（相對路徑，原樣帶回）
+ *   - 導回網址只來自產品登記的 identity_return_uris（精確），請求只能決定 `to`（相對路徑）與 `s`（state），都原樣帶回
+ *   - login CSRF：攻擊者可能把「自己的」導回網址（含他的身分碼）丟給受害者。產品若是從自己的網頁發起（可帶 `s`）就用 state 擋；
+ *     從固定的 Rich Menu 按鈕發起時無法帶 per-session state，這是已知限制，寫在契約的產品 MUST 裡
  *   - 公開端點對「OA 不存在／未驗證／產品或連結不合」一律回同一種錯誤，不洩漏存在與否；有限流
  *   - LINE Login 的 channel secret 以 AES-GCM 加密存 D1；不進回應、audit、log。缺金鑰 → 503，不降級
  *   - 稽核（identity_channel_set／identity_verified／identity_issued／identity_redeemed）只有 product_id、link_id、has_contact
@@ -44,6 +46,8 @@ const CHANNEL_ID_RE = /^[0-9]{6,20}$/;
 const CHANNEL_SECRET_RE = /^[0-9a-f]{32}$/i;
 const LIFF_ID_RE = /^[0-9]{6,20}-[A-Za-z0-9]{4,16}$/;
 const TO_RE = /^\/[A-Za-z0-9/_\-.?=&]{0,199}$/;
+/** 產品自己決定的 state（防 login CSRF；LM 原樣帶回，不解讀） */
+const STATE_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const IDENTITY_CODE_RE = /^lmi_[A-Za-z0-9_-]{43}$/;
 const MAX_ID_TOKEN_LENGTH = 4096;
 const MAX_CODE_ATTEMPTS = 3;
@@ -284,9 +288,10 @@ async function handleVerify(request, env) {
 }
 
 /** 產品登記的導回網址 + code + to（用 URL API 組，值由 URL API 編碼） */
-function buildReturnUrl(base, code, to) {
+function buildReturnUrl(base, code, to, state) {
   const u = new URL(base);
   u.searchParams.append("code", code);
+  if (state) u.searchParams.append("state", state);
   if (to) u.searchParams.append("to", to);
   return u.toString();
 }
@@ -314,6 +319,9 @@ async function handleExchange(request, env) {
   // 相對路徑，且不能是 `//host`（有些框架會把它當成同協定的外部網址）
   if (rawTo !== undefined && rawTo !== null && (typeof rawTo !== "string" || !TO_RE.test(rawTo) || rawTo.startsWith("//"))) return invalidRequest("to must be a relative path");
   const to = typeof rawTo === "string" ? rawTo : null;
+  const rawState = auth.body.s;
+  if (rawState !== undefined && rawState !== null && (typeof rawState !== "string" || !STATE_RE.test(rawState))) return invalidRequest("s must match ^[A-Za-z0-9_-]{1,128}$");
+  const state = typeof rawState === "string" ? rawState : null;
 
   const target = await getIdentityTarget(env, { botId: auth.botId, productKey });
   if (!target || target.productDisabled || !target.linkScopes.includes("identity:read") || target.identityReturnUris.length === 0) return unavailable();
@@ -327,7 +335,7 @@ async function handleExchange(request, env) {
     actorType: "system", actorId: "identity_page", botId: auth.botId, action: "identity_issued",
     detail: { product_id: target.productId, link_id: target.linkId, has_contact: contact !== null },
   });
-  return json({ redirect_to: buildReturnUrl(target.identityReturnUris[0], code, to) }, 200);
+  return json({ redirect_to: buildReturnUrl(target.identityReturnUris[0], code, to, state) }, 200);
 }
 
 // ── 產品：用身分碼換 ref ──

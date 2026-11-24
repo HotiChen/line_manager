@@ -378,6 +378,16 @@ describe('POST /bridge/v1/identity/exchange', () => {
         assert.ok(!r.text.includes('evil'));
     });
 
+    it('s（產品自己的 state）原樣帶回成 state=…；不合規定 → 400（不發碼）', async () => {
+        await ready();
+        const ok = await exchange({ s: 'abc_DEF-123' });
+        assert.equal(new URL(ok.body.redirect_to).searchParams.get('state'), 'abc_DEF-123');
+        assert.equal(new URL((await exchange({ s: undefined })).body.redirect_to).searchParams.has('state'), false);
+        const before = await count(d1.db, 'identity_codes');
+        for (const s of ['a b', '<x>', 'x'.repeat(129), '', 5, {}]) assert.equal((await exchange({ s })).res.status, 400, JSON.stringify(s));
+        assert.equal(await count(d1.db, 'identity_codes'), before);
+    });
+
     it('to 不合規定 → 400（不發碼）', async () => {
         await ready();
         for (const to of ['https://evil.example.com/', '//evil.example.com', 'photos', '/a b', '/<script>', `/${'a'.repeat(250)}`, 5, {}]) {

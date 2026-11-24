@@ -424,6 +424,9 @@ paths:
         身分碼：60 秒、只能用一次、只存雜湊、必須用「發碼那條連結」的金鑰兌換；第二次使用、過期、別條連結、格式不對、不存在 → 一律 `INVALID_CODE`（同一種回應）。
         `contact` 為 `null`：這個 LINE 帳號在這條連結下沒有綁定 —— 產品應引導客人先綁定，不要自己猜是誰。
         產品的回調頁要設 `Referrer-Policy: no-referrer`，換完碼立即導向不含 `code` 的網址。
+        **login CSRF**：攻擊者可能把「自己的」導回網址（含他的身分碼）丟給受害者，讓受害者的瀏覽器登入成攻擊者。
+        產品若從自己的網頁發起（例如「用 LINE 開啟」），在 LIFF 網址加 `s=<隨機 state>`，LM 會原樣帶回成 `state=…`，產品必須和自己 cookie 裡的比對。
+        從固定的 Rich Menu 按鈕發起時無法帶 per-session state：產品應把這種進入點的權限降到最低（例如只讀、不接受上傳），或要求客人再按一次確認。
         需先套用遷移 0007、OA 已設定 LINE Login channel 並通過驗證，產品登記時需有 `identity:read`、`product_key` 與 `identity_return_uris`。
         每條連結每分鐘 60 次。
       x-status: implemented

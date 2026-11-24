@@ -58,6 +58,8 @@
     const body = { bot_id: botId, id_token: idToken, p: params.get('p') || '' };
     const to = params.get('to');
     if (to) body.to = to;
+    const state = params.get('s');
+    if (state) body.s = state;
     const r = await postJson(apiBase + '/bridge/v1/identity/exchange', body);
     const target = r.ok && r.data && typeof r.data.redirect_to === 'string' ? r.data.redirect_to : '';
     if (target.indexOf('https://') === 0) {
