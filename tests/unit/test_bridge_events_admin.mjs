@@ -146,6 +146,46 @@ describe('PATCH /admin/products/{id}', () => {
         assert.ok(ok.body.event_signing_secret);
     });
 
+    it('url_domains 只能增加：加網域成功、同一個請求的 event_url 可用新網域；縮小或換掉 → 400', async () => {
+        const reg = await register({ scopes: ['contacts:bind'], product_key: 'ip', event_url: undefined });
+        const id = reg.body.product_id;
+        const other = 'https://worker.other-domain.dev/lm/events';
+        assert.equal((await patch(id, { scopes: ['contacts:bind', 'events:receive'], event_url: other })).res.status, 400, '新網域還沒加入前，event_url 被擋');
+        const ok = await patch(id, { url_domains: ['picker.example.com', 'other-domain.dev'], scopes: ['contacts:bind', 'events:receive'], event_url: other });
+        assert.equal(ok.res.status, 200, ok.text);
+        assert.deepEqual(ok.body.url_domains, ['picker.example.com', 'other-domain.dev']);
+        assert.equal(ok.body.event_url, other);
+        assert.ok(ok.body.event_signing_secret);
+        assert.equal((await patch(id, { url_domains: ['other-domain.dev'] })).res.status, 400, '縮小（拿掉舊網域）');
+        assert.equal((await patch(id, { url_domains: [] })).res.status, 400);
+        assert.equal((await patch(id, { url_domains: ['picker.example.com', 'other-domain.dev'] })).res.status, 200, '同樣的集合是冪等');
+        const row = await d1.db.prepare('SELECT url_domains FROM products WHERE product_id = ?1').bind(id).first();
+        assert.deepEqual(JSON.parse(row.url_domains), ['picker.example.com', 'other-domain.dev']);
+    });
+
+    it('url_domains 格式：小寫網域名稱，不含 scheme、埠、萬用字元、路徑；最多 20 個；不是陣列 → 400', async () => {
+        const reg = await register({ scopes: ['contacts:bind'], product_key: 'ip', event_url: undefined });
+        const id = reg.body.product_id;
+        // 營運端點每 IP 每分鐘 10 次：這個測試的呼叫很多，每次換一個來源 IP
+        let n = 0;
+        const patch = (pid, body) => call('PATCH', `/bridge/v1/admin/products/${pid}`, { headers: { Authorization: `Bearer ${ADMIN}`, 'CF-Connecting-IP': `198.51.100.${++n}` }, body });
+        for (const d of ['https://x.example.com', 'x.example.com:8443', '*.example.com', 'x.example.com/path', 'X.Example.com', 'localhost', 'a b.com', 5]) {
+            assert.equal((await patch(id, { url_domains: ['picker.example.com', d] })).res.status, 400, String(d));
+        }
+        const many = ['picker.example.com', ...Array.from({ length: 20 }, (_, i) => `d${i}.example.com`)];
+        assert.equal((await patch(id, { url_domains: many })).res.status, 400);
+        assert.equal((await patch(id, { url_domains: 'picker.example.com' })).res.status, 400);
+    });
+
+    it('新增的網域也成為通知按鈕網址的白名單（備用訊息的 action.url 可用新網域）', async () => {
+        const reg = await register();
+        await patch(reg.body.product_id, { url_domains: ['picker.example.com', 'other-domain.dev'] });
+        const put = await asUser('PUT', '/bridge/v1/admin/event-fallbacks', {
+            product_key: 'ip', action: 'plans', content: { title: 't', body: 'b', action: { label: 'go', url: 'https://other-domain.dev/plans' } },
+        });
+        assert.equal(put.res.status, 200, put.text);
+    });
+
     it('回應與稽核不含簽章密鑰；密鑰只出現在登記或輪替的那一次回應', async () => {
         const reg = await register();
         await patch(reg.body.product_id, { event_url: 'https://api.picker.example.com/x' });

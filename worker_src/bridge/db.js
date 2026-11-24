@@ -331,12 +331,12 @@ export async function createProduct(env, { productId, name, secretHash, redirect
 }
 
 /**
- * 營運更新產品（LM-4D；LM-4B 加 event_url 與 event_secret_enc、LM-4C 加 identity_return_uris，只覆蓋有給的欄位）：product_key 只能從 NULL 設一次（同值視為冪等），scopes 由呼叫端確保只增不減。
+ * 營運更新產品（LM-4D；LM-4B 加 event_url 與 event_secret_enc、LM-4C 加 identity_return_uris、url_domains（只增不減由呼叫端確保），只覆蓋有給的欄位）：product_key 只能從 NULL 設一次（同值視為冪等），scopes 由呼叫端確保只增不減。
  * product_key 撞到別的產品 → {updated:false, keyTaken:true}；已有不同的 product_key → {updated:false, keyLocked:true}。
  *
  * @returns {Promise<{updated: true} | {updated: false, keyTaken?: true, keyLocked?: true, notFound?: true}>}
  */
-export async function updateProduct(env, { productId, productKey, scopes, eventUrl, eventSecretEnc, identityReturnUris }) {
+export async function updateProduct(env, { productId, productKey, scopes, urlDomains, eventUrl, eventSecretEnc, identityReturnUris }) {
   return withDb(env, async (db) => {
     let res;
     try {
@@ -344,10 +344,10 @@ export async function updateProduct(env, { productId, productKey, scopes, eventU
         .prepare(
           `UPDATE products SET product_key = COALESCE(product_key, ?2), scopes = COALESCE(?3, scopes),
                  event_url = COALESCE(?4, event_url), event_secret_enc = COALESCE(?5, event_secret_enc),
-                 identity_return_uris = COALESCE(?6, identity_return_uris)
+                 identity_return_uris = COALESCE(?6, identity_return_uris), url_domains = COALESCE(?7, url_domains)
             WHERE product_id = ?1 AND (?2 IS NULL OR product_key IS NULL OR product_key = ?2)`
         )
-        .bind(productId, productKey ?? null, scopes ? JSON.stringify(scopes) : null, eventUrl ?? null, eventSecretEnc ?? null, identityReturnUris ? JSON.stringify(identityReturnUris) : null)
+        .bind(productId, productKey ?? null, scopes ? JSON.stringify(scopes) : null, eventUrl ?? null, eventSecretEnc ?? null, identityReturnUris ? JSON.stringify(identityReturnUris) : null, urlDomains ? JSON.stringify(urlDomains) : null)
         .run();
     } catch (err) {
       if (/UNIQUE constraint failed/i.test(String(err && err.message))) return { updated: false, keyTaken: true };
