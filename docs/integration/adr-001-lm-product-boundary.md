@@ -33,7 +33,7 @@ IP 接上 LM 後，每討論一個新功能(對個別客人發訊息、群發、
 | Rich Menu 的版面與切換 | LM | LM 後台 |
 | 固定回覆(營業時間、聯絡方式) | LM | 關鍵字回覆，或 `lm:` 開頭的 postback |
 | 作品集(以圖片為主) | 產品 | Rich Menu **網址按鈕**直接開產品頁面，不經過轉發 |
-| 方案、價目摘要 | 產品 | `px:<product_key>:<action>` 開頭的 postback → 事件轉發 → LM 用 reply 回覆 |
+| 方案、價目摘要 | 產品(**IP 目前例外：暫留 LM 的固定回覆**，因為 IP 決定不做方案／套裝；見 IP `docs/line-v1.1.md` L0) | `px:<product_key>:<action>` 開頭的 postback → 事件轉發 → LM 用 reply 回覆 |
 | 查自己的進度 | 產品 | 同上，事件帶 `external_contact_ref` |
 | 我的相片／客人入口 | 產品 | LINE 身分換 ref(v1.1 草案 §C) |
 | 交件通知、紀念日問候、過濾客人群發 | 產品決定時機與對象 | `POST /messages`(現行 v1) |
