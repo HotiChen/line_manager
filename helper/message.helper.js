@@ -558,6 +558,25 @@ export async function generateReplyInputUI({ builder, userId, onSelect, initialR
       return;
     }
 
+    // Rich Menu 的「訊息回傳」：沒有可挑的清單，直接填資料（例如 px:ip:plans，轉給產品用）
+    if (selectedType === "postback" && builder === "richmenu") {
+      const input = document.createElement("input");
+      input.className = "form-control main-reply-input";
+      input.dataset.postbackData = "1";
+      input.maxLength = 300;
+      input.placeholder = "回傳資料，例如 px:ip:plans";
+      if (initialValue) input.value = initialValue.data || "";
+      input.addEventListener("input", () => {
+        if (typeof onSelect === "function") onSelect("postback", { data: input.value, label: input.value });
+      });
+      inputContainer.appendChild(input);
+      const hint = document.createElement("div");
+      hint.className = "form-text";
+      hint.textContent = "轉給產品用 px:<產品代號>:<動作>；LM 內建動作用 lm:reply / lm:menu。使用者按下去不會在聊天室顯示文字。";
+      inputContainer.appendChild(hint);
+      return;
+    }
+
     const messageList = await fetchMessageListByType(selectedType, userId);
 
     if (["imagemap", "flex", "postback", "keyword"].includes(selectedType)) {
@@ -671,6 +690,14 @@ export function getCurrentReplyInput() {
 
   if (input) {
     value = input.value;
+    if (type === "postback" && input.dataset.postbackData) {
+      const data = value.trim();
+      if (!data) {
+        alert("請輸入回傳資料，例如 px:ip:plans");
+        return null;
+      }
+      item = { type: 'postback', data, label: data.slice(0, 20) };
+    }
     if (type === "text" || type === "message") {
       item = { type: 'message', text: value };
     }
