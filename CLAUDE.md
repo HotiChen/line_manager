@@ -54,6 +54,7 @@ npm run deploy:check && npm run deploy
 - `line-admin/` 已於 2026-06 移除（曾是前端的發散複本）；如需查舊版，看 git 歷史。
 - dev 與 prod 使用不同的 KV namespace。**本地開發看不到正式資料**，測試需要的資料要自己寫進 dev namespace。`tests/unit/test_wrangler_config.mjs` 會擋住再次指回正式環境。
 - ESLint 對前端 `js/`、`helper/` 還有大量遺留 errors/warnings；CI 只強制後端。前端清完一個目錄就把它加進 CI 的 lint 範圍。
+- LM ↔ IP 整合進度與待辦（誰先誰後、哪邊做）：`docs/integration/ops-checklist-ip.md`，動到整合就更新它。
 - 完整評估與路線圖：`docs/PROJECT_REVIEW_2026-06-11.md`；問題追蹤：`ISSUES.md`。
 
 ## 給 AI 的工作方式建議
