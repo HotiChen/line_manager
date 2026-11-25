@@ -1201,8 +1201,14 @@ async function saveEditedRichmenu() {
     }
   }
 
-  const existingIndex = allRichmenus.indexOf(currentRichmenu);
+  // 列表重新載入後 allRichmenus 會換成新物件，而 currentRichmenu 還指著舊的：
+  // indexOf 找不到時改用 richMenuId 對回清單裡的那一份，否則已存在的選單會被誤當成「新增」
+  let existingIndex = allRichmenus.indexOf(currentRichmenu);
+  if (existingIndex === -1 && currentRichmenu.richMenuId) {
+    existingIndex = allRichmenus.findIndex(m => m.richMenuId === currentRichmenu.richMenuId);
+  }
   const target = existingIndex !== -1 ? allRichmenus[existingIndex] : currentRichmenu;
+  currentRichmenu = target;
 
   target.name = richmenuName;
   target.areas = currentAreas;
@@ -1529,6 +1535,12 @@ async function syncRichmenusToServer(desiredDefaultMenuName = null) {
     // 2. 新增
     for (const richmenu of allRichmenus) {
       if (!richmenu.isNew || richmenu.isDeleted) continue;
+
+      if (!richmenu.imageFile) {
+        addLog(`❌ 新增失敗: ${richmenu.name}（沒有選單圖片）`, false);
+        toast.error(`「${richmenu.name}」沒有選單圖片，請先在編輯頁上傳圖片再同步。`);
+        return;
+      }
 
       try {
         const result = await api.upload('/richmenu/sync', richmenu.imageFile, 'imageFile', toSyncItem(richmenu));

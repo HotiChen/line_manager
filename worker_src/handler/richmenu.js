@@ -209,6 +209,11 @@ export async function handleSyncRichmenus(request, env, userId) {
  *   op=add（預設）→ 進 add
  *   op=update      → 進 update，另需 richMenuId 指明要取代哪一個舊選單
  */
+/** multipart 欄位只有真的是檔案才算圖片；字串（例如前端誤送的 "null"）一律當作沒有圖片 */
+function asUploadedFile(value) {
+  return value && typeof value === "object" && typeof value.arrayBuffer === "function" ? value : null;
+}
+
 async function parseSyncPayload(request) {
   const contentType = request.headers.get("content-type") || "";
 
@@ -224,7 +229,7 @@ async function parseSyncPayload(request) {
     alias: form.get("alias"),
     chatBarText: form.get("chatBarText"),
     selected: form.get("selected") === "true",
-    imageFile: form.get("imageFile") || null
+    imageFile: asUploadedFile(form.get("imageFile"))
   };
 
   if (form.get("op") === "update") {

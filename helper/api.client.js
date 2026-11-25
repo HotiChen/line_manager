@@ -134,7 +134,7 @@ export class ApiClient {
     static delete(endpoint, body, options) { return this.request('DELETE', endpoint, body || null, options); }
     static async upload(endpoint, file, fieldName = 'file', extraData = {}, options = {}) {
         const formData = new FormData();
-        formData.append(fieldName, file);
+        if (file) formData.append(fieldName, file); // 沒檔案就不送，避免變成字串 "null"
         Object.entries(extraData).forEach(([k, v]) => v != null && formData.append(k, typeof v === 'object' ? JSON.stringify(v) : v));
         return this.post(endpoint, formData, { ...options, timeout: options.timeout || 60000 });
     }
