@@ -1530,6 +1530,12 @@ async function syncRichmenusToServer(desiredDefaultMenuName = null) {
     for (const richmenu of allRichmenus) {
       if (!richmenu.isNew || richmenu.isDeleted) continue;
 
+      if (!richmenu.imageFile) {
+        addLog(`❌ 新增失敗: ${richmenu.name}（沒有選單圖片）`, false);
+        toast.error(`「${richmenu.name}」沒有選單圖片，請先在編輯頁上傳圖片再同步。`);
+        return;
+      }
+
       try {
         const result = await api.upload('/richmenu/sync', richmenu.imageFile, 'imageFile', toSyncItem(richmenu));
         const failure = describeErrors(result);

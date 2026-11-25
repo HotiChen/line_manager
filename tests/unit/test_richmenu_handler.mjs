@@ -220,6 +220,28 @@ describe('handleSyncRichmenus — 新增選單', () => {
         );
     });
 
+    it('multipart 的 imageFile 欄位是字串（例如前端誤送 "null"）時，當作沒有圖片，不可當檔案去讀', async () => {
+        mock = installFetchMock([
+            { match: /\/v2\/bot\/richmenu$/, method: 'POST', respond: createMenuOk('richmenu-noimg') },
+        ]);
+
+        const form = new FormData();
+        form.append('name', '沒圖片');
+        form.append('diamention', JSON.stringify([2500, 1686]));
+        form.append('areas', JSON.stringify([]));
+        form.append('imageFile', 'null');
+
+        const res = await handleSyncRichmenus(
+            new Request('https://worker.example.com/richmenu/sync', { method: 'POST', body: form }),
+            env, 'U-test'
+        );
+        const body = await res.json();
+
+        assert.equal(body.errors.length, 0, JSON.stringify(body.errors));
+        assert.equal(body.added.length, 1);
+        assert.equal(mock.find('POST', 'api-data.line.me').length, 0, '沒有圖片就不該呼叫圖片上傳');
+    });
+
     it('別名建立失敗時必須回報錯誤（不可靜默忽略）', async () => {
         mock = installFetchMock([
             { match: /\/v2\/bot\/richmenu$/, method: 'POST', respond: createMenuOk('richmenu-a') },
