@@ -3,6 +3,7 @@
 import { showLoader, hideLoader } from '../js/shared/loader.js';
 import { apiBase } from "../env/config.js";
 import { getAuthHeaders } from "./state.js";
+import { clampActionLabel } from "./action_label.js";
 
 // 🎯 版本資訊
 export const HELPER_VERSION = "2.1.0"; // Bump version for refactoring
@@ -822,6 +823,10 @@ export function createAction(reply, builderType) {
 
   if (['camera', 'cameraRoll', 'location'].includes(action.type)) {
     delete action.label;
+  } else if (builderType === 'richmenu') {
+    // LINE 限制 Rich Menu 的 action label 最多 20 字，超過整個選單會被拒絕建立
+    action.label = clampActionLabel(action.label);
+    if (action.label === undefined) delete action.label;
   }
 
   return action;
