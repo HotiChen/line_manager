@@ -15,6 +15,9 @@ export async function handleListMembers(request, env, userId, botId, role) {
 
     return jsonResponse({
         success: true,
+        // 呼叫者目前管理的 bot（withPermission 已確認他是這個 bot 的成員）。
+        // 「系統整合」頁（js/system_management.js）用它當 X-Bot-Id，沒有它「已連結的產品」與「LINE 身分」都不會載入。
+        botId,
         members: permissions.users,
         currentUserRole: role
     });
