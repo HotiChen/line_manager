@@ -186,7 +186,7 @@ function renderLinkCard(link) {
   const body = h('div', { class: 'card-body' });
   const root = h('div', { class: 'col-12 col-lg-6' }, h('div', { class: 'card shadow-sm border-0 h-100' }, body));
   const canEditFallback = active && link.productKey && link.scopes.includes('events:receive');
-  body.append(
+  body.append(...[
     h(
       'div',
       { class: 'd-flex justify-content-between align-items-start gap-2 mb-2' },
@@ -206,7 +206,7 @@ function renderLinkCard(link) {
             : null
         )
       : null
-  );
+  ].filter(Boolean));
   return root;
 }
 
