@@ -287,11 +287,12 @@ async function renderFallbackEditor(link, editor) {
     h('button', {
       type: 'button', class: 'btn btn-sm btn-primary', text: '儲存',
       onclick: async (e) => {
+        const btn = e.currentTarget; // await 之後 currentTarget 會變 null，先留住
         const built = buildFallbackPayload({ productKey: link.productKey, action: action.value, title: title.value, body: text.value, label: label.value, url: url.value });
         if (built.error) return toast.error(built.error);
-        e.currentTarget.disabled = true;
+        btn.disabled = true;
         const res = await call('PUT', '/bridge/v1/admin/event-fallbacks', built.payload, { 'X-Bot-Id': botId });
-        e.currentTarget.disabled = false;
+        btn.disabled = false;
         if (!res.ok) return toast.error(describeFallbackError(res.status, res.data));
         toast.success('已儲存');
         renderFallbackEditor(link, editor);
@@ -348,11 +349,12 @@ function renderIdentity(body, status) {
       h('button', {
         type: 'button', class: 'btn btn-sm btn-primary me-2', text: status.configured ? '更新設定' : '儲存並建立',
         onclick: async (e) => {
+          const btn = e.currentTarget; // await 之後 currentTarget 會變 null，先留住
           const built = buildIdentityPayload({ channelId: channelId.value, channelSecret: secret.value });
           if (built.error) return toast.error(built.error);
-          e.currentTarget.disabled = true;
+          btn.disabled = true;
           const r = await call('PUT', '/bridge/v1/admin/identity', built.payload, { 'X-Bot-Id': botId });
-          e.currentTarget.disabled = false;
+          btn.disabled = false;
           secret.value = '';
           if (!r.ok) return toast.error(describeIdentityError(r.status, r.data));
           toast.success('已儲存，LIFF 已建立');
