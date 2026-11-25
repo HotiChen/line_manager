@@ -91,6 +91,14 @@ describe('handleListMembers', () => {
         assert.equal(body.currentUserRole, 'owner');
     });
 
+    it('回傳目前管理的 botId（「系統整合」頁靠它才知道要用哪個官方帳號查已連結的產品與設定 LINE 身分）', async () => {
+        await seedBot(env, BOT_A, [{ userId: OWNER, role: 'owner', displayName: 'Tim' }]);
+        const body = await readJson(await handleListMembers(jsonRequest({}, 'GET'), env, OWNER, BOT_A, 'owner'));
+        assert.equal(body.botId, BOT_A);
+        // 只回呼叫者自己有權限的那一個 bot，不洩漏別的
+        assert.deepEqual(Object.keys(body).sort(), ['botId', 'currentUserRole', 'members', 'success']);
+    });
+
     it('bot 沒有權限資料時回 404', async () => {
         const res = await handleListMembers(jsonRequest({}, 'GET'), env, OWNER, BOT_A, 'owner');
         assert.equal(res.status, 404);
