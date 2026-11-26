@@ -36,7 +36,7 @@
 | IP 的 L2 安全審查（第二次、獨立） | IP | 2026-11-26 完成，審 `main` 的 `fad624f`。結論：pilot 範圍（只有 Tim 一位攝影師）**沒有阻擋上線的漏洞**；身分換 ref、session、view 連結、旗標 fail-closed、userId／身分碼／token 不外洩五項都過。報告 `docs/l2-my-photos-security-review.md`，commit `83e551f` 在分支 `review/l2-security`，**還沒 push** |
 | `LINE_MY_PHOTOS = "on"` 並部署 | IP | `origin/main` 的 `worker/wrangler.toml:78` 已是 `"on"`（`fad624f`，2026-11-25 Tim）；2026-11-26 查線上 `/api/line/identity` 回 302 → `mine.html#e=expired`（旗標關時會是 `{"error":"Not found"}`），確認已部署 |
 | Rich Menu 兩個「訊息回傳」按鈕 `px:ip:plans`、`px:ip:status`，已同步 | LM 後台 | 2026-11-25 夜 Tim 設好並手機實測，IP 有回覆。備用訊息那條路徑沒單獨測（IP 正常回應時不會走到） |
-| D1 遷移補齊（`bridge-db-dev`，開發） | LM | 2026-11-26 Tim 在 D1 Console 補貼 0003、0004 與 0005 漏掉的 `ALTER TABLE contacts ADD COLUMN segment`；查 `sqlite_master` 得 14 張表（不含 `_cf_KV`、`sqlite_sequence`），`bind_codes`、`contacts`、`counters`、`flags` 都在 |
+| D1 遷移補齊（`bridge-db-dev`，開發） | LM | 2026-11-26 Tim 在 D1 Console 補貼 0003、0004 與 0005 漏掉的 `ALTER TABLE contacts ADD COLUMN segment`；查 `sqlite_master` 得 14 張表（不含 `_cf_KV`、`sqlite_sequence`）、13 個 index，`bind_codes`、`contacts`、`counters`、`flags` 都在，`bind_codes.allow_rebind`、`contacts.segment`、`products.product_key` 三個欄位都在 —— 與正式庫 `bridge-db` 一致 |
 
 ## 還沒做（依順序）
 
