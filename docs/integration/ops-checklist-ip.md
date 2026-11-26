@@ -35,21 +35,21 @@
 | IP 遷移 `2026-11-25-client-sessions.sql` | IP | 2026-11-26 查：線上 `/api/mine` 回 401（未套用時會是 503），schema probe 過 |
 | IP 的 L2 安全審查（第二次、獨立） | IP | 2026-11-26 完成，審 `main` 的 `fad624f`。結論：pilot 範圍（只有 Tim 一位攝影師）**沒有阻擋上線的漏洞**；身分換 ref、session、view 連結、旗標 fail-closed、userId／身分碼／token 不外洩五項都過。報告 `docs/l2-my-photos-security-review.md`，commit `83e551f` 在分支 `review/l2-security`，**還沒 push** |
 | `LINE_MY_PHOTOS = "on"` 並部署 | IP | `origin/main` 的 `worker/wrangler.toml:78` 已是 `"on"`（`fad624f`，2026-11-25 Tim）；2026-11-26 查線上 `/api/line/identity` 回 302 → `mine.html#e=expired`（旗標關時會是 `{"error":"Not found"}`），確認已部署 |
+| D1 遷移補齊（`bridge-db-dev`，開發） | LM | 2026-11-26 Tim 在 D1 Console 補貼 0003、0004 與 0005 漏掉的 `ALTER TABLE contacts ADD COLUMN segment`；查 `sqlite_master` 得 14 張表（不含 `_cf_KV`、`sqlite_sequence`），`bind_codes`、`contacts`、`counters`、`flags` 都在 |
 
 ## 還沒做（依順序）
 
 | # | 項目 | 哪邊 | 備註 |
 |---|---|---|---|
-| 1 | 補 `bridge-db-dev` 的遷移：0003、0004，以及 0005 漏掉的 `ALTER TABLE contacts ADD COLUMN segment` | LM（D1 Console） | 2026-11-26 查出 dev 是半套用：缺 `bind_codes`、`contacts`、`counters`、`flags` 四張表（`products` 的 ALTER 都有）。只影響 dev 測試，不影響正式 |
-| 2 | Rich Menu 設兩個「訊息回傳」按鈕：`px:ip:plans`、`px:ip:status`，同步到 LINE | LM 後台 | 先用不是預設的選單測，同步會動線上畫面 |
-| 3 | 手機實測 `px:` 按鈕：IP 有回就看到 IP 的回覆；IP 沒回看到備用訊息 | 手機 | 要驗備用訊息可暫時把 IP 事件網址改錯，測完改回 |
-| 4 | 把備用訊息 `hi`／`hihi` 換成正式文字 | LM 後台 | |
-| 5 | Rich Menu 設「我的相片」網址按鈕：`https://liff.line.me/1661215693-0Y7057vq?p=ip` | LM 後台 | 旗標已開、遷移已套用，這項現在可以做了。`to` 參數 IP 目前不用（導回位置固定為 `mine.html`），可省略 |
-| 6 | 手機實測「我的相片」整段，另外確認未綁定客人的畫面 | 手機 | 未綁定會導到 `mine.html#e=bind` |
-| 7 | 處理 L2 審查的三個「應修」 | IP | ①identity 節流只有全站 key、沒有 per-IP ②公開路由每次請求跑無索引全表 DELETE，且在 cap 之前 ③`main` 上兩個 D1 statement 預算測試是紅的（3028/3030），10 分鐘 cron 距上限只剩 8 句 |
-| 8 | push `review/l2-security` 或把報告併進 `main` | IP | 報告目前只在本機 |
-| 9 | L3 分眾（IP → LM `PUT /contacts/{ref}/segment`）實測，再決定要不要設 `ip:<segment>` 的 Rich Menu 規則 | 兩邊 | 目前沒有設定任何分眾規則 |
-| 10 | **加入第二位攝影師之前必修**：審查發現 4，`LINE_IDENTITY_TRIES` 的候選迴圈會用 A 的連結金鑰去兌換可能屬於 B 的碼 | IP | 程式自己已寫明這件事；單一攝影師的 pilot 不受影響 |
+| 1 | Rich Menu 設兩個「訊息回傳」按鈕：`px:ip:plans`、`px:ip:status`，同步到 LINE | LM 後台 | 先用不是預設的選單測，同步會動線上畫面 |
+| 2 | 手機實測 `px:` 按鈕：IP 有回就看到 IP 的回覆；IP 沒回看到備用訊息 | 手機 | 要驗備用訊息可暫時把 IP 事件網址改錯，測完改回 |
+| 3 | 把備用訊息 `hi`／`hihi` 換成正式文字 | LM 後台 | |
+| 4 | Rich Menu 設「我的相片」網址按鈕：`https://liff.line.me/1661215693-0Y7057vq?p=ip` | LM 後台 | 旗標已開、遷移已套用，這項現在可以做了。`to` 參數 IP 目前不用（導回位置固定為 `mine.html`），可省略 |
+| 5 | 手機實測「我的相片」整段，另外確認未綁定客人的畫面 | 手機 | 未綁定會導到 `mine.html#e=bind` |
+| 6 | 處理 L2 審查的三個「應修」 | IP | ①identity 節流只有全站 key、沒有 per-IP ②公開路由每次請求跑無索引全表 DELETE，且在 cap 之前 ③`main` 上兩個 D1 statement 預算測試是紅的（3028/3030），10 分鐘 cron 距上限只剩 8 句 |
+| 7 | push `review/l2-security` 或把報告併進 `main` | IP | 報告目前只在本機 |
+| 8 | L3 分眾（IP → LM `PUT /contacts/{ref}/segment`）實測，再決定要不要設 `ip:<segment>` 的 Rich Menu 規則 | 兩邊 | 目前沒有設定任何分眾規則 |
+| 9 | **加入第二位攝影師之前必修**：審查發現 4，`LINE_IDENTITY_TRIES` 的候選迴圈會用 A 的連結金鑰去兌換可能屬於 B 的碼 | IP | 程式自己已寫明這件事；單一攝影師的 pilot 不受影響 |
 
 ## 待你決定／已知小事
 
