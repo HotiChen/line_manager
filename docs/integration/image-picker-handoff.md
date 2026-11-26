@@ -419,7 +419,7 @@ LM 固定、產品不能協商的：欄位格式與長度、網域白名單規�
 
 ### 5.1 遷移與旗標
 
-- [ ] **遷移 0001–0004 都已套用**（D1 Console 逐檔貼上，每檔每庫只貼一次；`ALTER TABLE` 不可重複）。驗證：
+- [ ] **遷移 0001–0007 都已套用**（D1 Console 逐檔貼上，每檔每庫只貼一次；`ALTER TABLE` 不可重複）。驗證：
 
 ```sql
 SELECT type, name FROM sqlite_master
@@ -427,17 +427,22 @@ SELECT type, name FROM sqlite_master
  ORDER BY type, name;
 ```
 
-  預期 table（11 張）：`audit_log`、`auth_codes`、`bind_codes`、`contacts`、`counters`、`flags`、`idempotency`、`links`、`products`、`service_keys`、`systems`；
-  預期 index：`idx_audit_log_bot_at`、`idx_auth_codes_expiry`、`idx_bind_codes_expiry`、`idx_bind_codes_ref`、`idx_contacts_user`、`idx_counters_window`、`idx_idempotency_expiry`、`idx_links_bot`、`idx_service_keys_link`、`idx_service_keys_system`、`uq_links_active`（可能另有 `sqlite_autoindex_*`，已被上面條件排除）。
+  預期 table（14 張）：`audit_log`、`auth_codes`、`bind_codes`、`contacts`、`counters`、`event_fallbacks`、`flags`、`idempotency`、`identity_channels`、`identity_codes`、`links`、`products`、`service_keys`、`systems`；
+  預期 index（13 個）：`idx_audit_log_bot_at`、`idx_auth_codes_expiry`、`idx_bind_codes_expiry`、`idx_bind_codes_ref`、`idx_contacts_user`、`idx_counters_window`、`idx_idempotency_expiry`、`idx_identity_codes_expiry`、`idx_links_bot`、`idx_service_keys_link`、`idx_service_keys_system`、`uq_links_active`、`uq_products_key`（可能另有 `sqlite_autoindex_*`，已被上面條件排除）。
 
-  欄位驗證（兩句都不能報錯）：
+  欄位驗證（每句都不能報錯）：
 
 ```sql
-SELECT link_id FROM service_keys LIMIT 1;          -- 0002 的 ALTER
-SELECT allow_rebind FROM bind_codes LIMIT 1;       -- 0004 的 ALTER
+SELECT link_id FROM service_keys LIMIT 1;             -- 0002 的 ALTER
+SELECT allow_rebind FROM bind_codes LIMIT 1;          -- 0004 的 ALTER
+SELECT segment FROM contacts LIMIT 1;                 -- 0005 的 ALTER
+SELECT product_key, event_url, event_secret_enc, identity_return_uris FROM products LIMIT 1;
+                                                      -- 0005／0006／0007 的 ALTER
 ```
 
-  缺 0004 時：`POST /messages` 與 `POST /contacts/bind-tokens` 回 `503 bridge_not_configured`，webhook 的綁定碼辨識安靜失敗（fail-closed，不是放行）。
+  缺 0004 時：`POST /messages` 與 `POST /contacts/bind-tokens` 回 `503 bridge_not_configured`，webhook 的綁定碼辨識安靜失敗（fail-closed，不是放行）。缺 0005–0007 時，分眾、事件轉發、身分換 ref 各自不啟用（公開端點回「未啟用」、營運與後台端點回 `503 bridge_not_configured`），同樣是 fail-closed。
+
+  **D1 Console 逐句執行時，一句失敗不會中止後面的句子**，容易留下「半套用」的資料庫（實際發生過：`bridge-db-dev` 缺 0003／0004，連帶 0005 的 `ALTER TABLE contacts` 失敗，但同檔的 `products` ALTER 成功）。貼完每一檔都跑一次上面兩段驗證。
 
 - [ ] **Worker 設定**（Cloudflare 控制台 → Workers → `pinti-line` → Settings → Variables and Secrets；dev 是 `pinti-line-dev`）：
 
